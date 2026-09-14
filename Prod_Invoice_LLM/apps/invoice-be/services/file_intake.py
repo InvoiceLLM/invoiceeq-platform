@@ -1,7 +1,7 @@
 """File intake normalisation — Feature 28 (image → PDF at the boundary).
 
 Every invoice entry point (multipart upload inbound/outbound, Trainer sample,
-SendGrid attachment, Google Drive connector/Autopilot, directory watcher) calls
+SendGrid attachment, Google Drive connector/Autopilot, public ingestion API) calls
 `normalize_upload()` before anything else touches the bytes. A PDF passes
 through byte-identical; an accepted image is converted to a single PDF *once*,
 here, so that nothing downstream (blob storage, `_run_ocr()`, the extraction

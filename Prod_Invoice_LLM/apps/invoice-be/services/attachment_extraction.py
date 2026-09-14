@@ -98,7 +98,8 @@ def extract_attachment(
         from queue_worker.handlers import _run_ocr
 
         progress(STAGE_READING)
-        ocr_result = _run_ocr(row.blob_path, get_settings())
+        doc_type = getattr(row, "doc_type", None)
+        ocr_result = _run_ocr(row.blob_path, get_settings(), doc_type=doc_type)
         ocr_text = ocr_result["content"] if isinstance(ocr_result, dict) else ocr_result
 
         progress(STAGE_EXTRACTING)

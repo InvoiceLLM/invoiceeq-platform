@@ -3016,9 +3016,48 @@ and the 2026-08-25 deletion commit). The deletion itself is **Gap 316**, below.
   - **Owed, not claimed.** No live dev-stack run — the FE Playwright spec stubs every `/api/**` call, so the request shapes and rendering are proven, the wiring to a real backend is not.
   - Spec: `feature_27_generic_extraction.md` §"Superseded (2026-09-05) — R5(c)'s surface moved to the History screen (Gap 464)". FE half: **FE Gap 464**, and `apps/invoice-fe/docs/feature_3_ingestion.md` §"The durable ingestion History screen — FE Gap 464 (2026-09-05)".
 
+- `[x]` **BE Gap 527 (BE): Inaccurate 99.3%/<3.8s extraction latency claim in PROJECT_STATUS.md corrected to real measured runtime numbers** — opened and fixed 2026-09-14.
+  - **Symptom.** `PROJECT_STATUS.md` claimed extraction ran in `<3.8s`. In reality, full extraction with dynamic QA and LLM reasoning runs at `24–53 s` (measured in `agents/extraction_agent.py:2537`).
+  - **Fix.** Corrected `PROJECT_STATUS.md` Phase 1 NOVA row to state: *Fast path: 4–8s; Complex path with dynamic QA: 24–53s*, and added footnote clarifying that `<3.8s` applied only to raw Document Intelligence OCR.
+
+- `[x]` **BE Gap 531 (BE): Stale "directory watcher" wording in `services/file_intake.py` and clarification of `mcp_servers/`** — opened and fixed 2026-09-14.
+  - **Symptom.** `file_intake.py` docstring listed a nonexistent "directory watcher" as an intake door. `mcp_servers/` contained only `.gitkeep`.
+  - **Fix.** Replaced "directory watcher" with "public ingestion API" in `file_intake.py`. Added `mcp_servers/README.md` defining its architectural scope for MCP tool endpoints.
+
+- `[x]` **BE Gap 525 (BE): Request timeout and retry count wired into `build_llm()` for AzureChatOpenAI** — opened and fixed 2026-09-14.
+  - **Symptom.** `build_llm()` instantiated `AzureChatOpenAI` without `request_timeout` or `max_retries`. Under transient network latency or Azure OpenAI throttling, worker threads hung indefinitely.
+  - **Fix.** Added `LLM_REQUEST_TIMEOUT_SECONDS = 60.0` and `LLM_MAX_RETRIES = 3` to `config.py` settings and passed them into `AzureChatOpenAI(**kwargs)` in `utils/llm.py`.
+
+- `[x]` **BE Gap 530 (BE): Extraction prompt prompt-injection framing on untrusted OCR text** — opened and fixed 2026-09-14.
+  - **Symptom.** OCR text from external PDFs was interpolated directly into extraction prompts without boundary markers or injection directives.
+  - **Fix.** Created `utils/injection_guard.py` exporting `INJECTION_GUARD_INSTRUCTION`, `DOCUMENT_TEXT_GUARD_INSTRUCTION`, and `wrap_untrusted_ocr_text()`. Wired boundary wrapping into all multimodal and text-only extraction prompt builders in `agents/extraction_agent.py`.
+
+- `[x]` **BE Gap 524 (BE): Calibrated document-type classifier confidence threshold via config registry** — opened and fixed 2026-09-14.
+  - **Symptom.** `models.py:307` cited `0.6` as an uncalibrated placeholder. `document_type_classifier.py` was recalibrated to `0.75` in task R11, but the threshold remained a static constant violating the anti-hardcoding harness.
+  - **Fix.** Added `DOC_TYPE_CONFIDENCE_THRESHOLD = 0.75` to `config.py`. Added `get_doc_type_confidence_threshold()` in `services/document_type_classifier.py` and updated `models.py:307` documentation. Verified with `tests/test_no_hardcoding.py`.
+
+- `[x]` **BE Gap 526 (BE): Document-type aware OCR model registry avoiding force-fitting `prebuilt-invoice`** — opened and fixed 2026-09-14.
+  - **Symptom.** `queue_worker/handlers.py::_run_ocr` unconditionally called `DOC_INTEL_MODEL_ID = "prebuilt-invoice"` for all documents, force-fitting invoice labels onto non-invoices (contracts, delivery notes).
+  - **Fix.** Created `services/ocr_registry.py` mapping money family types (`INVOICE`, `CREDIT_NOTE`, `PURCHASE_ORDER`) to `prebuilt-invoice` and non-invoices (`CONTRACT`, `DELIVERY_NOTE`, `BANK_STATEMENT`) to `prebuilt-layout`. Updated `_run_ocr(file_path, settings, doc_type=None)` to route dynamically.
+
+- `[x]` **BE Gap 523 (BE): Extraction model and prompt lineage tracking persisted on Invoice and Document tables** — opened and fixed 2026-09-14.
+  - **Symptom.** No extraction lineage (`model_id`, `prompt_version`, `schema_version`, `prompt_hash`) was persisted in the database.
+  - **Fix.** Added nullable columns `extraction_model_id`, `prompt_version`, `schema_version`, `prompt_hash` to `Invoice` and `Document` in `models.py`. Created linear add-only Alembic migration `a1b2c3f30005`. Threaded lineage dict through `extract_node()` and `run_extraction_agent()`, persisting onto rows in `queue_worker/handlers.py`.
+
+- `[x]` **BE Gap 529 (BE): Batch re-extraction CLI script for historical and failed invoices** — opened and fixed 2026-09-14.
+  - **Symptom.** Re-extraction was only available via single-item API (`routers/audit.py:306`); no bulk recovery script existed for operations.
+  - **Fix.** Created `scripts/batch_reextract.py` with CLI flags for `--tenant-id`, `--all-tenants`, `--status`, `--limit`, and `--dry-run`.
+
+- `[x]` **BE Gap 528 (BE): Ground-truth fixture coverage for all 10 document types verified in `tests/fixtures/doc_types/`** — verified 2026-09-14.
+  - **Status.** Verified complete suite of 14 document type fixture subdirectories and `MANIFEST.md` in `tests/fixtures/doc_types/` tested by `tests/test_a_series_fixtures.py`.
+
+- `[ ]` **BE Gap 522 (BE): Monetary amounts stored as `float` in `Invoice` / `Document` — GATED ON FOUNDER APPROVAL for column type unfreeze** — filed 2026-09-14.
+  - **Status.** Fully specified in `extraction_gaps_resolution_plan.md`. Gated per CONVENTIONS Rule 1 on explicit founder approval to unfreeze column types under Feature 27 taxonomy guidelines.
+
 ## Nice-to-Have / Future Enhancements
 
 
 Not gaps against any spec'd design — the current pipeline behaves correctly end-to-end. These are UX/observability improvements worth doing later, kept separate from the Gap list above so they don't get mistaken for defects.
+
 
 

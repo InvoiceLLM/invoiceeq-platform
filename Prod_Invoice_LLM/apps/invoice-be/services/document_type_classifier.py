@@ -566,7 +566,17 @@ _REFERENCE_QUALIFIER_TOKENS: Tuple[str, ...] = (
 #
 # STILL WORTH RE-RUNNING when the fixture set grows: six points is enough to
 # retire a placeholder, not enough to call the distribution known.
-DOC_TYPE_CONFIDENCE_THRESHOLD = 0.75
+DEFAULT_DOC_TYPE_CONFIDENCE_THRESHOLD: Final[float] = 0.75
+
+def get_doc_type_confidence_threshold() -> float:
+    """Return the configured classifier confidence threshold (defaults to 0.75)."""
+    try:
+        from config import get_settings
+        return float(getattr(get_settings(), "DOC_TYPE_CONFIDENCE_THRESHOLD", DEFAULT_DOC_TYPE_CONFIDENCE_THRESHOLD))
+    except Exception:
+        return DEFAULT_DOC_TYPE_CONFIDENCE_THRESHOLD
+
+DOC_TYPE_CONFIDENCE_THRESHOLD: float = DEFAULT_DOC_TYPE_CONFIDENCE_THRESHOLD
 
 # How much of the document the fallback prompt sees. The decision is made from
 # the title band and the overall shape; the whole document would cost tokens for
@@ -1117,7 +1127,8 @@ def classify_doc_type(
             "OTHER", evidence, 0.0, "fallback", f"llm_error ({stage_one_reason}): {e}"
         )
 
-    if classification.confidence < DOC_TYPE_CONFIDENCE_THRESHOLD:
+    threshold = get_doc_type_confidence_threshold()
+    if classification.confidence < threshold:
         return _result(
             "OTHER",
             classification.evidence,
@@ -1125,7 +1136,7 @@ def classify_doc_type(
             "fallback",
             (
                 f"low_confidence {classification.confidence:.2f} < "
-                f"{DOC_TYPE_CONFIDENCE_THRESHOLD} — model proposed "
+                f"{threshold} — model proposed "
                 f"{classification.doc_type} ({stage_one_reason})"
             ),
         )

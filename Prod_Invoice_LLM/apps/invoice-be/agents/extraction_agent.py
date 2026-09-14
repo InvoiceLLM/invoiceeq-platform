@@ -55,6 +55,7 @@ from services.document_type_classifier import (
 )
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
+from utils.injection_guard import DOCUMENT_TEXT_GUARD_INSTRUCTION, wrap_untrusted_ocr_text
 
 logger = logging.getLogger(__name__)
 
@@ -767,7 +768,7 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\nOCR Text:\n" + wrap_untrusted_ocr_text(ocr_text)
     
     content = [
         {
@@ -804,7 +805,7 @@ def build_outbound_multimodal_prompt(ocr_text: str, images: List[str], rules: Op
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\nOCR Text:\n" + wrap_untrusted_ocr_text(ocr_text)
 
     content = [{"type": "text", "text": prompt_text}]
     for img_url in images:
@@ -826,7 +827,7 @@ def _build_inbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
         dynamic_qa_context = state.get("dynamic_qa_context")
         if dynamic_qa_context:
             prompt += f"\nDYNAMIC LAYOUT PRE-ANALYSIS FINDINGS (Gap 4 Targeted Q&A):\n{dynamic_qa_context}\n"
-        prompt += f"\nExtract structured details from the following invoice OCR text:\n\n{state['ocr_text']}"
+        prompt += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\nExtract structured details from the following invoice OCR text:\n\n" + wrap_untrusted_ocr_text(state['ocr_text'])
     else:
         prompt = (
             "Extract structured details from the following standard invoice OCR text:\n\n"
@@ -838,7 +839,7 @@ def _build_inbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
             for rule in prompt_constraints:
                 prompt += f"- {rule}\n"
             prompt += "\n"
-        prompt += f"{state['ocr_text']}"
+        prompt += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\n" + wrap_untrusted_ocr_text(state['ocr_text'])
     return prompt
 
 
@@ -885,7 +886,7 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
         for rule in prompt_constraints:
             prompt += f"- {rule}\n"
         prompt += "\n"
-    prompt += state["ocr_text"]
+    prompt += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\n" + wrap_untrusted_ocr_text(state["ocr_text"])
     return prompt
 
 
@@ -914,7 +915,7 @@ def build_reference_multimodal_prompt(ocr_text: str, images: List[str], rules: O
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\nOCR Text:\n" + wrap_untrusted_ocr_text(ocr_text)
 
     content = [{"type": "text", "text": prompt_text}]
     for img_url in images:
@@ -966,7 +967,7 @@ def _build_reference_text_prompt(state: "ExtractionState", rules: Optional[Dict[
         for rule in prompt_constraints:
             prompt += f"- {rule}\n"
         prompt += "\n"
-    prompt += state["ocr_text"]
+    prompt += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\n" + wrap_untrusted_ocr_text(state["ocr_text"])
     return prompt
 
 
@@ -1323,7 +1324,7 @@ def build_generic_multimodal_prompt(
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\nOCR Text:\n" + wrap_untrusted_ocr_text(ocr_text)
 
     content = [{"type": "text", "text": prompt_text}]
     for img_url in images:
@@ -1351,7 +1352,7 @@ def _build_generic_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
         for rule in prompt_constraints:
             prompt += f"- {rule}\n"
         prompt += "\n"
-    prompt += state["ocr_text"]
+    prompt += f"\n{DOCUMENT_TEXT_GUARD_INSTRUCTION}\n" + wrap_untrusted_ocr_text(state["ocr_text"])
     return prompt
 
 
@@ -2181,7 +2182,22 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
             )
             extracted_data["tax_amount"] = di_tax_sum
 
-    return {"extracted_data": extracted_data, "alerts": alerts, "retry_count": retry_count + 1}
+    # BE Gap 523: Record extraction lineage
+    model_id = getattr(settings, "AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-5.6-luna") if settings.LLM_PROVIDER == "azure" else getattr(settings, "OLLAMA_MODEL", "local")
+    schema_name = getattr(profile.schema, "__name__", "InvoiceExtractionSchema")
+    extraction_lineage = {
+        "extraction_model_id": model_id,
+        "prompt_version": "v2.5",
+        "schema_version": schema_name,
+        "prompt_hash": None,
+    }
+
+    return {
+        "extracted_data": extracted_data,
+        "alerts": alerts,
+        "retry_count": retry_count + 1,
+        "extraction_lineage": extraction_lineage,
+    }
 
 
 def verify_node(state: ExtractionState) -> Dict[str, Any]:
@@ -2827,5 +2843,10 @@ def run_extraction_agent(
         # A6/R8. `None` on every flag-OFF run: the node that writes it is absent
         # from that graph, so the key is never in state to begin with.
         "doc_attributes": final_state.get("doc_attributes"),
+        # BE Gap 523: Extraction lineage fields
+        "extraction_model_id": (final_state.get("extraction_lineage") or {}).get("extraction_model_id"),
+        "prompt_version": (final_state.get("extraction_lineage") or {}).get("prompt_version"),
+        "schema_version": (final_state.get("extraction_lineage") or {}).get("schema_version"),
+        "prompt_hash": (final_state.get("extraction_lineage") or {}).get("prompt_hash"),
     }
 

@@ -129,6 +129,11 @@ class Invoice(SQLModel, table=True):
     references: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     addresses: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     compliance_metadata: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    # BE Gap 523: Extraction lineage tracking
+    extraction_model_id: str | None = Field(default=None, max_length=128)
+    prompt_version: str | None = Field(default=None, max_length=64)
+    schema_version: str | None = Field(default=None, max_length=32)
+    prompt_hash: str | None = Field(default=None, max_length=64)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = Field(default=None)
     # Gap 192: soft delete. NULL = live; set to utcnow() hides the row from
@@ -304,8 +309,8 @@ class Document(SQLModel, table=True):
     # the verbatim printed phrase it was decided from, and the classifier's
     # confidence. The evidence is persisted so a misclassification is
     # *reviewable* after the fact rather than only being a wrong answer, and the
-    # confidence because §2A/N2's 0.6 threshold is an uncalibrated placeholder
-    # and has nothing to calibrate against without the distribution.
+    # confidence because §2A/N2's threshold (calibrated to 0.75 via DOC_TYPE_CONFIDENCE_THRESHOLD
+    # in config.py) discards lower-confidence LLM classification proposals as OTHER.
     doc_type: str | None = Field(default=None, max_length=32, index=True)
     doc_type_evidence: str | None = Field(default=None)
     doc_type_confidence: float | None = Field(default=None)
@@ -378,6 +383,11 @@ class Document(SQLModel, table=True):
     # `agents/sage_prompts.py`), so a misfit DI read of a non-invoice cannot
     # reach an answer.
     source_document_json: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    # BE Gap 523: Extraction lineage tracking
+    extraction_model_id: str | None = Field(default=None, max_length=128)
+    prompt_version: str | None = Field(default=None, max_length=64)
+    schema_version: str | None = Field(default=None, max_length=32)
+    prompt_hash: str | None = Field(default=None, max_length=64)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = Field(default=None)

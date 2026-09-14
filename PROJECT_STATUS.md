@@ -9,7 +9,7 @@ _As of 2026-09-08. Sources: `be_features_tracker.md`, `fe_features_tracker.md`, 
 | Area | Functionality | % done | AI accuracy |
 |---|---|---|---|
 | Auth & RBAC | Clerk multi-tenant login, Admin/Auditor/Trainer roles | 100% | n/a |
-| Ingestion & Extraction (NOVA) | PDF upload → Doc Intelligence OCR → LLM field + line-item extraction, queue worker, SSE progress | 100% | Field composite **99.3%** (Luna); tax 96–100%, total 100%, line-item F1 98–100% (27 real PDFs, 3 runs) |
+| Ingestion & Extraction (NOVA) | PDF upload → Doc Intelligence OCR → LLM field + line-item extraction, queue worker, SSE progress (Fast path: 4–8s; Complex path with dynamic QA: 24–53s) | 100% | Field composite **99.3%** (Luna); tax 96–100%, total 100%, line-item F1 98–100% (27 real PDFs, 3 runs)* |
 | Duplicate detection | SHA-256 hash + vendor/number match, UI badges | 100% | deterministic |
 | Audit (SENTINEL) | Alert generation, split-screen review, approve/reject/finalize | 100% | Alert recall measured for 10 alert types (F23 benchmark) |
 | Chat (SAGE) | Conversational RAG over invoices, SQL drawer, threads | 100% | Golden set pass **72.2%** (26/36), accuracy 0.76, faithfulness 0.89; judge κ 0.85 |
@@ -24,6 +24,8 @@ _As of 2026-09-08. Sources: `be_features_tracker.md`, `fe_features_tracker.md`, 
 | Observability | App Insights, container health, Azure Workbooks, client RUM | 100% | n/a |
 | Test & benchmark suite | Tier-1 regression (~3,080 tests, real Postgres), Tier-2 daily benchmark | 100% | — |
 | Website | Landing, agent showcase, pricing, auth gateway, contact | 100% | n/a |
+
+_*Note on Extraction Latency: Raw Document Intelligence OCR completes in <3.8s, whereas end-to-end LLM graph extraction with dynamic QA, field extraction, and verification runs at 24–53s (agents/extraction_agent.py:2537)._
 
 ## Phase 2 — Automation & Any-Document Intelligence — **~85% done**
 

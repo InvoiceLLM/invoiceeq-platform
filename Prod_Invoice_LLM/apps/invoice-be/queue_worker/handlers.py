@@ -138,13 +138,14 @@ def _serialize_di_document_fields(fields) -> dict:
     return serialized
 
 
-def _run_ocr(file_path: str, settings: Settings):
+def _run_ocr(file_path: str, settings: Settings, doc_type: Optional[str] = None):
     """
     Runs the OCR / PDF layout extraction process for a given file path.
     - In local dev (LLM_PROVIDER=ollama): extracts text using local pypdf.
     - In production (LLM_PROVIDER=azure): calls Azure Document Intelligence.
     Azure path returns a dict with content, coordinates, field_confidence,
     tax_details_sum, and source_document_json (Gap 178).
+    BE Gap 526: doc_type selects between prebuilt-invoice and prebuilt-layout.
     """
     # Download file bytes from storage (Azure Blob or Local Filesystem)
     try:
@@ -176,7 +177,7 @@ def _run_ocr(file_path: str, settings: Settings):
             raise e
 
     # Production: Azure Document Intelligence
-    logger.info("Running Azure Document Intelligence OCR for file: %s", file_path)
+    logger.info("Running Azure Document Intelligence OCR for file: %s (doc_type=%s)", file_path, doc_type)
     try:
         from azure.ai.documentintelligence import DocumentIntelligenceClient
         from azure.core.credentials import AzureKeyCredential
@@ -188,6 +189,7 @@ def _run_ocr(file_path: str, settings: Settings):
         )
 
     from utils.doc_intel_client import get_doc_intel_pool
+    from services.ocr_registry import resolve_ocr_model_for_doc_type
     pool = get_doc_intel_pool(settings)
 
     # ---------------------------------------------------------------------------
@@ -202,6 +204,9 @@ def _run_ocr(file_path: str, settings: Settings):
     last_exc = None
     result = None
 
+    default_model = getattr(settings, "DOC_INTEL_MODEL_ID", "prebuilt-invoice")
+    selected_model_id = resolve_ocr_model_for_doc_type(doc_type, default_model=default_model)
+
     for attempt in range(MAX_OCR_ATTEMPTS):
         endpoint, key = pool.next_endpoint_key()  # rotates resource on every attempt
         try:
@@ -211,9 +216,7 @@ def _run_ocr(file_path: str, settings: Settings):
             )
             
             poller = client.begin_analyze_document(
-                # Gap 465: from settings (was hardcoded "prebuilt-invoice"); getattr so a
-                # test double built from SimpleNamespace still runs.
-                model_id=getattr(settings, "DOC_INTEL_MODEL_ID", "prebuilt-invoice"),
+                model_id=selected_model_id,
                 body=pdf_bytes,
                 content_type="application/octet-stream"
             )
@@ -459,6 +462,10 @@ def _persist_non_invoice_document(
     doc_attributes: dict | None,
     doc_type_confidence: float | None,
     source_document_json: dict | None,
+    extraction_model_id: str | None = None,
+    prompt_version: str | None = None,
+    schema_version: str | None = None,
+    prompt_hash: str | None = None,
 ) -> Document:
     """Feature 27 (G9 / E10): write the `documents` row and delete the placeholder
     `invoice` row **in one transaction**.
@@ -538,6 +545,10 @@ def _persist_non_invoice_document(
         status=status,
         sa_alerts=alerts,
         source_document_json=source_document_json,
+        extraction_model_id=extraction_model_id,
+        prompt_version=prompt_version,
+        schema_version=schema_version,
+        prompt_hash=prompt_hash,
         completed_at=datetime.utcnow(),
     )
     session.add(document)
@@ -998,6 +1009,10 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     doc_attributes=doc_attributes,
                     doc_type_confidence=doc_type_confidence,
                     source_document_json=source_document_json,
+                    extraction_model_id=agent_result.get("extraction_model_id"),
+                    prompt_version=agent_result.get("prompt_version"),
+                    schema_version=agent_result.get("schema_version"),
+                    prompt_hash=agent_result.get("prompt_hash"),
                 )
 
                 # Embed into the SIBLING collection (§5 step 9 / G10), never the
@@ -1162,6 +1177,11 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.references = extracted_data.get("references", [])
                 invoice.addresses = extracted_data.get("addresses", [])
                 invoice.compliance_metadata = extracted_data.get("compliance_metadata", [])
+                # BE Gap 523: Persist extraction lineage
+                invoice.extraction_model_id = agent_result.get("extraction_model_id")
+                invoice.prompt_version = agent_result.get("prompt_version")
+                invoice.schema_version = agent_result.get("schema_version")
+                invoice.prompt_hash = agent_result.get("prompt_hash")
                 invoice.status = status
                 invoice.completed_at = datetime.utcnow()
                 invoice.sa_alerts = alerts

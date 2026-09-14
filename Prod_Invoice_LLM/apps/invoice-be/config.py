@@ -568,6 +568,11 @@ class Settings(BaseSettings):
     # environment that never heard of this setting behaves exactly as decision 2
     # requires with no change at all.
     AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME: str = ""
+    # BE Gap 525: LLM request timeout and retry limits
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 60.0
+    LLM_MAX_RETRIES: int = 3
+    # BE Gap 524: Document type classifier confidence threshold (recalibrated from 0.6 placeholder)
+    DOC_TYPE_CONFIDENCE_THRESHOLD: float = 0.75
     # Gap 465: the two non-OpenAI model choices, previously hardcoded at their
     # single call sites (`queue_worker/handlers.py::_run_ocr` and
     # `chroma_client.py::get_embedding_model`). Changing EMBEDDING_MODEL_NAME

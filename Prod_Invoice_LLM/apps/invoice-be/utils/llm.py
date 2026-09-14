@@ -225,6 +225,8 @@ def build_llm(
                 "api_key": setting.AZURE_OPENAI_API_KEY,
                 "api_version": api_version or setting.AZURE_OPENAI_API_VERSION,
                 "azure_deployment": deployment,
+                "request_timeout": getattr(setting, "LLM_REQUEST_TIMEOUT_SECONDS", 60.0),
+                "max_retries": getattr(setting, "LLM_MAX_RETRIES", 3),
             }
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
