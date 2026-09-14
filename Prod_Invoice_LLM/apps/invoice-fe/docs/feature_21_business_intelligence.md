@@ -179,6 +179,10 @@ rewrites JSX in any `.tsx` it imports.
 - Not verified: anything against a real backend with `ENABLE_ATTACHMENT_INSIGHTS=true`
   — §6's 21.5 asks for it, and it was not run. Every proof above is stubbed.
 
+### 9.5 Recorded run — 2026-09-14 (local stack, real Azure DI + Azure OpenAI, NOT the dev stack)
+
+*Additive per CONVENTIONS hard rule 4; closes 21.5's real-backend gap above for the local-stack substitute.* BE + worker restarted with `ENABLE_ATTACHMENT_INSIGHTS=true`; a synthetic non-invoice PO PDF attached in a real chat session (no ready-made fixture existed) was extracted by real Azure Document Intelligence, matched (Tier 2, vendor+date window) against 3 real seeded invoices, and the real Azure OpenAI narration model produced an arithmetically exact overbilling finding (`verdict_source: "model"`, `gate_status: "ok"`). The FE `/chat` screen rendered the intelligence bubble (verdict, per-finding confidence chips, a "Not checked" section) under the assistant turn; the Discuss chip correctly prefilled the composer with the finding's context; per-card thumbs (`POST /chat/messages/{id}/insight-feedback`) confirmed working via a direct API call (UI click-through on that specific button was not independently captured in this session). Evidence: `apps/invoice-be/docs/test_evidence/f30_chat_insights_2026-09-14/`.
+
 ### 8.1 Rulings on the build's open items — founder 2026-09-08 evening
 
 | item | ruling |

@@ -1819,6 +1819,33 @@ otherwise assume they were arbitrary:
    document. Negative control run while writing the test: with `_TITLE_LINE_COVERAGE`
    temporarily 0.0, the e-way-bill sample classifies `INVOICE` with evidence "Document
    Details: Tax Invoice No INV-2026-0447 dated 01/09/2026". The guard is load-bearing.
+
+   **Amended 2026-09-14 — BE Gap 516, the second reading of the same gate.** Measuring the
+   *whole* line silently assumes the printed title is the only thing on it. The commonest
+   typesetting convention breaks that for every document type at once: the issuer's own
+   name shares the title line. `HDFC BANK LIMITED — STATEMENT OF ACCOUNT` scored **0.53**
+   and was read as a body mention; `Om Stationery Pvt Ltd | Delivery Challan` scores 0.36.
+   Nothing was wrong with the vocabulary — the title is there and it matches — the
+   denominator was wrong. `classify_doc_type_deterministic()` now measures each line
+   **twice**: whole first (unchanged, and it short-circuits, so this pass can never change
+   an answer the old one produced), then per **segment** after splitting the RAW line on
+   `_TITLE_SEGMENT_SEPARATORS` (em/en dash, horizontal bar, figure dash, `|`, `•`, `:`, the
+   *spaced* `-` and `--`; the bare ASCII hyphen is deliberately excluded — it is a hyphen in
+   "E-Way Bill", a digit group in "PO-2024-1188" and a date separator in "2026-09-01" far
+   more often than a title separator). Both passes share `_resolve_title_line()`, so the two
+   cannot disagree about what "ambiguous" means. **This is a property of typesetting, not a
+   fact about banks** — no synonym was added, and a new issuer, language or document type
+   needs no edit here. The smaller denominator makes a *reference* easier to mistake for a
+   title, so the segment pass is refused when the line carries a reference qualifier from
+   `_REFERENCE_QUALIFIER_TOKENS` (`no`, `number`, `nr`, `ref`, `reference`, `date`, `dated`,
+   `against`, `vide`) or when a qualifying segment's residual tokens contain a digit — a
+   shape rule, not a vocabulary one. The e-way-bill negative control above still holds.
+   **Boundary:** this fixes the denominator, never the vocabulary — `BANK STATEMENT` is
+   still `(None, "")` and still reaches stage 2, because that phrase is in no synonym tuple
+   and the founder's 2026-09-09 ruling is that a failing string rule is removed, not
+   extended. **Evidence:** `tests/test_document_type_classifier.py` **260 passed** on real
+   Postgres (66 of them the new registry-driven property tests: every separator × five
+   issuers, every document type's first synonym, six reference-line controls).
 2. **Containment resolves specificity, length does not.** "PROFORMA INVOICE" matches both
    `proforma invoice` and `invoice`; the second is the first's tail, not evidence of a
    second type, so a match wholly inside a longer one is dropped before ambiguity is

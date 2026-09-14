@@ -28,6 +28,9 @@ The backend fixed that structurally. This pass makes the UI match — and closes
 * [components/chat/ThumbsDownTriage.tsx](../components/chat/ThumbsDownTriage.tsx) → `ThumbsDownTriage`
 * Proxy routes: `app/api/trainer/sessions/from-invoice/`, `app/api/trainer/sessions/[id]/pdf/`, `app/api/trainer/sessions/[id]/preview/`, `app/api/trainer/sessions/[id]/corrections/{tolerance,confidence-threshold,alert-override,missed-alert}/`, `app/api/trainer/alert-types/`, `app/api/chat/messages/[messageId]/triage/`, `app/api/chat/messages/[messageId]/triage/source-verdict/`, `app/api/chat/rules/{,categories,preview,commit,[ruleId]}/`
 * [e2e/trainer-alert-anchored.spec.ts](../e2e/trainer-alert-anchored.spec.ts) → 5 tests
+* **FE Gap 478 (2026-09-14)** [components/settings/ChatRulesPanel.tsx](../components/settings/ChatRulesPanel.tsx) → `ChatRulesPanel` (default), `chatRuleCategoryLabel()`, `formatChatRuleAddedAt()`
+* **FE Gap 478 (2026-09-14)** [app/settings/chat-rules/page.tsx](../app/settings/chat-rules/page.tsx) → `ChatRulesSettingsPage`, `load()`, `handleDelete()`
+* **FE Gap 478 (2026-09-14)** [tests/unit/chat-rules-panel.test.tsx](../tests/unit/chat-rules-panel.test.tsx) → 9 vitest cases
 
 **Changed**
 * [app/trainer/page.tsx](../app/trainer/page.tsx) → `TrainerPermissionPrompt` (new), `TrainerContent` rewritten: `handlePickInvoice()`, `handleUploadFile()`, `handleChangeDocument()`, `handleSubmitTolerance()`, `handleSubmitThreshold()`, `handleSubmitOverride()`, `handleFlagMissed()`, `afterStage()`, `handleOpenCommit()`, `handleConfirmCommit()`, `errorMessage()`. Removed: `handleScopeChange()`, `handleSectionChange()`, `handleVendorEntryModeChange()`, `handleSelectVendor()`, `handleClearFile()`
@@ -166,3 +169,74 @@ Recorded rather than quietly absorbed.
 **The 1 failure is pre-existing and unrelated**: `group-a-layout-overflow.spec.ts › Gap 86 — Ingestion header row › toggle is absent for a receive-only tenant`, on `/ingestion`. **Confirmed pre-existing by re-running it with this pass's `app/`, `components/` and `lib/` changes stashed — it fails identically.** Nothing in this work touches `/ingestion`, `PageHeader` or the service-flow toggle.
 
 **Not verified**: nothing here has been exercised against a real backend, a real tenant or real Azure OCR/LLM — every spec stubs `/api/**`. Specifically unverified end-to-end: the missed-alert LLM drafting round-trip, real preview impact numbers, the chat triage auto-diff against real stored data, and the inline PDF render in the triage dialog (the iframe is stubbed with placeholder bytes).
+
+---
+
+## §11. Reading the rules back — Settings › Chat Rules (FE Gap 478, 2026-09-14)
+
+The lane above only ever **wrote** chat rules. `POST /chat/rules/commit` stored a
+`TenantChatRule`, that rule was injected into every later question for the whole
+workspace, and no screen in the product read it back — `GET /chat/rules` and
+`DELETE /chat/rules/{rule_id}` had existed since Feature 18 with zero callers, and
+the Trainer's `RuleHistoryDrawer` lists `ExtractionTemplate.rules` only and always
+will, because the two stores are separate by design. The practical consequence the
+founder hit: a rule taught from one bad answer silently re-scopes unrelated
+questions, and the only way to even discover it existed was to open
+`/api/chat/rules` in a browser tab.
+
+**What was built.** A new tenant-wide settings screen, `/settings/chat-rules`:
+
+* `ChatRulesSettingsPage` (`app/settings/chat-rules/page.tsx`) — owns fetching and
+  mutation. `load()` fires `chatTrainingService.listRules()` and
+  `chatTrainingService.getCategories()` in parallel; a categories failure is
+  swallowed (`.catch(() => [])`) so a label lookup can never hide the rules
+  themselves. `handleDelete(rule)` calls `chatTrainingService.deleteRule()` and
+  drops the row from local state — the backend hard-deletes and flushes the answer
+  cache, so there is no soft-deleted/greyed state to represent. Header via
+  `usePageHeader` with `backHref: "/settings"`, matching the other settings
+  subpages; errors render as generic strings, never a raw response body
+  (the Website Gap 13 rule the webhooks screen established).
+* `ChatRulesPanel` (`components/settings/ChatRulesPanel.tsx`) — presentational.
+  One row per rule showing the literal `ruleText` that is injected, a category
+  chip, "Added ‹timestamp›", the author when the API carries one (`createdBy` is
+  nullable), and an `Inactive` chip when `enabled` is false. Delete is a per-row
+  button that is **not rendered at all** without `canTrain`, replaced by an
+  amber read-only notice; the confirm (`window.confirm`) lives with the
+  affordance, since deleting a rule changes every future answer and cannot be
+  undone. The empty state states where rules come from: a thumbs-down on a chat
+  answer.
+* `chatRuleCategoryLabel(category, labels)` — the label comes from the backend's
+  own closed vocabulary (`GET /chat/rules/categories`); an unknown key degrades to
+  a humanised form of the key. There is **no category map in the FE**, so a
+  category added backend-side renders correctly with no frontend edit.
+* `formatChatRuleAddedAt(createdAt)` — locale-formatted, `"Date unknown"` for a
+  null or unparseable timestamp rather than `Invalid Date`.
+* Registration: a `Chat Rules` tile in `app/settings/page.tsx`'s `INTEGRATIONS`
+  list, deliberately **not** `adminOnly` — the list is readable by anyone who can
+  open Settings and the destructive half is gated on `can_train`, the same
+  permission `routers/chat.py::delete_chat_rule` enforces via `require_can_train`.
+  The FE gate is discoverability; the backend is the control.
+
+**Deviations from the proposal in the gap entry.** None on scope: no backend
+change was needed, the proxy routes (`app/api/chat/rules/route.ts`,
+`app/api/chat/rules/[ruleId]/route.ts`) and the service methods
+(`listRules`/`deleteRule`) already existed unused. Two additions beyond the
+proposal: the `Inactive` chip (the API returns `enabled`, and a disabled rule
+misrepresented as active would be worse than not showing the field) and a
+Refresh control.
+
+**Boundary — what this does not do.** It cannot *edit* a rule (the backend has no
+update endpoint; the workflow is delete and re-teach), cannot disable one without
+deleting it (no PATCH for `enabled`), does not show which answers a rule has
+affected, and does not surface the rule set anywhere inside chat itself. A
+non-Admin trainer must reach it by URL or tile — the sidebar's Settings entry is
+Admin-gated (unchanged by this pass).
+
+**Verification (FE Gap 478).** `npx tsc --noEmit` — exit 0, no output.
+`npm test` (vitest) — `Test Files  5 passed (5)` / `Tests  44 passed (44)`,
+including the new `tests/unit/chat-rules-panel.test.tsx` (9 tests) whose
+assertions are properties of the render against a fixture the test mutates
+(rules renamed, an unknown category substituted, a row added, the author
+dropped), not literal expected strings. **Not verified:** the page's own fetch
+and delete wiring has never run against a live backend or in a browser — no
+Playwright spec and no manual run — so the gap is `[~]`, not `[x]`.

@@ -253,7 +253,9 @@ added. None of those six files, nor their subjects, is touched here. The
 `--ignore` is required because `tests/us/run_chat_live_test.py` and
 `tests/realworld_tenant/run_chat_live_test.py` share a module basename with no
 `__init__.py`, which aborts collection — pre-existing, both files tracked,
-neither touched by this build.
+neither touched by this build. (**Fixed 2026-09-14, BE Gap 477:** both scripts
+are now `live_chat_check.py` in their own directories and `pytest tests` needs
+no `--ignore`. The command above is left as-run.)
 
 ---
 
@@ -359,6 +361,14 @@ The new test is the founder's exact case:
 `test_preview_and_build_both_succeed_on_a_same_row_count_clone` — same row count,
 changed dates, changed unit price → preview `200 application/pdf` **and** create
 `201`, with `builder_intent["render_mode"] == "rerender"` on the stored row.
+
+## Recorded run — 2026-09-14 (local stack, real Azure DI + Azure OpenAI, NOT the dev stack)
+
+*Additive per CONVENTIONS hard rule 4.*
+
+A real clone was performed end to end through the live BE endpoints (functional-test session, not a pytest run): `GET build-defaults` on seeded `VERIFIED` outbound invoice `IEQ-US-9003` -> `POST build/preview` (200, `application/pdf`) -> `POST build` (201). The created row reached **VERIFIED** with `sa_alerts=[]` (zero `builder_render_mismatch`) and `builder_intent.render_mode="rerender"`, confirming BE Gap 462's re-render-only path is what actually executes on a real request, not just in `pytest`. FE outbound-review page rendered the clone correctly (customer, incremented invoice number, rolled-forward dates, correct total). Evidence: `docs/test_evidence/f17_invoice_builder_2026-09-14/`. This closes the "20.6 (live)" / "dev-stack owed" row referenced from FE Feature 20's spec **for the local-stack-with-real-Azure substitute only** — the literal deployed dev stack was unreachable this session (no Clerk login) and remains not run.
+
+---
 
 ### Noted for BE Gap 463, not fixed here
 

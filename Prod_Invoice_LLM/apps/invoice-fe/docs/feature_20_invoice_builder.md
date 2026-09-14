@@ -186,3 +186,8 @@ still carries no `subtotal`/`grand_total`.
 **The standing caveat is unchanged and not weakened.** Every `/api/**` call in
 that spec is stubbed, so it encodes the contract rather than observing it. The
 `20.6 (live)` dev-stack row remains **not run** — still owed.
+
+### Live row, partially closed — 2026-09-14 (local stack, real Azure AI, NOT the dev stack)
+
+A real clone was run against the live BE (not the stubs) from a functional-test session: `build-defaults` -> `build/preview` -> `build` on a seeded VERIFIED outbound invoice reached VERIFIED with zero alerts. See `apps/invoice-be/docs/feature_17_invoice_builder.md`'s matching entry and `apps/invoice-be/docs/test_evidence/f17_invoice_builder_2026-09-14/`. **This closes the `20.6 (live)` row for the local-stack-with-real-Azure substitute only** — the deployed dev stack itself was unreachable this session (no Clerk login) and stays not run.
+

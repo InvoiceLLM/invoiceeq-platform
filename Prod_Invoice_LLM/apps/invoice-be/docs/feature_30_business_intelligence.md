@@ -599,7 +599,12 @@ COMMIT; `jsonable()` now converts once, centrally).
 **6 failed, 3738 passed, 13 skipped** (168.7 s). The two ignored directories
 cannot be collected together at all: they contain two files named
 `run_chat_live_test.py` with no `__init__.py`, which aborts collection —
-pre-existing and unrelated (recorded in **Gap 495**).
+pre-existing and unrelated (recorded in **Gap 495**). **No longer true as of
+2026-09-14 (BE Gap 477):** both scripts were renamed to `live_chat_check.py`
+in their own directories, out of pytest's collection glob, and `pytest
+--collect-only -q tests` now collects with no `--ignore` flags
+(`3940/3945 tests collected (5 deselected)`). The run line above is kept
+verbatim as the record of what was actually executed that day.
 
 One of the six failures was Feature 30's own and is fixed:
 `test_invoice_builder.py::test_the_notes_column_is_a_migrated_column_on_a_single_head`
@@ -799,5 +804,45 @@ cards, bubble titles, and the model's sentence.
 ### 12.7 Still open on this feature after 2026-09-14
 
 Nothing in Tracks A–E. Gap 516 (STATEMENT_OF_ACCOUNT overload) stays parked on Feature 27's frozen
-taxonomy; Feature 33 / FE Feature 22 / Feature 31 parked by ruling. The full 1h23m suite has not been
+taxonomy — **updated 2026-09-14: 516.2, the classifier miss, is now FIXED (§12.8); only 516.1, the
+type split, is still parked**; Feature 33 / FE Feature 22 / Feature 31 parked by ruling. The full 1h23m suite has not been
 re-run since Tracks B–E landed — the F30 file set, guards, chat neighbours and the FE suite have.
+
+### 12.8 Gap 516.2 closed — 2026-09-14 (the classifier; 516.1 stays blocked)
+
+**Half 2 is fixed, in `services/document_type_classifier.py`.** A bank statement attached in chat
+reached the insight bubble only if stage 1 recognised its title, and the demo's own file
+(`BankStatement_HDFC_4471_Aug2026.pdf`, showcase README §5 scenario 10) did not: its printed title
+line `HDFC BANK LIMITED — STATEMENT OF ACCOUNT` scored **0.53** against the 0.6
+`_TITLE_LINE_COVERAGE` gate, because the gate measured the whole line and the issuer's name is on
+it. The fix is the mechanism, not the vocabulary — every line is now measured twice, whole first
+(short-circuiting, so no existing answer can change) and then per **segment** split on
+`_TITLE_SEGMENT_SEPARATORS`. `<ISSUER> <separator> <DOC TYPE>` is now recognised for **every**
+document type, so it also repairs `Om Stationery Pvt Ltd | Delivery Challan` and
+`Deutsche Bank AG – Kontoauszug`. Guard against the regression the smaller denominator opens: a line
+carrying a `_REFERENCE_QUALIFIER_TOKENS` word, or a segment whose residual tokens carry a digit, is
+refused the segment pass — the e-way-bill control (`Document Details: Tax Invoice No INV-2026-0447
+dated 01/09/2026`) still yields no deterministic type. Full design record: `feature_27_generic_
+extraction.md`, G1/G2 build note item 1, amendment dated 2026-09-14.
+
+**Boundary, stated rather than implied.** No synonym tuple was touched (founder ruling 2026-09-09:
+a failing string rule is removed, not extended). `BANK STATEMENT` as a standalone title is still
+`(None, "")` and still costs a stage-2 model call, which then answers from the closed vocabulary.
+The fix repairs titles whose words we already know; it cannot recognise vocabulary we do not have.
+
+**Gap 516.1 — the `STATEMENT_OF_ACCOUNT` overload — is NOT fixed and was not attempted.** Re-checked
+against `active-work.md` on 2026-09-14: "Frozen / do not touch" still reads *no taxonomy/schema
+amendment work starts until F27's existing ledger closes*, and Feature 27's own §10A ledger still has
+**task V `[ ]`** (no Postgres verification, no `test_evidence/` folder) and R-27-26's migration
+recorded as **never applied**. The precondition is unmet, so a fourteenth type (`BANK_STATEMENT`) was
+not added; `services/attachment_extraction.py`'s `land_statement_lines()` dispatch still keys on
+`STATEMENT_OF_ACCOUNT` and `DOC_TYPE_LABELS` still calls a supplier statement "bank statement" to the
+user. Founder call required — it is a taxonomy decision, not a code one.
+
+**Verification (real Postgres, `localhost:5433/invoice_db`).** `tests/test_document_type_classifier.py`
+**260 passed in 29.00s** (66 new registry-driven property cases). Neighbours
+`test_classifier_prechecks / test_generic_extraction / test_a_series_fixtures / test_doc_attributes /
+test_no_hardcoding` **504 passed, 2 skipped in 45.52s**. Insight/attachment side
+`test_attachment_insights / test_bank_ledger / test_bank_matching / test_chat_attachments /
+test_compare_documents / test_insight_eval` **183 passed in 122.16s**. `tests/test_no_hardcoding.py`
+alone **4 passed in 41.87s**.

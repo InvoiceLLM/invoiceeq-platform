@@ -2165,6 +2165,29 @@ every case. There is no SendGrid account in this environment, and the assertion 
 matters is the exact call that *would* have been made — recipients, subject, attachment
 names and content types. No real mail was sent and none is claimed.
 
+**2026-09-14 (BE Gap 477) — this checkpoint was deleted, and is restored and repaired.**
+Commit `3415840` removed `test_approve_sends_email_summary_on_postgres` from the file
+rather than fixing it; the "5 environment failures" tracked under Gap 477 were four
+deleted tests and one more, not five failing ones. The test is back, and the two reasons
+it failed are fixed in the test, not worked around:
+
+* **Tenant resolution.** It assumed mock auth "always resolves `MOCK_TENANT_ID`". That is
+  true only of the empty SQLite fixture. `get_tenant_context_allow_unpaid()` resolves the
+  mock identity by `clerk_user_id`, and on the dev Postgres that user row already exists
+  bound to a benchmark tenant — so the endpoint's tenant-isolation filter looked in a
+  different tenant and answered `404 Invoice not found or access denied`, while the
+  API-key path (which carries its own tenant) returned 200. New helper
+  `_mock_auth_tenant_id(pg_session)` asks the auth dependency itself, on the same session
+  the request will use, and every seeded row now carries that tenant id.
+* **Recipients.** `to_addresses == [address]` assumed the tenant had no other registered
+  inbound sender. The assertion now reads the registered inbound allowlist out of
+  Postgres and asserts set-equality with it, plus membership of the address this test
+  registered — stronger on a shared database, identical on a clean one.
+
+Evidence: `DATABASE_URL=postgresql://…@localhost:5433/invoice_db pytest
+tests/test_workflow_email_summary.py -q` → **`23 passed in 15.78s`** (22 before the
+restore; the 23rd is this checkpoint, not skipped).
+
 ### 12. Gap 338 (Drive write-back) — automated tests, 147 passed
 
 ```
@@ -2264,6 +2287,17 @@ the three resolves wrote.
 There is no Google account in this environment; the assertion that matters is the exact
 call that *would* have been made — folder, filenames, content types and bytes. No file was
 written to any real Drive and none is claimed.
+
+**2026-09-14 (BE Gap 477) — restored and repaired, same as §11.** `3415840` had deleted
+`test_approve_archives_to_drive_on_postgres` outright. It is back, seeding under the
+tenant `_mock_auth_tenant_id(pg_session)` reports instead of assuming `MOCK_TENANT_ID`
+(same root cause and same fix as §11 — the 404 was a tenant mismatch, not a missing
+credential), with the duplicated `dependency_overrides[get_db_session]` assignment left
+by the earlier partial fix removed. No assertion was changed or relaxed.
+
+Evidence: `DATABASE_URL=postgresql://…@localhost:5433/invoice_db pytest
+tests/test_workflow_drive_archive.py -q` → **`31 passed in 14.84s`** (30 before the
+restore).
 
 ### 14. Gap 340 (sandbox keys) — automated tests, 50 passed
 
@@ -2721,7 +2755,9 @@ pytest tests/test_api_keys.py tests/test_rbac.py tests/test_audit.py \
 **Full suite** (bare `pytest tests/` errors at collection -- a pre-existing
 basename collision between two gitignored manual-live-test scratch scripts,
 `tests/us/run_chat_live_test.py` and `tests/realworld_tenant/run_chat_live_test.py`,
-same workaround this repo used on 2026-08-28):
+same workaround this repo used on 2026-08-28; both were renamed to
+`live_chat_check.py` on 2026-09-14 under BE Gap 477, so the collision and the
+workaround are both gone — the run below is left as it was executed):
 
 ```
 pytest tests/ --ignore=tests/us --ignore=tests/realworld_tenant -q -p no:randomly

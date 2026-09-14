@@ -126,7 +126,10 @@ row above it was produced by the pre-Gap-479 judge, which failed 20 of the 28 an
 correct (κ 0.151); the rows are kept because they are the history the fix was found from, not because
 they are comparable. On the fixed judge, live (`runs/f29-golden-20260907/`, 36 turns, judge gpt-5-mini):
 **κ 0.852 / agreement 94.4% against the reference verdicts, gate ≥ 0.6 passes, 0 false passes, 2 false
-fails** — one a transient Postgres connection drop inside the run, one **Gap 480**. Task 29.5's evidence
+fails** — one a transient Postgres connection drop inside the run, one **Gap 480** (closed
+2026-09-14, see the build note below: that turn's verdict flips to PASS under the abstention rule,
+so the same run reads 28/36 with 1 false fail, the transient — a figure owed a re-scoring pass,
+not a re-run). Task 29.5's evidence
 wiring is confirmed on live data (Gap 478): `evidence_source = "app"` on 31 of 36 turns and the graded
 context carries `FULL INVOICE RECORD(S)` on 22 of 36, against **0 of 36** on the same build the day
 before. Failure taxonomy: `wrong_evidence` 9 → 4, `no_computation` 9 → 4, `narration` 4 → 0, `judge`
@@ -265,6 +268,11 @@ change, and what not to build yet.
 | `agents/query_agent.py` | `_run_attachment_pair_turn()` | edit | task 29.7: when both documents have confirmed invoices and the question is not "compare these two", run each document against its own invoice and merge |
 | `agents/query_agent.py` | `_answer_contract_gate()` | new | extracts every number from the narration, checks each appears in the payload; one regeneration with the offending figure named, then abstain |
 | `agents/query_agent.py` | `_abstain_payload()` | new | `{status:"insufficient_evidence", missing:[...]}` rendered as a specific sentence |
+| `services/agent_eval.py` | `is_abstain_turn()`, `EvalScores.abstained`, `decide_pass()`, `score_answer(abstained=)` | new / edit (BE Gap 480) | reads the turn's declared refusal outcome off `judge_evidence`; faithfulness stops voting for an abstain turn in both pass branches |
+| `agents/query_agent.py` | `_run_query_agent()` → `result["judge_evidence"]` | edit (BE Gap 480) | publishes `answer_gate` / `turn_status` / `stop_reason` so the refusal signal is deterministic, not inferred from prose |
+| `scripts/run_agent_eval.py` | `run_turn()`, `score_turn()` | edit (BE Gap 480) | records `abstained`/`answer_gate`/`turn_status`/`stop_reason` per turn and passes the flag into `score_answer()` |
+| `services/online_quality_judge.py` | `_judge_turn()` | edit (BE Gap 480) | the live judge reads the same signal, so production and the golden bank share one pass rule |
+| `tests/test_judge_gap480.py` | — | new (BE Gap 480) | 51 cases: the signal is enumerated not textual, the rule holds across accuracy × faithfulness, and the wiring exists at all three call sites |
 | `agents/entity_resolver.py` | `resolve_entities()`, `ResolvedEntity` | new | deterministic invoice-number / vendor / attachment / session-reference resolution; returns 0, 1 or N candidates per mention |
 | `agents/chat_planner.py` | `plan_turn()`, `TurnPlan`, `CAPABILITIES` | new | one fast-model call → typed plan validated against `CAPABILITIES`; flag-gated |
 | `services/full_records.py` | `fetch_full_records()`, `full_record_block()` | new | every column of N invoices, JSON parsed, plus their Chroma chunks, rendered as one block with a cap |
@@ -894,6 +902,46 @@ What changed, and what did not:
 Consequence for §2.3's numbers: the "pass %" column of every run before 2026-09-07 was produced
 by the old rule and is not comparable to runs after it. Task 29.2's calibration must be re-run on
 the new rule, and decision 4's 100-turn set is still owed.
+
+#### Amendment — the abstention rule (BE Gap 480, 2026-09-14)
+
+The one AND-clause Gap 479 kept — faithfulness of exactly 0.0 fails whatever accuracy says — is a
+fabrication guard, and it structurally failed the answer shape task 29.9 exists to produce. A
+decision-3 refusal asserts things about the **schema** ("there is no finance-approval column"), and
+the schema is not in `judge_evidence.context`, which carries rows and document text; so a correct
+abstention has no evidence to be faithful to and scores 0.00 by construction. The founder picked
+option (c) of the Gap entry: mark the abstention in the payload and grade it on accuracy alone.
+
+- **The signal is the turn's own declared outcome, never the prose.** `run_query_agent()` now puts
+  `answer_gate`, `turn_status` and `stop_reason` on `result["judge_evidence"]`, and
+  `services/agent_eval.is_abstain_turn()` is the single reader. Two states count: the contract
+  gate's `answer_gate == "abstained"` (task 29.9) and `turn_status == "declined"`, which is where
+  every other refusal lands.
+- **Deviation from the Gap entry, found while implementing.** The entry's premise was that
+  `answer_gate` alone carries the signal. It does not: the gate only runs on the SQL *summary*
+  branch, and `unsupported_field_asks_for_alternative` — the case the Gap was filed for — generated
+  no SQL at all (`generated_sql: null`, empty context, `evidence_source: "recorder"`). It refused
+  through the null-SQL path, which sets `status=declined`/`stop_reason=sql_declined` and never
+  touches `answer_gate`. Reading `answer_gate` alone would have shipped a fix that did not fix its
+  own case, so the predicate is the union of the two.
+- **`decide_pass()` drops faithfulness from the vote for an abstain turn, in both branches** — the
+  accuracy branch (the golden bank) and the no-reference branch (the online judge, where a refusal
+  would otherwise die on the 0.80 floor for having no rows to cite). Faithfulness is still scored,
+  recorded and trended; it stops voting, it does not stop being measured, and `score_notes` says so.
+- **Untouched:** the fabrication guard for every ordinary answer, all three floors, and the judge's
+  prompts. Option (b) — putting the schema into the judge context — was not built; it remains
+  compatible with this.
+- **Boundary.** An abstention that is itself *wrong* (refusing on a field that does exist) is caught
+  by accuracy alone, and in the online judge — which has no reference answer, so no accuracy — by
+  relevance alone. Nothing here makes abstaining safe; it makes it gradeable. A turn that raised
+  before `judge_evidence` was built, and a cache hit (no `judge_evidence` at all), carry no signal
+  and are graded as ordinary answers.
+- **Verified** against real Postgres (`localhost:5433/invoice_db`), 2026-09-14: `tests/test_agent_eval.py`
+  → `97 passed`; `tests/test_judge_gap480.py` (new, 51 cases) → `51 passed`; the eval set
+  `test_agent_eval + test_judge_gap479 + test_judge_gap480 + test_online_quality_judge +
+  test_eval_calibration + test_run_agent_eval_cli + test_answer_contract` → `238 passed`; the
+  `judge_evidence` consumers `test_capability_flags + test_chat_queue + test_rag + test_telemetry`
+  → `190 passed`; `tests/test_no_hardcoding.py` → `4 passed`. No live golden run was made.
 
 
 ### Scope note — split to Feature 30 (2026-09-07)

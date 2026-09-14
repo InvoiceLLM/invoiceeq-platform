@@ -190,6 +190,35 @@ of the same class as Gap 304 half 2, not a wiring change.
 
 **One further deployed-panel finding from the same pass, also not changed (infra scope, Gap 305):** `f1-breached-signals` computes `Status = iff(latest_breached == "1", "breached", "ok")`. It keys off the event's `breached` flag alone and never inspects `value`, so a signal whose denominator is permanently 0 — which is exactly `budget_exhaustion_rate`'s state after Gap 316 — renders a **green "ok"** tile forever. That is the precise failure mode `services/online_eval_signals.py::SignalResult`'s docstring exists to prevent ("'Nothing happened' and 'nothing went wrong' are different facts and a dashboard that conflated them would show a healthy green on the day ingestion stopped"). The emitter honours the contract by sending `value=None`; the tile reads the wrong field. Whether this is fixed by retiring the signal, by adding an explicit unmeasurable state to the event, or by teaching F1 to render a null `value` as "not measured" is a founder call — all three are live options and none was taken unilaterally.
 
+#### The golden-set regression IS scheduled — correcting the tracker's Phase 3 amendment (b), 2026-09-14
+
+The Feature 23 Phase 3 tracker entry has carried "**(b) no schedule exists** (no cron, no ACA job)"
+since 2026-08-21. That was true when written and has been stale since 2026-08-24. Stated here so the
+spec and the tracker agree:
+
+- **One job runs both tracks.** `infra/08-apps.bicep`'s `benchmarkEvalJob` module (canonical) and
+  `infra/benchmark-eval-job-only.bicep` (the deployable twin, per Gap 298) both declare
+  `caj-benchmark-eval-${environment}` on `cronExpression: '0 3 * * *'` UTC with a single `/bin/sh -c`
+  argument chaining both scripts:
+  `python scripts/run_extraction_benchmark.py --mode live --no-write --no-gate --json --run-label nightly --tolerate-fp outbound_trade_discount__clean && python scripts/run_agent_eval.py --paths default --run-label nightly`.
+  The second command is Phase 3's golden set. The reason it is easy to conclude nothing is scheduled:
+  the original job *named* for it, `caj-agent-eval-dev`, was deleted in the 2026-08-23 rescope and
+  folded into this job — see the deletion note in `08-apps.bicep` above the `benchmarkEvalJob` module.
+- **Live-verified 2026-09-14.** `az containerapp job show -g rg-invoice-llm-dev -n caj-benchmark-eval-dev`
+  returns `triggerType: Schedule` and the args line above verbatim; `az containerapp job execution list`
+  shows `Succeeded` executions at `03:00:00+00:00` every day through 2026-09-13 (latest
+  `caj-benchmark-eval-dev-29821140`). This is the same job whose 2026-08-26T03:00 success is already
+  cited in the two tables above — the golden set has been riding along in it the whole time.
+- **Currently parked, deliberately and reversibly.** As of 2026-09-14 the live cron reads `0 0 31 2 *`
+  (31 February — never fires), set by the dev-environment shutdown recorded in
+  `.claude/tasklists/azure-dev-shutdown-20260914.md` so the six scheduled jobs would not run against a
+  stopped `psql-invoicellm-dev`. Both bicep files are unchanged and still say `0 3 * * *`; the restore
+  command lives in that tasklist.
+- **What this does NOT close.** Phase 3 stays `[~]`. Amendment (a) (the reused question phrasings) is
+  unchanged, and amendment (c) is still open and now has a number against it: Feature 29's judge
+  calibration measured Cohen's κ = **0.151** on n=36 against a κ ≥ 0.6 gate, so the absolute pass rate
+  this nightly job produces remains a trend line, not a quality verdict.
+
 ### The digest build, superseded
 
 A two-tier (critical/digest) alerting-and-synthesis agent was built 2026-08-23 —
