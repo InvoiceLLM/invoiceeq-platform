@@ -7815,10 +7815,23 @@ Conversation History:
     # at the top of this function (out of scope for Gap 304) and the router's own
     # "something went wrong" fallback dict, neither of which is a model answer
     # this judge should be grading.
+    #
+    # **BE Gap 480**: the last three keys carry the turn's own *declared* outcome
+    # so a judge never has to infer "did this answer refuse?" from the prose.
+    # `answer_gate` is task 29.9's contract-gate verdict ("abstained" when the
+    # gate replaced the answer); `turn_status` is `telemetry.TURN_STATUS_*`, and
+    # `declined` is the state every other refusal lands in -- the null-SQL
+    # "that column does not exist" reply and C3's zero-row clarification both set
+    # it without ever reaching the gate. `stop_reason` says which rung it stopped
+    # on and is diagnostic only. `services/agent_eval.is_abstain_turn()` is the
+    # single reader; see `decide_pass()` for what it changes.
     result["judge_evidence"] = {
         "route": route,
         "context": "\n\n".join(judge_context_parts),
         "executed_queries": "\n".join(judge_queries),
+        "answer_gate": str(getattr(turn, "answer_gate", "") or ""),
+        "turn_status": str(getattr(turn, "status", "") or ""),
+        "stop_reason": str(getattr(turn, "stop_reason", "") or ""),
     }
 
     # Gap 302: the Trace's outcome half. `tool_output` is the *same* text the

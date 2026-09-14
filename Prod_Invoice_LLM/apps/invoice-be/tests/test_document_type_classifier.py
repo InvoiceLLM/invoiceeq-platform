@@ -656,3 +656,110 @@ def test_ocr_text_falls_back_to_the_ocr_result_content_key():
 
     get_llm.assert_not_called()
     assert result["doc_type"] == "DELIVERY_NOTE"
+
+
+# --- BE Gap 516: the "<ISSUER> <separator> <DOCUMENT TYPE>" title -------------
+#
+# The defect class: the title-line coverage gate measured the WHOLE line, so a
+# title printed next to the issuer's own name was diluted below 0.6 and read as
+# a body mention. These tests are written over the REGISTRIES
+# (`_DOC_TYPE_SYNONYMS`, `_TITLE_SEGMENT_SEPARATORS`) rather than over a list of
+# literal titles, so a new synonym, separator or document type is covered the
+# day it is added -- and so nothing here can pass by matching one fixture's text.
+
+_ISSUERS = (
+    "HDFC BANK LIMITED",
+    "ICICI Bank Ltd",
+    "Om Stationery Pvt Ltd",
+    "Deutsche Bank AG",
+    "Natraj Industries",
+)
+
+
+@pytest.mark.parametrize("separator", dtc._TITLE_SEGMENT_SEPARATORS)
+@pytest.mark.parametrize("issuer", _ISSUERS)
+def test_every_separator_and_issuer_still_yields_the_document_type(separator, issuer):
+    """The property, stated once for every separator the registry declares and
+    for five unrelated issuers: an issuer name printed before the document's own
+    name must not change the answer.
+
+    The title used is the canonical synonym of a type the gate could not reach
+    before this fix -- and the assertion is over the registry's value, not over a
+    string spelled out here."""
+    title = f"{issuer}{separator}Statement of Account"
+
+    doc_type, evidence = classify_doc_type_deterministic(_document(title))
+
+    assert doc_type == "STATEMENT_OF_ACCOUNT", f"{title!r} -> {doc_type}"
+    assert evidence.strip() == title, "evidence must still be the verbatim printed line"
+
+
+@pytest.mark.parametrize(
+    "doc_type",
+    [t for t in DOC_TYPES if t != "OTHER" and _SYNONYMS.get(t)],
+)
+def test_an_issuer_prefixed_title_classifies_for_every_document_type(doc_type):
+    """Generic over the taxonomy, not over bank statements. Every type's FIRST
+    declared synonym must survive being printed after an issuer name -- the fix
+    is a property of how titles are typeset, so a type it does not reach would
+    mean the mechanism is still special-casing something."""
+    synonym = _SYNONYMS[doc_type][0]
+    title = f"Sample Issuer Pvt Ltd \u2014 {synonym.title()}"
+
+    got, evidence = classify_doc_type_deterministic(_document(title))
+
+    assert got == doc_type, f"{title!r} -> {got} (expected {doc_type})"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Ref: Purchase Order PO-1234",
+        "Document Details: Tax Invoice No INV-2026-0447 dated 01/09/2026",
+        "Purchase Order No: PO-2024-1188",
+        "Against Invoice No INV-9 - Credit Note No CN-3",
+        "Payment received - see Invoice 2026-0447",
+        "Statement Period: 01/08/2026 to 31/08/2026",
+    ],
+)
+def test_a_reference_never_benefits_from_the_smaller_denominator(line):
+    """The regression channel the segment pass opens, closed explicitly.
+
+    Splitting a line shrinks the denominator, which makes a *reference* to a
+    document easier to mistake for a title. A reference qualifier anywhere on the
+    line, or a residual token carrying a digit, disqualifies the segment pass --
+    so the guard that stops an e-way bill's quoted tax-invoice number from typing
+    the document as an INVOICE is still load-bearing."""
+    text = line + "\nValid Until: 03/09/2026    Approx Distance: 412 km\n"
+
+    doc_type, evidence = classify_doc_type_deterministic(text)
+
+    assert doc_type is None, f"{line!r} must not be read as a title; got {doc_type}"
+    assert evidence == ""
+
+
+def test_the_segment_pass_never_overrides_a_whole_line_answer():
+    """Ordering property: the whole-line gate is evaluated first and short-
+    circuits, so this change can only ADD a deterministic answer where there was
+    none. "TAX INVOICE CUM DELIVERY NOTE" has no separator and must still be
+    ambiguous; "e-Way Bill" contains a hyphen and must still be OTHER."""
+    assert classify_doc_type_deterministic(_document("e-Way Bill"))[0] == "OTHER"
+
+    doc_type, evidence = classify_doc_type_deterministic(
+        _document("TAX INVOICE CUM DELIVERY NOTE")
+    )
+    assert doc_type is None
+    assert "ambiguous" in evidence
+
+
+def test_a_title_whose_words_are_not_in_the_vocabulary_is_still_the_models_job():
+    """The stated boundary of this fix, asserted rather than described.
+
+    "BANK STATEMENT" is not a phrase in `_DOC_TYPE_SYNONYMS` and BE Gap 516 does
+    NOT add it (founder ruling 2026-09-09: a string rule that fails is removed,
+    not extended). The coverage mechanism cannot recognise vocabulary it does not
+    have, so this document still reaches stage 2 -- deliberately."""
+    assert classify_doc_type_deterministic(_document("BANK STATEMENT")) == (None, "")
+    assert classify_doc_type_deterministic(
+        _document("ICICI BANK LTD - BANK STATEMENT")
+    ) == (None, "")

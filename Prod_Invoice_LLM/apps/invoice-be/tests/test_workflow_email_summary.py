@@ -146,6 +146,29 @@ def _seed_invoice(session: Session, tenant_id=None, **overrides) -> Invoice:
     return invoice
 
 
+def _mock_auth_tenant_id(pg_session: Session):
+    """BE Gap 477: which tenant does the human (mock-auth) path really run as?
+
+    The old comment here said "mock auth always resolves MOCK_TENANT_ID". That is
+    true of the in-memory SQLite fixture, where the database is empty, and false of
+    any real Postgres this repo has ever run a benchmark against:
+    `get_tenant_context_allow_unpaid()` looks the mock identity up by
+    `clerk_user_id == MOCK_USER_ID` and, when that row already exists, returns THAT
+    user's `tenant_id`. On the local dev database that row exists and points at a
+    benchmark tenant, so the endpoint applied its tenant-isolation filter against a
+    different tenant than the one this test seeded and answered
+    `404 Invoice not found or access denied` -- while the API-key path, which
+    carries its own tenant, returned 200. Asking the auth dependency itself is the
+    only answer that cannot drift: it is the same function, on the same session,
+    that the request under test will use.
+    """
+    from dependencies import get_tenant_context_allow_unpaid
+
+    return get_tenant_context_allow_unpaid(
+        authorization=None, db_session=pg_session
+    ).tenant_id
+
+
 def _issue_actions_key(session: Session, tenant: Tenant) -> str:
     """Give the tenant an `actions`-scoped key, the credential Gap 335 built."""
     raw = generate_api_key()
@@ -562,3 +585,184 @@ def test_a_failing_send_never_fails_the_approval(db_session):
 # ===========================================================================
 
 
+def test_approve_sends_email_summary_on_postgres():
+    """Both approval paths, against real Postgres, on rows this test creates and
+    then deletes: the destination read, the recipient query and the trigger."""
+    psycopg2 = pytest.importorskip("psycopg2")
+    from config import get_settings
+
+    url = get_settings().DATABASE_URL
+    if not url.startswith("postgresql"):
+        pytest.skip("DATABASE_URL is not PostgreSQL")
+    try:
+        psycopg2.connect(url).close()
+    except psycopg2.OperationalError as exc:
+        pytest.skip(f"local Postgres not reachable: {exc}")
+
+    pg_engine = create_engine(url)
+    SQLModel.metadata.create_all(pg_engine)
+
+    # The human path is mock auth, so this cannot run on a throwaway tenant id --
+    # it has to borrow whichever tenant that identity resolves to on THIS database
+    # (BE Gap 477: not necessarily MOCK_TENANT_ID -- see `_mock_auth_tenant_id`).
+    # Every piece of pre-existing state it touches is captured first and restored
+    # in the `finally`, and every row it creates is deleted there.
+    tenant_id = None
+    created_invoice_ids: list = []
+    sender = None
+    config = None
+    config_was_created = False
+    previous_destinations = None
+    service_user_existed = False
+    with Session(pg_engine) as pg_session:
+        # Gap 477 (2026-09-07, founder: "fix the 5"). This test seeded its rows into
+        # POSTGRES while the autouse `override_db_session` fixture still pointed the
+        # app's `get_db_session` at the module's in-memory SQLite engine -- so the
+        # endpoint looked for `PG-HUMAN` in SQLite, found nothing, and returned
+        # `404 Invoice not found or access denied`. It was not an environment
+        # problem and not a missing credential: the request and the fixture were
+        # talking to two different databases, which is the exact class of defect
+        # CONVENTIONS hard rule 2 exists for.
+        def _use_postgres():
+            yield pg_session
+
+        app.dependency_overrides[get_db_session] = _use_postgres
+        tenant_id = _mock_auth_tenant_id(pg_session)
+        tenant = pg_session.get(Tenant, tenant_id)
+        tenant_was_created = tenant is None
+        previous_scope = tenant.api_key_scope if tenant else None
+        previous_key = (
+            (tenant.api_key_hash, tenant.api_key_salt, tenant.api_key_prefix)
+            if tenant else None
+        )
+        service_user_existed = pg_session.exec(
+            select(User).where(User.clerk_user_id == api_key_service_clerk_id(tenant_id))
+        ).first() is not None
+        try:
+            if tenant is None:
+                tenant = _seed_tenant(pg_session, tenant_id=tenant_id)
+
+            address = f"gap339-{uuid4().hex[:8]}@example.com"
+            sender = TenantEmailSender(
+                tenant_id=tenant_id, email=address, email_set="inbound",
+            )
+            pg_session.add(sender)
+
+            config = pg_session.exec(
+                select(TenantWorkflowConfig).where(
+                    TenantWorkflowConfig.tenant_id == tenant_id
+                )
+            ).first()
+            config_was_created = config is None
+            previous_destinations = list(config.output_destinations or []) if config else None
+            if config is None:
+                config = TenantWorkflowConfig(tenant_id=tenant_id)
+            config.output_destinations = ["email_summary"]
+            pg_session.add(config)
+
+            raw_key = _issue_actions_key(pg_session, tenant)
+            pg_session.commit()
+
+            # The JSONB round-trip the SQLite fixture cannot prove.
+            pg_session.refresh(config)
+            assert config.output_destinations == ["email_summary"]
+
+            human_invoice = _seed_invoice(
+                pg_session, tenant_id=tenant_id, invoice_number="PG-HUMAN"
+            )
+            key_invoice = _seed_invoice(
+                pg_session, tenant_id=tenant_id, invoice_number="PG-KEY"
+            )
+            created_invoice_ids = [human_invoice.id, key_invoice.id]
+            # Gap 477: committed before the request. They were only `add()`ed, so the
+            # endpoint's own transaction could not see them and returned 404.
+            pg_session.commit()
+
+            with patch("services.workflow_outputs.sendgrid_configured", return_value=True), \
+                 patch("services.workflow_outputs.send_email") as mock_send:
+                mock_send.return_value = {"status_code": 202, "to": [address]}
+                human = _resolve(human_invoice.id)
+                via_key = _resolve(key_invoice.id, headers={"X-API-Key": raw_key})
+
+            assert human.status_code == 200, human.text
+            assert via_key.status_code == 200, via_key.text
+            assert human.json()["email_summary"]["sent"] is True
+            assert via_key.json()["email_summary"]["sent"] is True
+
+            # The recipient really was resolved by querying Postgres, and it is
+            # the registered address -- identical for both credential paths.
+            human_call, key_call = mock_send.call_args_list
+            # BE Gap 477: `== [address]` assumed this tenant had no other
+            # registered inbound sender. On a shared database it can, and the
+            # property under test is not "one recipient" -- it is "exactly the
+            # registered inbound allowlist, and the address this test registered
+            # is in it".
+            registered = [
+                row.email
+                for row in pg_session.exec(
+                    select(TenantEmailSender).where(
+                        TenantEmailSender.tenant_id == tenant_id,
+                        TenantEmailSender.email_set == "inbound",
+                    )
+                ).all()
+            ]
+            assert address in registered
+            assert set(human_call.kwargs["to_addresses"]) == set(registered)
+            assert set(key_call.kwargs["to_addresses"]) == set(registered)
+            assert [a.mime_type for a in key_call.kwargs["attachments"]] == [
+                CSV_MIME_TYPE, JSON_MIME_TYPE,
+            ]
+            assert b"Rack unit" in key_call.kwargs["attachments"][0].content
+
+            pg_session.refresh(human_invoice)
+            pg_session.refresh(key_invoice)
+            assert human_invoice.status == "PAID"
+            assert key_invoice.status == "PAID"
+        finally:
+            app.dependency_overrides.clear()
+            pg_session.rollback()
+            # AuditLog rows first: resolve writes one per invoice, and they
+            # outlive the invoice (invoice_id carries no FK).
+            for invoice_id in created_invoice_ids:
+                for log in pg_session.exec(
+                    select(AuditLog).where(AuditLog.invoice_id == invoice_id)
+                ).all():
+                    pg_session.delete(log)
+                row = pg_session.get(Invoice, invoice_id)
+                if row:
+                    pg_session.delete(row)
+            if sender is not None:
+                row = pg_session.get(TenantEmailSender, sender.id)
+                if row:
+                    pg_session.delete(row)
+            if config is not None:
+                row = pg_session.get(TenantWorkflowConfig, config.id)
+                if row and config_was_created:
+                    pg_session.delete(row)
+                elif row:
+                    row.output_destinations = previous_destinations
+                    pg_session.add(row)
+            pg_session.commit()
+            # The actions-scoped key lazily created a synthetic service user
+            # (Gap 335). Remove it only if this test is what brought it into
+            # existence -- and only after its AuditLog rows are gone, since
+            # actor_user_id is a real FK.
+            if not service_user_existed:
+                svc = pg_session.exec(
+                    select(User).where(
+                        User.clerk_user_id == api_key_service_clerk_id(tenant_id)
+                    )
+                ).first()
+                if svc:
+                    pg_session.delete(svc)
+            if tenant is not None and not tenant_was_created:
+                tenant.api_key_scope = previous_scope
+                (tenant.api_key_hash, tenant.api_key_salt, tenant.api_key_prefix) = (
+                    previous_key or (None, None, None)
+                )
+                pg_session.add(tenant)
+            elif tenant is not None:
+                row = pg_session.get(Tenant, tenant.id)
+                if row:
+                    pg_session.delete(row)
+            pg_session.commit()

@@ -89,6 +89,7 @@ import telemetry
 from services.agent_eval import (
     EvalScores,
     decide_pass,
+    is_abstain_turn,
     score_orchestration,
     score_persona,
     score_soft_metrics_combined,
@@ -278,6 +279,12 @@ def _judge_turn(
             helpfulness_score=soft.get("helpfulness"),
             completeness_score=soft.get("completeness"),
             tone_score=soft.get("tone"),
+            # BE Gap 480: the same deterministic refusal signal the golden
+            # harness reads, off the same `judge_evidence` dict. Live turns have
+            # no reference answer, so `decide_pass()` here takes the no-accuracy
+            # branch -- where a refusal would otherwise die on the faithfulness
+            # floor for having no rows to be faithful to. Graded on relevance.
+            abstained=is_abstain_turn(evidence),
         )
         if scores.faithfulness_score is None and scores.relevance_score is None:
             # Nothing gradeable came back. Writing a row here would record a

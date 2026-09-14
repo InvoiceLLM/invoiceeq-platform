@@ -21,6 +21,7 @@ import {
   Webhook,
   UserCog,
   Workflow,
+  MessageSquareQuote,
 } from "lucide-react";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
@@ -87,6 +88,19 @@ const INTEGRATIONS: IntegrationTile[] = [
     iconBg: "bg-rose-500/10 border-rose-500/20",
     iconColor: "text-rose-400",
     adminOnly: true,
+  },
+  {
+    // FE Gap 478: chat rules taught from a thumbs-down had no read-back surface
+    // at all. Not adminOnly — the list is readable by anyone who can open
+    // Settings, and delete is gated on `can_train` inside the page itself, the
+    // same permission the backend's DELETE enforces.
+    id: "chat-rules",
+    title: "Chat Rules",
+    desc: "Answering rules taught from chat feedback — review & remove",
+    href: "/settings/chat-rules",
+    icon: MessageSquareQuote,
+    iconBg: "bg-sky-500/10 border-sky-500/20",
+    iconColor: "text-sky-400",
   },
   {
     id: "subscriptions",

@@ -208,7 +208,7 @@ from typing import Any, Optional, Sequence
 
 from pydantic import BaseModel, Field
 
-from telemetry import tracked_llm_call
+from telemetry import TURN_STATUS_DECLINED, tracked_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +220,46 @@ logger = logging.getLogger(__name__)
 FAITHFULNESS_FLOOR = 0.80
 RELEVANCE_FLOOR = 0.70
 ACCURACY_FLOOR = 0.70
+
+# ---------------------------------------------------------------------------
+# BE Gap 480 — an abstention has nothing to be faithful to
+# ---------------------------------------------------------------------------
+# The gate Gap 479 left in place (a faithfulness of exactly 0.0 fails whatever
+# accuracy says) is a fabrication guard, and it is right for an answer that
+# *asserts* things. A refusal asserts things about the SCHEMA -- "there is no
+# finance-approval column" -- and the schema is not in `judge_evidence.context`,
+# which carries rows and document text. So the one answer shape Feature 29
+# decision 3 exists to produce is the one shape the pass rule could not score:
+# `unsupported_field_asks_for_alternative` scored accuracy 1.00 and failed on
+# faithfulness 0.00 in the 2026-09-07 golden run.
+#
+# The signal is the turn's own declared outcome, never the prose. Two states
+# reach it, and the second is the one the Gap entry's own premise missed:
+#   * `answer_gate == "abstained"` -- task 29.9's contract gate replaced the
+#     model's answer with `_abstain_payload()`;
+#   * `turn_status == "declined"` -- every other refusal, including the null-SQL
+#     "that column does not exist" reply (`stop_reason="sql_declined"`) that the
+#     failing golden case actually took, and C3's zero-row clarification. The
+#     gate only runs on the SQL *summary* branch, so a turn that never generated
+#     SQL never has an `answer_gate` at all.
+#: `agents/query_agent.py` puts both on `result["judge_evidence"]`.
+ABSTAIN_ANSWER_GATE_OUTCOMES = frozenset({"abstained"})
+ABSTAIN_TURN_STATUSES = frozenset({TURN_STATUS_DECLINED})
+
+
+def is_abstain_turn(judge_evidence: Optional[dict]) -> bool:
+    """BE Gap 480. Did this turn decline to answer, per its own record?
+
+    Deterministic by construction (hard rule 3): it reads the enumerated outcome
+    the agent wrote, never the answer text. A payload from before those keys
+    existed -- or a cache hit, which carries no `judge_evidence` at all -- has no
+    signal and is treated as an ordinary answer, which is the pre-Gap-480
+    behaviour rather than a silent exemption.
+    """
+    evidence = judge_evidence or {}
+    gate = str(evidence.get("answer_gate") or "")
+    status = str(evidence.get("turn_status") or "")
+    return gate in ABSTAIN_ANSWER_GATE_OUTCOMES or status in ABSTAIN_TURN_STATUSES
 
 # The three metrics added by the 2026-08-23 combined judge have *no* floor and
 # do not feed `decide_pass()`. Same reasoning as the component scores: folding a
@@ -484,6 +524,11 @@ class EvalScores:
     #: from the other, and a trend that mixed them without saying so would be
     #: unreadable.
     judge_mode: str = "separate"
+    #: BE Gap 480. Set from the turn's own declared outcome (see
+    #: `is_abstain_turn()`), never from the answer text. True takes faithfulness
+    #: out of `decide_pass()` for this turn only: a refusal's claims are about
+    #: the schema, which is not in the evidence it would be graded against.
+    abstained: bool = False
     passed: bool = False
     notes: list[str] = field(default_factory=list)
     claims: list[str] = field(default_factory=list)
@@ -1896,6 +1941,7 @@ def score_answer(
     generated_sql: Optional[str] = None,
     required_facts: Sequence[str] = (),
     forbidden: Sequence[str] = (),
+    abstained: bool = False,
 ) -> EvalScores:
     """Every metric for one answer, plus the pass/fail decision.
 
@@ -1928,13 +1974,21 @@ def score_answer(
     existing caller — the 35 single-turn golden cases, the production judge —
     is unchanged and leaves that dimension unscored rather than at zero. Costs no
     judge call in either mode.
+
+    `abstained` (BE Gap 480) is the turn's own declared refusal outcome, which
+    the caller reads off `judge_evidence` with `is_abstain_turn()`. It changes
+    nothing about how any metric is *scored* — faithfulness is still computed and
+    still recorded — only whether faithfulness votes in `decide_pass()`.
     """
     if llm is None:
         from utils.llm import get_llm
 
         llm = get_llm()
 
-    scores = EvalScores(judge_mode="combined" if combined_judge else "separate")
+    scores = EvalScores(
+        judge_mode="combined" if combined_judge else "separate",
+        abstained=bool(abstained),
+    )
 
     if combined_judge:
         soft, claims, notes, calls = score_soft_metrics_combined(
@@ -2003,6 +2057,14 @@ def score_answer(
         scores.notes.extend(notes)
         scores.judge_llm_calls += calls
 
+    # BE Gap 480: say so in the notes, because a reader comparing two turns with
+    # the same faithfulness and different verdicts needs to see which rule ran.
+    if scores.abstained:
+        scores.notes.append(
+            "abstention: the turn declined to answer, so faithfulness is recorded "
+            "but does not vote (BE Gap 480)"
+        )
+
     # Deliberately over the original three only — see `EvalScores`' docstring.
     scores.passed = decide_pass(scores)
     return scores
@@ -2031,14 +2093,27 @@ def decide_pass(scores: EvalScores) -> bool:
     Faithfulness below its floor but above zero, and relevance below its floor,
     are still recorded and trended -- they now tell the reader WHY, instead of
     voting.
+
+    **BE Gap 480 (2026-09-14).** One exception on top of that, and only one:
+    when the turn declared itself an abstention (`scores.abstained`, set from
+    the agent's own `answer_gate`/`turn_status` -- never from the prose),
+    faithfulness does not vote at all, in either branch. A refusal's claims are
+    about the schema and the schema is not in the evidence faithfulness is judged
+    against, so scoring it there measures the evidence set, not the answer. The
+    fabrication guard is untouched for every ordinary answer. What this does NOT
+    do: an abstention that is itself WRONG -- refusing on a field that does exist
+    -- is caught by accuracy alone, and in the online judge (no reference, so no
+    accuracy) by relevance alone.
     """
+    faithfulness = None if scores.abstained else scores.faithfulness_score
+
     if scores.accuracy_score is not None:
-        if scores.faithfulness_score is not None and scores.faithfulness_score <= 0.0:
+        if faithfulness is not None and faithfulness <= 0.0:
             return False
         return scores.accuracy_score >= ACCURACY_FLOOR
 
     checks = [
-        (scores.faithfulness_score, FAITHFULNESS_FLOOR),
+        (faithfulness, FAITHFULNESS_FLOOR),
         (scores.relevance_score, RELEVANCE_FLOOR),
     ]
     graded = [(value, floor) for value, floor in checks if value is not None]

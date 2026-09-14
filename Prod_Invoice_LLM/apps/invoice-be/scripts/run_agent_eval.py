@@ -119,6 +119,7 @@ import telemetry  # noqa: E402
 from models import AgentEvalRun  # noqa: E402
 from services.agent_eval import (  # noqa: E402
     identifiers_from_markdown,
+    is_abstain_turn,
     score_answer,
 )
 # Moved out of tests/ to benchmarks/ on 2026-08-23 -- `.dockerignore` excludes
@@ -893,6 +894,17 @@ def run_turn(
             or ("attachment" if (attachment_ids or []) else None)
         ),
         "capability_flags": _active_capability_flags(),
+        # BE Gap 480. The turn's own declared outcome, recorded so the pass rule
+        # never has to read "did it refuse?" out of the prose. `answer_gate` is
+        # task 29.9's contract-gate verdict, `turn_status`/`stop_reason` the
+        # telemetry state every non-gate refusal lands in; `abstained` is the one
+        # derived flag `score_turn()` grades on. All four are empty/False on a
+        # turn that raised before `judge_evidence` was built, which reads as an
+        # ordinary answer -- the pre-Gap-480 behaviour, not a silent exemption.
+        "answer_gate": (result.get("judge_evidence") or {}).get("answer_gate") or "",
+        "turn_status": (result.get("judge_evidence") or {}).get("turn_status") or "",
+        "stop_reason": (result.get("judge_evidence") or {}).get("stop_reason") or "",
+        "abstained": is_abstain_turn(result.get("judge_evidence")),
         # Gap 483. Which documents this turn was actually given, so an attachment
         # turn's result can never be read as if it had been asked with none.
         "attachment_ids": list(attachment_ids or []),
@@ -942,6 +954,10 @@ def score_turn(turn: dict, case: GoldenCase, judge_llm, combined_judge: bool = F
         # `context_score`.
         drift=getattr(case, "drift", None),
         generated_sql=turn.get("generated_sql"),
+        # BE Gap 480: deterministic, set by `run_turn()` from the agent's own
+        # record. Faithfulness is still scored for an abstention, it just stops
+        # voting -- see `decide_pass()`.
+        abstained=bool(turn.get("abstained")),
     )
     turn.update(
         {

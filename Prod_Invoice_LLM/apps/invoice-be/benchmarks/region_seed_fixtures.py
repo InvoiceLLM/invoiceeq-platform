@@ -12,7 +12,7 @@ both stated in `agent_eval_golden_sample.py`'s own docstring:
 
   1. every one of those banks was written against its region's tenant seeded into
      a **live Postgres with real Chroma embeddings** (see
-     `tests/us/run_chat_live_test.py`), and no local Postgres/Chroma is running;
+     `tests/us/live_chat_check.py`), and no local Postgres/Chroma is running;
   2. `.dockerignore` excludes `**/tests/` from the deployed image, so nothing
      under `tests/` can ship or run in `caj-benchmark-eval-dev` at all.
 

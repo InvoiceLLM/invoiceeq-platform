@@ -432,6 +432,62 @@ _TITLE_BAND_LINES = 20
 # an e-way bill referencing a tax invoice number from classifying as an invoice.
 _TITLE_LINE_COVERAGE = 0.6
 
+# --- BE Gap 516: the "<ISSUER> <separator> <DOCUMENT TYPE>" title -------------
+#
+# The coverage gate above measures the WHOLE line, which silently assumes the
+# printed title is the only thing on it. A very common convention breaks that
+# assumption for EVERY document type at once: the issuer's own name is printed
+# on the title line, separated from the document's name.
+#
+#     "HDFC BANK LIMITED - STATEMENT OF ACCOUNT"   coverage 0.53  -> missed
+#     "Om Stationery Pvt Ltd | Delivery Challan"   coverage 0.36  -> missed
+#
+# Nothing is wrong with the vocabulary in either case; the title is there and it
+# is matched. What fails is the denominator. So the gate is evaluated a second
+# time over each SEGMENT of the line, split on the separators below -- which is
+# a property of how titles are typeset, not a fact about banks, and therefore
+# costs no new entry when a new issuer, language or document type arrives.
+#
+# Deliberately NOT in this list: the bare ASCII "-", which is a hyphen inside
+# "E-Way Bill", a digit group inside "PO-2024-1188" and a date separator inside
+# "2026-09-01" far more often than it is a title separator. The SPACED form is
+# what typesetting actually uses.
+_TITLE_SEGMENT_SEPARATORS: Tuple[str, ...] = (
+    "—",   # em dash
+    "–",   # en dash
+    "―",   # horizontal bar
+    "‒",   # figure dash
+    "|",
+    "•",   # bullet
+    ":",
+    " - ",
+    " -- ",
+)
+
+_TITLE_SEGMENT_SPLIT_RE = re.compile(
+    "|".join(re.escape(sep) for sep in _TITLE_SEGMENT_SEPARATORS)
+)
+
+# BE Gap 516. Splitting a line makes the denominator smaller, which makes a
+# *reference* easier to mistake for a title -- "Ref: Purchase Order PO-1234"
+# would otherwise score 0.68 on its second segment. These tokens are what a line
+# prints when it is pointing AT a document rather than announcing one; a title
+# band never needs them. Written in `_normalize()`'s form, matched as whole
+# tokens.
+_REFERENCE_QUALIFIER_TOKENS: Tuple[str, ...] = (
+    "no",
+    "nos",
+    "number",
+    "num",
+    "nr",
+    "ref",
+    "reference",
+    "date",
+    "dated",
+    "against",
+    "vide",
+)
+
 # E7: below this, the LLM fallback's answer is discarded and the document is
 # `OTHER` with the reason recorded.
 #
@@ -548,6 +604,73 @@ def _drop_subsumed(matches: List[_SynonymMatch]) -> List[_SynonymMatch]:
             continue
         kept.append(m)
     return kept
+
+
+def _title_segment_doc_types(line: str) -> Optional[set]:
+    """BE Gap 516 — the second reading of the coverage gate, per title SEGMENT.
+
+    Splits the RAW line (before `_normalize()` collapses the separators away) on
+    `_TITLE_SEGMENT_SEPARATORS` and returns the doc types named by the segments
+    that pass the same `_TITLE_LINE_COVERAGE` gate on their own. Returns `None`
+    when the line was never split, when no segment qualifies, or when the line
+    carries a reference qualifier -- "we are pointing at a document" -- in which
+    case the smaller denominator must not be granted at all.
+
+    This pass runs ONLY after the whole-line gate has already failed, so it can
+    add a deterministic answer where there was none but can never change one.
+    """
+    segments = [seg.strip() for seg in _TITLE_SEGMENT_SPLIT_RE.split(line)]
+    segments = [seg for seg in segments if seg]
+    if len(segments) < 2:
+        return None
+
+    # One reference qualifier anywhere on the line disqualifies the whole line,
+    # not just the segment carrying it: "Ref:" governs what follows it.
+    line_tokens = set(_normalize(line).split())
+    if line_tokens.intersection(_REFERENCE_QUALIFIER_TOKENS):
+        return None
+
+    doc_types: set = set()
+    for segment in segments:
+        normalized = _normalize(segment)
+        if not normalized:
+            continue
+        matches = _matches_in(normalized)
+        if not matches:
+            continue
+        if _coverage(normalized, matches) < _TITLE_LINE_COVERAGE:
+            continue
+        kept = _drop_subsumed(matches)
+        # A residual token carrying a digit is a document NUMBER, not part of a
+        # title -- shape, not vocabulary, so no list needs editing per issuer.
+        residual = [
+            token
+            for token in normalized.split()
+            if not any(m.phrase == token or token in m.phrase.split() for m in kept)
+        ]
+        if any(any(ch.isdigit() for ch in token) for token in residual):
+            continue
+        doc_types.update(m.doc_type for m in kept)
+
+    return doc_types or None
+
+
+def _resolve_title_line(line: str, doc_types: set) -> Tuple[Optional[str], str]:
+    """The one place a set of title-band doc types becomes an answer.
+
+    Shared by the whole-line pass and BE Gap 516's segment pass so the two cannot
+    disagree about what "ambiguous" means.
+    """
+    if len(doc_types) == 1:
+        doc_type = doc_types.pop()
+        logger.info(
+            "Deterministic doc-type match: %s from title line %r", doc_type, line
+        )
+        return doc_type, line
+    return None, (
+        f"ambiguous title line {line!r} names "
+        f"{', '.join(sorted(doc_types))} — deferring to the model"  # hardcode-ok: doc-type NAMES, not a figure (STATEMENT_OF_ACCOUNT trips the money vocabulary)
+    )
 
 
 def _title_band_lines(text: str) -> List[str]:
@@ -705,6 +828,15 @@ def classify_doc_type_deterministic(ocr_text: str) -> Tuple[Optional[str], str]:
     DELIVERY NOTE" — a real Indian document): a non-empty evidence string
     alongside a `None` type is how the caller tells "ambiguous" from "nothing
     found", and both route to the LLM fallback.
+
+    **BE Gap 516.** Each line is measured twice: once whole, then -- only if that
+    fails -- once per segment after splitting on `_TITLE_SEGMENT_SEPARATORS`, so
+    an issuer name printed alongside the document's own name ("HDFC BANK LIMITED
+    — STATEMENT OF ACCOUNT", "Om Stationery Pvt Ltd | Delivery Challan") no
+    longer dilutes the title below the gate. The second pass cannot change an
+    answer the first pass produced, and a line carrying a reference qualifier
+    ("Ref:", "No", "dated") or a segment whose residual tokens contain a digit is
+    excluded from it -- a reference must not benefit from a smaller denominator.
     """
     if not ocr_text:
         return None, ""
@@ -715,22 +847,21 @@ def classify_doc_type_deterministic(ocr_text: str) -> Tuple[Optional[str], str]:
         if not normalized:
             continue
         matches = _matches_in(normalized)
-        if not matches:
-            continue
-        if _coverage(normalized, matches) < _TITLE_LINE_COVERAGE:
-            # A body line that mentions a document type, not a title.
-            continue
-        doc_types = {m.doc_type for m in _drop_subsumed(matches)}
-        if len(doc_types) == 1:
-            doc_type = doc_types.pop()
-            logger.info(
-                "Deterministic doc-type match: %s from title line %r", doc_type, line
+        if matches and _coverage(normalized, matches) >= _TITLE_LINE_COVERAGE:
+            return _resolve_title_line(
+                line, {m.doc_type for m in _drop_subsumed(matches)}
             )
-            return doc_type, line
-        return None, (
-            f"ambiguous title line {line!r} names "
-            f"{', '.join(sorted(doc_types))} — deferring to the model"
-        )
+
+        # BE Gap 516. The whole line is not a title -- but it may CONTAIN one,
+        # next to the issuer's own name ("HDFC BANK LIMITED — STATEMENT OF
+        # ACCOUNT"). Re-measure per segment; this can only add an answer where
+        # the line previously yielded none.
+        segment_types = _title_segment_doc_types(line)
+        if segment_types:
+            return _resolve_title_line(line, segment_types)
+
+        # A body line that mentions a document type, not a title.
+        continue
 
     return None, ""
 
