@@ -233,6 +233,8 @@ All migrations add-only, one `alembic upgrade head` (no backfill — dev rule).
 | 30.5 (rewritten) | `bank_matching.py` over the ledger (R5 tolerances) + bank-statement sync card + cash-cover async card |
 | 30.17 | Bubble actions: note; Discuss seed; dismiss (~~hold / dispute / paid → invoice status~~ removed, Gap 492) |
 | 30.18 | Async per-type cards: open PO value, cash-out timing, over-invoicing history, quote drift, partial-delivery balance, repeat short delivery, contract deviations — each behind its R9 threshold |
+| 30.19 | **Three-state check result** (`PASS` / `FAIL` / `NOT_CHECKED(reason, subjects)`) — a check that could not be evaluated is never rendered as clean; card titles read "N checked, M not checked". Design review §11.2 |
+| 30.20 | **Cards emit claims, not prose** — `{kind, entity, figures, subjects, severity}` through one renderer; `money(value, currency)` is the only number-to-text path. Design review §11.3 |
 
 ### 8.9 Verification — additions
 
@@ -615,3 +617,118 @@ tests that processed 0 rows from the shared dev database.
 `a1b2c3f30001` (phase 0) → `a1b2c3f30002` (semantic views) → `a1b2c3f30003`
 (certified examples + corrections). Single head, add-only, no backfill, no
 downgrade ceremony — the dev rule.
+
+
+## 11. Design review — 2026-09-09 (two missing abstractions, from the vpi_demo dry run)
+
+Founder-directed review after a static dry run of all ten `showcase/vpi_demo` README §5 attachment
+scenarios. Thirteen defects were found across Gaps 509-519. **Not one of them is an arithmetic
+error** — every layer that computes a number in this feature is correct. They cluster instead in the
+layer that turns a computed number into a sentence or a status, and that layer was never given an
+owner, so each card improvised its own.
+
+### 11.1 The split, stated honestly
+
+| bucket | count | items | how they get fixed |
+|---|---|---|---|
+| Plain wiring misses | ~5 | 510 (argument never passed), 511 (wrong word), 515.1 (bucket never rendered), 517.2 (figure keys), 519 | as gaps, individually |
+| Missing abstractions | ~6 | 509, 512, 513, 515.2, 517.1, 480 | **tasks 30.19 and 30.20 below**, plus Feature 29's L3 |
+| Never built | ~3 | 517.3, 518, 516.1 | scope decisions in §11.4 |
+
+Fixing all thirteen as gaps would be the third repetition of a pattern this repo has already paid for
+three times (Gap 471 fixing 1 of 18 identical tests and Gap 477 carrying the other 17; Gaps
+474/497/500 as three passes at one bug; Gap 52's substring matcher standing untouched since July).
+The two tasks below exist so the fix lands once instead of once per card.
+
+### 11.2 Task 30.19 — three-state check result
+
+**The defect class.** A check inside a card has no way to say "not evaluated". `InsightCard` has
+`STATUS_OK / SKIPPED / BLOCKED` at the CARD level, but an individual comparison that cannot be made
+simply `continue`s, and the card still returns `STATUS_OK`. So **"we compared nothing" and
+"everything matches" are the same output**. This is Gap 517.1 (a delivery line whose description does
+not pair is skipped silently), Gap 515.2 (an unmatched bank row reported as a problem rather than as
+an unknown), Gap 510 (zero compliance rules run, reported as a plausible reason) and — on the eval
+side, in Feature 29 — Gap 480 (a correct abstention scored 0.0).
+
+**The change.** Every check returns `PASS | FAIL | NOT_CHECKED(reason, subjects)`. `NOT_CHECKED` is
+never rendered as clean, is counted separately from `FAIL` in the card title, and names what it could
+not evaluate ("2 delivered lines could not be paired with a billed line: 'M.S. Round Bar 25mm',
+'Hex Bolt M10'"). A card's title becomes "N checked, M not checked" rather than "N checked".
+
+**Why this is generic.** It is a type, not a rule. It fixes cards that do not exist yet, and it needs
+no edit when a new vendor, language, item description or document type arrives.
+
+**Explicitly rejected** (founder ruling, 2026-09-09, "we will not add specific handling of some clause
+or cases"): an item-synonym table, a fuzzy-match threshold, or a list of ignorable bank narrations
+("salary", "GST", "electricity"). Each solves today's case and creates the next miss. The test for any
+proposed fix: *would this line need editing when a new vendor, language, item or bank arrives?* If
+yes, it is the wrong fix.
+
+### 11.3 Task 30.20 — cards emit claims, not prose
+
+**The defect class.** Every card writes its own f-strings, so every formatting and wording bug is paid
+for once per card: raw floats in sentences while the figure column formats correctly (Gap 509, in at
+least four cards plus all three of `card_bank_reconcile`'s), a correct computation described with the
+wrong words (Gap 511, "due in" for a payment term), and two cards asserting contradictory things in
+one bubble because neither can see the other's conclusion (Gap 512).
+
+**The change.** A card emits a structured claim — `{kind, entity, figures, subjects, severity}` —
+and a single renderer turns claims into sentences. `money(value, currency)` lives there and is the
+only path from a number to text. Contradiction becomes detectable, because claims about the same
+entity are comparable objects rather than independent strings.
+
+**Note on `money()`**: four helpers already exist (`invoice_builder.money`, `query_agent._money`,
+`query_tools._money`, `document_comparison._money2`). Pick one and reuse it; do not add a fifth.
+
+**Guard test (generic, not per-card):** no finding title contains a bare `\d+\.\d` where a currency
+amount is meant.
+
+### 11.4 Scope decisions for the founder — not defects
+
+1. **No duplicate card for `DELIVERY_NOTE`** (Gap 517.3). The demo README expects the bubble to flag
+   RAJ-2009 / NAT-2007 when a challan is attached; no card in that registry entry can. Add one, or
+   correct the README's expectation.
+2. **No payment-application card for `REMITTANCE_ADVICE`** (Gap 518). The bubble answers "what is the
+   net owed" when the document asks "which invoice did this settle". Needs a new card that resolves
+   the advice's own printed reference through the Gap 490 entity resolver.
+3. **`STATEMENT_OF_ACCOUNT` carries two meanings** (Gap 516.1). Splitting it means touching the frozen
+   taxonomy, which is blocked on Feature 27's ledger closing — so this is a decision to defer
+   deliberately, not an oversight to fix now.
+
+### 11.5 One spec violation, recorded
+
+§8.8's verification row for task **30.5** requires a 6-line statement fixture to render "1 unmatched
+credit". `card_bank_reconcile()` loops findings over `possible_duplicates`, `unmatched_debits` and
+`ambiguous` only — the credit bucket is computed by the matcher, counted in `figures`, and never
+turned into a sentence. **This is not missing scope; the spec asked for it and the code does not do
+it** (Gap 515.1), which also means the 30.5 verification cannot have been run as written.
+
+### 11.6 What is NOT wrong
+
+Stated because the review could be read as a verdict on the whole feature, and it is not.
+
+- **The architecture is sound.** Deterministic cards compute every figure; a template verdict that
+  cannot be false; exactly one model call, restricted to wording; an answer-contract gate that
+  discards the model's sentence when any figure is not already in the block; no retry. Nothing in
+  §11 asks for that to change.
+- **`services/bank_matching.match_statement_lines()` is careful work** — tolerances read through
+  `threshold()`, vendor-must-match, direction enforced, `claimed` tracked across rows for the
+  paid-twice case, `ambiguous` separated from unmatched, and pure computation with `apply_matches()`
+  persisting separately. It returns five correct buckets. Gap 515 is entirely in the card that renders
+  three of them.
+- **The domain-specific work is already in the right place.** `card_terms_check` declares discount and
+  tax-rate deviation as "checks not run" pending the 30.11 rule cards rather than guessing them from
+  prose — which is exactly the instinct §11.2 generalises. Tax and discount rules belong in the rule-card
+  registry as data, added without touching any card.
+
+### 11.7 Sequence
+
+1. Fix **Gap 477** first (18 tests still make live Azure calls; the failure baseline is stale). Until
+   that is clean, no result below is provable — and three gaps closed on 2026-09-09 turned out to be
+   work that had already been done without anyone knowing.
+2. **30.19**, then **30.20**. Between them they retire 509, 511, 515.2, 517.1 and prevent the next six.
+3. The plain wiring misses ride on top: 510, 515.1, 517.2, 519.
+4. Then the founder's call on Feature 29's **L1** — the answer-contract gate validates that figures
+   are real, never that the claim about them is true. Gap 512 and Gap 480 are both that hole. Feature
+   29 §4.3 puts the verifier stage at "not yet" and notes "we are at router"; this review is the
+   evidence for revisiting that.

@@ -110,11 +110,14 @@ def test_list_batches_and_rollback(db_session):
     assert response.json()["success"] is True
     assert response.json()["count"] == 2
 
-    # Verify soft delete in DB
+    # BE Gap 521(a), re-baselined 2026-09-14 with the reason in the body rather than as a
+    # silent edit. This block asserted a SOFT delete (`deleted_at is not None`, rows still
+    # present). The founder's standing rule is that delete removes the record from every
+    # store, and Gap 192's soft delete was removed product-wide — so the rows are gone and
+    # the old assertion was protecting behaviour the product deliberately no longer has.
     db_session.expire_all()
     invoices = db_session.exec(select(Invoice).where(Invoice.batch_id == batch_1)).all()
-    assert len(invoices) == 2
-    assert all(inv.deleted_at is not None for inv in invoices)
+    assert invoices == []
 
     # Verify AuditLogs created
     audit_logs = db_session.exec(

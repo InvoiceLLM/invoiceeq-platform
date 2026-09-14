@@ -55,6 +55,13 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+# BE Gap 477: pytest's default `python_files` also matches `*_test.py`, which collected
+# `tests/us/run_chat_live_test.py` and `tests/realworld_tenant/run_chat_live_test.py` — two
+# manual scripts that drive the real API, sharing a basename with no `__init__.py` between
+# them. Collection aborted on the name clash and the whole suite ran zero tests, which is how
+# a 43-failure baseline survived unmeasured for weeks. These two are the ONLY `*_test.py`
+# files in the repo (verified), so narrowing the glob costs no coverage and needs no rename.
+python_files = ["test_*.py"]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",

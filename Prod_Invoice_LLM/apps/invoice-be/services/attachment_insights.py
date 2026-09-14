@@ -189,6 +189,367 @@ def finding(
 
 
 # ---------------------------------------------------------------------------
+# Task 30.19 — the three-state check result
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT CLASS THIS EXISTS TO CLOSE (spec §11.2)
+# -------------------------------------------------
+# `InsightCard.status` describes the CARD. An individual comparison inside a card
+# had no way to say "I could not evaluate this" — it just `continue`d, and the card
+# still returned `ok`. So **"we compared nothing" and "everything matches" produced
+# the same output**: Gap 517.1 (a delivery line whose description does not pair is
+# skipped silently), Gap 515.2 (an unmatched bank row reported as a problem rather
+# than as an unknown), Gap 510 (zero compliance rules run, reported as a plausible
+# reason).
+#
+# Every check now returns one of three states. `NOT_CHECKED` is never rendered as
+# clean, is counted separately from `FAIL`, and names what it could not evaluate.
+#
+# This is a TYPE, not a rule. It needs no edit when a new vendor, language, item
+# description, bank or document type arrives — which is the test spec §11.2 sets
+# for any fix in this layer.
+
+CHECK_PASS = "pass"
+CHECK_FAIL = "fail"
+CHECK_NOT_CHECKED = "not_checked"
+
+
+@dataclass
+class CheckLog:
+    """The checks one card performed, each with its own outcome.
+
+    A card builds this instead of counting `checked` by hand, so that the count
+    it reports and the findings it emits cannot drift apart.
+    """
+
+    card: str
+    passed: list = field(default_factory=list)
+    failed: list = field(default_factory=list)
+    not_checked: list = field(default_factory=list)
+
+    def check_passed(self, subject: str) -> None:
+        self.passed.append(str(subject))
+
+    def check_failed(self, subject: str, finding_row: dict) -> None:
+        self.failed.append(str(subject))
+        self._findings.append(finding_row)
+
+    def check_not_checked(self, subject: str, reason: str) -> None:
+        """A comparison that could not be made. `reason` is shown to the user."""
+        self.not_checked.append({"subject": str(subject), "reason": reason})
+
+    def __post_init__(self) -> None:
+        self._findings: list = []
+
+    @property
+    def findings(self) -> list:
+        return list(self._findings)
+
+    @property
+    def evaluated(self) -> int:
+        return len(self.passed) + len(self.failed)
+
+    @property
+    def total(self) -> int:
+        return self.evaluated + len(self.not_checked)
+
+    def title(self, noun: str) -> str:
+        """"3 invoices checked, 2 not checked" — never "3 checked" when 2 were not.
+
+        The second clause is the whole point: a title that omits it is the defect
+        this task closes.
+        """
+        if not self.total:
+            return f"No {noun} could be checked"
+        text = f"{self.evaluated} {noun} checked"
+        if self.not_checked:
+            text += f", {len(self.not_checked)} not checked"
+        return text
+
+    def unchecked_detail(self) -> list:
+        """The subjects that could not be evaluated, grouped by reason, for the
+        bubble's "checks not run" section — so "2 delivered lines could not be
+        paired with a billed line" names WHICH two."""
+        by_reason: dict = {}
+        for entry in self.not_checked:
+            by_reason.setdefault(entry["reason"], []).append(entry["subject"])
+        return [
+            {"reason": reason, "subjects": subjects, "count": len(subjects)}
+            for reason, subjects in by_reason.items()
+        ]
+
+    def as_card(
+        self,
+        noun: str,
+        *,
+        figures: dict | None = None,
+        evidence: dict | None = None,
+    ) -> InsightCard:
+        """The card this log implies.
+
+        `ok` even when nothing could be evaluated is deliberate: the card ran, and
+        its honest result is "0 checked, N not checked". `skipped` means the card
+        never got as far as checking anything, and that is the caller's decision,
+        not this method's.
+        """
+        card_evidence = dict(evidence or {})
+        if self.not_checked:
+            card_evidence["not_checked"] = self.unchecked_detail()
+        return InsightCard(
+            card=self.card,
+            status=STATUS_OK,
+            title=self.title(noun),
+            figures=figures or {},
+            findings=self.findings,
+            evidence=card_evidence,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 30.20 — cards emit claims, not prose
+# ---------------------------------------------------------------------------
+#
+# THE DEFECT CLASS THIS EXISTS TO CLOSE (spec §11.3)
+# -------------------------------------------------
+# Every card wrote its own f-strings, so every formatting and wording bug was paid
+# for once per card: raw floats in sentences while the figure column formatted
+# correctly (Gap 509, and eight more instances the anti-hardcoding guard found on
+# 2026-09-13), a correct computation described with the wrong words (Gap 511), and
+# two cards asserting contradictory things in one bubble because neither could see
+# the other's conclusion (Gap 512).
+#
+# A card now emits a structured claim and ONE renderer turns claims into sentences.
+# `money_text()` is the only path from a number to user-facing text.
+#
+# NOTE ON §11.3's "do not add a fifth money()": the four helpers it names
+# (`invoice_builder.money`, `query_agent._money`, `query_tools._money`,
+# `document_comparison._money2`) all quantize a `Decimal` and NONE of them formats
+# to text, so the number-to-text step did not exist. `money_text()` is that step and
+# it delegates its quantization to `invoice_builder.money` rather than rounding
+# again — no fifth quantizer is introduced. Recorded in spec §11.3.
+
+#: ISO 4217 -> the symbol a reader expects. A currency that is not listed renders
+#: as its own code ("SGD 1,200.00"), so a new currency needs no edit here.
+CURRENCY_SYMBOLS = {
+    "INR": "₹",
+    "EUR": "€",
+    "USD": "$",
+    "GBP": "£",
+    "JPY": "¥",
+}
+
+
+def money_text(value: Any, currency: Any = None) -> str:
+    """A figure as the user reads it: symbol, thousands separators, 2 dp.
+
+    The ONLY number-to-text path in this layer. Gap 509 is what happens when a
+    card interpolates the raw value instead.
+    """
+    from services.invoice_builder import money as _quantize
+
+    amount = _dec(value)
+    if amount is None:
+        return "an unknown amount"
+    amount = _quantize(amount)
+
+    code = str(currency).strip().upper() if currency else ""
+    symbol = CURRENCY_SYMBOLS.get(code, "")
+
+    negative = amount < 0
+    digits = f"{abs(amount):,.2f}"
+    if symbol:
+        rendered = f"{symbol}{digits}"
+    elif code:
+        rendered = f"{code} {digits}"
+    else:
+        rendered = digits
+    return f"-{rendered}" if negative else rendered
+
+
+def days_text(count: Any) -> str:
+    """"1 day" / "5 days". A card must never build this by hand — that is how
+    "0 days" and "1 days" reach a user."""
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return "an unknown number of days"
+    return "1 day" if abs(n) == 1 else f"{n} days"
+
+
+def count_text(count: Any, singular: str, plural: str | None = None) -> str:
+    """"1 invoice" / "3 invoices", so no card writes "invoice(s)"."""
+    try:
+        n = int(count)
+    except (TypeError, ValueError):
+        return f"an unknown number of {plural or singular + 's'}"
+    return f"{n} {singular}" if abs(n) == 1 else f"{n} {plural or singular + 's'}"
+
+
+SEVERITY_INFO = "info"
+SEVERITY_WARN = "warn"
+SEVERITY_BREACH = "breach"
+
+#: How a card's own statement of seriousness orders findings. Gap 519: before this, the
+#: presence of a currency amount was the primary sort key, so anything unquantifiable —
+#: every compliance breach — sank below everything with a number on it.
+SEVERITY_RANK = {SEVERITY_INFO: 1, SEVERITY_WARN: 2, SEVERITY_BREACH: 3}
+
+
+@dataclass
+class Claim:
+    """What a card concluded, before anyone has chosen words for it.
+
+    `kind` selects the sentence. `entity` is what the claim is ABOUT (an invoice
+    number, a vendor, this document) and is what makes two claims comparable —
+    which is how Gap 512's contradiction becomes detectable instead of being two
+    unrelated strings.
+
+    `asserts` is the L1 half: the facts this claim depends on being true, as
+    `{fact_name: value}`. Two cards that assert different values for the same fact
+    about the same entity contradict each other, and `verify_claims()` finds that
+    without knowing anything about either card.
+    """
+
+    kind: str
+    entity: str = ""
+    figures: dict = field(default_factory=dict)
+    subjects: list = field(default_factory=list)
+    severity: str = SEVERITY_INFO
+    currency: Optional[str] = None
+    asserts: dict = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "entity": self.entity,
+            "figures": jsonable(self.figures),
+            "subjects": list(self.subjects),
+            "severity": self.severity,
+            "currency": self.currency,
+            "asserts": jsonable(self.asserts),
+        }
+
+
+def verify_claims(block: dict) -> list:
+    """L1 — is the CLAIM true, not merely are its FIGURES real?
+
+    Feature 29's answer-contract gate checks that every number the model repeats
+    already appears in the block. That is a real control and it is not this one: it
+    cannot tell that two cards said incompatible things about the same order, or
+    that a card asserted "nothing is linked" while another named the link. Gap 512
+    and Gap 480 are both that hole (spec §11.7 step 4).
+
+    The mechanism is generic. A claim declares the facts it depends on in
+    `asserts`; two claims about the same entity that assert DIFFERENT values for the
+    same fact are a contradiction. There is no table of incompatible card pairs to
+    maintain — a new card participates the moment it declares a fact, and a new
+    document type needs no edit here.
+
+    Returns a list of contradiction records. The caller decides what to do with
+    them; nothing here rewrites a card's own figures.
+    """
+    seen: dict = {}
+    contradictions: list = []
+
+    for row in block.get("findings") or []:
+        claim = row.get("claim") or {}
+        entity = claim.get("entity")
+        if not entity:
+            continue
+        for fact, value in (claim.get("asserts") or {}).items():
+            key = (str(entity), str(fact))
+            previous = seen.get(key)
+            if previous is None:
+                seen[key] = (value, row.get("card"), row.get("finding_key"))
+                continue
+            if previous[0] != value:
+                contradictions.append(
+                    {
+                        "entity": str(entity),
+                        "fact": str(fact),
+                        "left": {
+                            "card": previous[1],
+                            "finding_key": previous[2],
+                            "value": previous[0],
+                        },
+                        "right": {
+                            "card": row.get("card"),
+                            "finding_key": row.get("finding_key"),
+                            "value": value,
+                        },
+                    }
+                )
+
+    if contradictions:
+        logger.warning(
+            "insight block asserts contradictory facts: %s",
+            "; ".join(f"{c['entity']}.{c['fact']}" for c in contradictions),
+        )
+    return contradictions
+
+
+#: kind -> a function from a claim to its sentence. Adding a card means adding a
+#: template here, not another f-string in the card body.
+CLAIM_TEMPLATES: dict = {}
+
+
+def claim_template(kind: str):
+    """Register the sentence for one claim kind."""
+
+    def register(fn):
+        CLAIM_TEMPLATES[kind] = fn
+        return fn
+
+    return register
+
+
+def render_claim(claim: Claim) -> str:
+    """The one path from a claim to a user-facing sentence.
+
+    An unregistered kind is a programming error, not a user-facing one: it renders
+    as a plain, honest description rather than raising and taking the bubble down.
+    """
+    template = CLAIM_TEMPLATES.get(claim.kind)
+    if template is None:
+        logger.warning("no claim template registered for kind %r", claim.kind)
+        return f"{claim.entity}: {claim.kind.replace('_', ' ')}".strip(": ")
+    try:
+        return template(claim)
+    except Exception:  # pragma: no cover - defensive, same reason as the card wrapper
+        logger.exception("claim template %r failed", claim.kind)
+        return f"{claim.entity}: {claim.kind.replace('_', ' ')}".strip(": ")
+
+
+def claim_finding(
+    claim: Claim,
+    key: str,
+    *,
+    card: str,
+    impact_amount: float | None = None,
+    confidence: str = "med",
+    confidence_reason: str = "",
+    evidence: dict | None = None,
+) -> dict:
+    """A finding whose title came from a claim, with the claim kept alongside it.
+
+    The retained `claim` is what lets a later stage compare two cards' conclusions
+    about the same entity; the rendered `title` is what the user reads.
+    """
+    row = finding(
+        key,
+        render_claim(claim),
+        card=card,
+        impact_amount=impact_amount,
+        currency=claim.currency,
+        confidence=confidence,
+        confidence_reason=confidence_reason,
+        evidence=evidence,
+    )
+    row["claim"] = claim.as_dict()
+    return row
+
+
+# ---------------------------------------------------------------------------
 # Small deterministic helpers
 # ---------------------------------------------------------------------------
 
@@ -382,59 +743,81 @@ def card_agreed_vs_billed(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     comparison = compare_reference_to_invoices(row.extracted_json or {}, invoices)
     confidence, why = _confidence_for_link(invoices, row)
 
-    findings: list = []
     figures: dict = {}
+    log = CheckLog(card="agreed_vs_billed")
+    label = _label(row.doc_type)
+
     for c in comparison.get("comparisons", []):
         number = c.get("invoice_number") or c.get("invoice_id")
+
+        # Task 30.19: a pair we could not compare is NOT a pair that matched. A currency
+        # mismatch used to be emitted as a finding, which read as a defect in the invoice;
+        # it is an unknown, and the card now counts it as one.
         if c.get("outcome") == "currency_mismatch":
-            findings.append(
-                finding(
-                    f"agreed_vs_billed:currency:{number}",
-                    f"{number} is in a different currency from this "
-                    f"{_label(row.doc_type)}, so nothing was compared",
-                    card="agreed_vs_billed",
-                    confidence="high",
-                    confidence_reason="two different currencies, and this system holds no exchange rate",
-                    evidence={"invoice_number": number, "blocked_reason": c.get("blocked_reason")},
-                )
+            log.check_not_checked(
+                number,
+                f"the invoice is in a different currency from this {label}, and this system "
+                "holds no exchange rate",
             )
             continue
+
+        overbilled = None
         for f_ in c.get("fields", []):
             if f_.get("field") != "grand_total" or f_.get("status") != "invoice_higher":
                 continue
             delta = _dec(f_.get("delta"))
             if delta is None:
                 continue
-            figures[f"overbilled_{number}"] = _f(delta)
-            figures[f"agreed_{number}"] = _f(_dec(f_.get("reference_value")))
-            figures[f"billed_{number}"] = _f(_dec(f_.get("invoice_value")))
-            findings.append(
-                finding(
-                    f"agreed_vs_billed:{number}",
-                    f"{number} bills {_f(delta)} more than this "
-                    f"{_label(row.doc_type)} agreed",
-                    card="agreed_vs_billed",
-                    impact_amount=_f(delta),
-                    currency=row.currency,
-                    confidence=confidence,
-                    confidence_reason=why,
-                    evidence={
-                        "invoice_number": number,
-                        "agreed": f_.get("reference_value"),
-                        "billed": f_.get("invoice_value"),
-                        "difference": f_.get("delta"),
-                    },
-                )
-            )
+            overbilled = (delta, f_)
+            break
 
-    return InsightCard(
-        card="agreed_vs_billed",
-        status=STATUS_OK,
-        title=f"Checked {comparison.get('compared_count', 0)} invoice(s) against this {_label(row.doc_type)}",
-        figures=figures,
-        findings=findings,
-        evidence={"comparison": comparison},
-    )
+        if overbilled is None:
+            log.check_passed(number)
+            continue
+
+        delta, f_ = overbilled
+        figures[f"overbilled_{number}"] = _f(delta)
+        figures[f"agreed_{number}"] = _f(_dec(f_.get("reference_value")))
+        figures[f"billed_{number}"] = _f(_dec(f_.get("invoice_value")))
+        log.check_failed(
+            number,
+            claim_finding(
+                Claim(
+                    kind="billed_over_agreed",
+                    entity=str(number),
+                    figures={"excess": delta},
+                    subjects=[label],
+                    severity=SEVERITY_BREACH,
+                    currency=row.currency,
+                    # Gap 512: this card and `card_open_po_value` answer the same question
+                    # from different sources. Declaring the fact lets L1 catch any future
+                    # disagreement instead of shipping both statements to the user.
+                    asserts={"has_linked_invoices": True},
+                ),
+                f"agreed_vs_billed:{number}",
+                card="agreed_vs_billed",
+                impact_amount=_f(delta),
+                confidence=confidence,
+                confidence_reason=why,
+                evidence={
+                    "invoice_number": number,
+                    "agreed": f_.get("reference_value"),
+                    "billed": f_.get("invoice_value"),
+                    "difference": f_.get("delta"),
+                },
+            ),
+        )
+
+    card = log.as_card("invoices", figures=figures, evidence={"comparison": comparison})
+    card.title += f" against this {label}"
+    return card
+
+
+@claim_template("billed_over_agreed")
+def _render_billed_over_agreed(claim: Claim) -> str:
+    excess_text = money_text(claim.figures.get("excess"), claim.currency)
+    against_text = claim.subjects[0] if claim.subjects else "document"
+    return f"{claim.entity} bills {excess_text} more than this {against_text} agreed"
 
 
 #: How a payment term is printed: "30 days", "Net 45", "payable within 15 days".
@@ -493,45 +876,69 @@ def card_terms_check(row: Any, db_session: Any, ctx: dict) -> InsightCard:
 
     confidence, why = _confidence_for_link(invoices, row)
     figures = {"agreed_payment_days": float(agreed_days)}
-    findings = []
-    checked = 0
+    log = CheckLog(card="terms_check")
+
     for inv in invoices:
+        # Task 30.19: an invoice we cannot measure is NOT a passing check. Before this,
+        # it was `continue` and the card still reported "checked on N invoice(s)".
         if not (inv.invoice_date and inv.due_date):
+            log.check_not_checked(
+                inv.invoice_number,
+                "the invoice carries no invoice date and due date to measure a payment "
+                "window from",
+            )
             continue
-        checked += 1
-        actual = (inv.due_date - inv.invoice_date).days
-        figures[f"payment_days_{inv.invoice_number}"] = float(actual)
-        if actual == agreed_days:
+
+        granted = (inv.due_date - inv.invoice_date).days
+        figures[f"payment_days_{inv.invoice_number}"] = float(granted)
+        if granted == agreed_days:
+            log.check_passed(inv.invoice_number)
             continue
-        findings.append(
-            finding(
+
+        log.check_failed(
+            inv.invoice_number,
+            claim_finding(
+                # Gap 511: `granted` is the window the invoice ITSELF grants
+                # (due date minus invoice date), not days remaining from today. The
+                # old sentence said "is due in 26 days" for an invoice due in 6.
+                Claim(
+                    kind="terms_deviation",
+                    entity=inv.invoice_number,
+                    figures={"granted_days": granted, "agreed_days": agreed_days},
+                    subjects=[_label(row.doc_type)],
+                    severity=SEVERITY_WARN,
+                ),
                 f"terms_check:{inv.invoice_number}",
-                f"{inv.invoice_number} is due in {actual} days; this "
-                f"{_label(row.doc_type)} says {agreed_days}",
                 card="terms_check",
                 confidence=confidence,
                 confidence_reason=why,
                 evidence={
                     "invoice_number": inv.invoice_number,
                     "agreed_days": agreed_days,
-                    "invoice_days": actual,
+                    "invoice_days": granted,
                     "payment_terms_text": data.get("payment_terms"),
+                    "doc_type_label": _label(row.doc_type),
                 },
-            )
+            ),
         )
 
-    if not checked:
+    if not log.total:
         return InsightCard(
             card="terms_check",
             status=STATUS_SKIPPED,
             reason="the linked invoices have no invoice date and due date to measure",
         )
-    return InsightCard(
-        card="terms_check",
-        status=STATUS_OK,
-        title=f"Payment window checked on {checked} invoice(s)",
-        figures=figures,
-        findings=findings,
+    return log.as_card("invoices", figures=figures)
+
+
+@claim_template("terms_deviation")
+def _render_terms_deviation(claim: Claim) -> str:
+    granted = claim.figures.get("granted_days")
+    agreed = claim.figures.get("agreed_days")
+    source_text = claim.subjects[0] if claim.subjects else "this document"
+    return (
+        f"{claim.entity} allows {days_text(granted)} to pay; "
+        f"this {source_text} agrees {days_text(agreed)}"
     )
 
 
@@ -771,70 +1178,72 @@ def card_bank_reconcile(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     if balance is not None:
         figures["closing_balance"] = balance
 
-    findings = []
+    # Gaps 515.1 / 515.2, task 30.19. `match_statement_lines()` returns FIVE buckets and
+    # this card used to render three, so unmatched CREDITS were computed, counted and never
+    # spoken. Worse, an unmatched DEBIT was rendered as a finding — "money left with no
+    # invoice on file" — which made every ordinary business payment (salary, a tax
+    # remittance, a utility bill) read as a problem.
+    #
+    # The honest split: a row we could not match is an UNKNOWN, not a defect. Only a payment
+    # against an already-settled bill is a finding. This is the three-state result doing the
+    # work, and it needs no list of ignorable narrations — the fix §11.2 explicitly rejected.
+    log = CheckLog(card="bank_reconcile")
+
+    for _ in result["matched"]:
+        log.check_passed("matched transaction")
+
     for entry in result["possible_duplicates"]:
-        findings.append(
-            finding(
-                f"bank_reconcile:duplicate:{entry['line_id']}",
-                (
-                    f"{entry['amount']} paid on {entry['line_date']} looks like "
-                    f"{entry.get('invoice_number') or 'a bill'} being paid twice"
+        log.check_failed(
+            entry["line_id"],
+            claim_finding(
+                Claim(
+                    kind="bank_duplicate_payment",
+                    entity=entry.get("invoice_number") or "a bill",
+                    figures={"amount": entry["amount"]},
+                    subjects=[str(entry["line_date"])],
+                    severity=SEVERITY_BREACH,
+                    currency=row.currency,
                 ),
+                f"bank_reconcile:duplicate:{entry['line_id']}",
                 card="bank_reconcile",
                 impact_amount=entry["amount"],
-                currency=row.currency,
                 confidence="med",
                 confidence_reason=entry.get("reason", "matched a bill that is already settled"),
                 evidence=entry,
-            )
-        )
-    for entry in result["unmatched_debits"]:
-        figures[f"unmatched_debit_{entry['line_id'][:8]}"] = entry["amount"]
-        findings.append(
-            finding(
-                f"bank_reconcile:unmatched_debit:{entry['line_id']}",
-                (
-                    f"{entry['amount']} left the account on {entry['line_date']} "
-                    f"({entry['narration'] or 'no narration'}) with no invoice on file"
-                ),
-                card="bank_reconcile",
-                impact_amount=entry["amount"],
-                currency=row.currency,
-                confidence="low",
-                confidence_reason=(
-                    "no invoice matches this row within "
-                    f"{result['tolerances']['amount']} and "
-                    f"{result['tolerances']['days']} days with the same supplier"
-                ),
-                evidence=entry,
-            )
-        )
-    for entry in result["ambiguous"]:
-        findings.append(
-            finding(
-                f"bank_reconcile:ambiguous:{entry['line_id']}",
-                (
-                    f"{entry['amount']} on {entry['line_date']} could be any of "
-                    f"{len(entry.get('candidates', []))} bills -- pick which one"
-                ),
-                card="bank_reconcile",
-                impact_amount=entry["amount"],
-                currency=row.currency,
-                confidence="low",
-                confidence_reason="several invoices fit the amount, date and supplier equally",
-                evidence=entry,
-            )
+            ),
         )
 
-    return InsightCard(
-        card="bank_reconcile",
-        status=STATUS_OK,
-        title=(
-            f"{len(result['matched'])} of {len(lines)} transactions matched to invoices"
-            + (f", as of {row.statement_date.isoformat()}" if row.statement_date else "")
-        ),
+    tolerance_text = (
+        f"within {money_text(result['tolerances']['amount'], row.currency)} and "
+        f"{days_text(result['tolerances']['days'])}"
+    )
+
+    for entry in result["unmatched_debits"]:
+        figures[f"unmatched_debit_{entry['line_id'][:8]}"] = entry["amount"]
+        log.check_not_checked(
+            _bank_line_subject(entry, row.currency),
+            f"no invoice on file matches this payment {tolerance_text} with the same supplier",
+        )
+
+    # Gap 515.1: the bucket the spec's own 30.5 verification asked for and the card never
+    # rendered. A receipt with no outbound invoice behind it is unknown, not wrong.
+    for entry in result["unmatched_credits"]:
+        figures[f"unmatched_credit_{entry['line_id'][:8]}"] = entry["amount"]
+        log.check_not_checked(
+            _bank_line_subject(entry, row.currency),
+            f"no outbound invoice matches this receipt {tolerance_text} with the same customer",
+        )
+
+    for entry in result["ambiguous"]:
+        log.check_not_checked(
+            _bank_line_subject(entry, row.currency),
+            count_text(len(entry.get("candidates", [])), "invoice")
+            + " fit this row equally on amount, date and supplier",
+        )
+
+    card = log.as_card(
+        "transactions",
         figures=figures,
-        findings=findings,
         evidence={
             "tolerances": result["tolerances"],
             "matched": result["matched"][:20],
@@ -842,6 +1251,59 @@ def card_bank_reconcile(row: Any, db_session: Any, ctx: dict) -> InsightCard:
             "statement_date": row.statement_date.isoformat() if row.statement_date else None,
         },
     )
+    if row.statement_date:
+        card.title += f", as of {row.statement_date.isoformat()}"
+    return card
+
+
+def _bank_line_subject(entry: dict, currency: Any) -> str:
+    """One statement row, named the way a reader recognises it."""
+    narration = (entry.get("narration") or "").strip()
+    text = f"{money_text(entry.get('amount'), currency)} on {entry.get('line_date')}"
+    return f"{text} ({narration})" if narration else text
+
+
+# NAMING CONVENTION inside claim templates: a local holding ALREADY-RENDERED text ends in
+# `_text`. It reads honestly at the point of use ("this is a string, not a number") and it is
+# what both anti-hardcoding guards look for when deciding whether a figure reached a sentence
+# unformatted. A raw number bound to a `_text` name would be a deliberate lie, not an oversight.
+
+
+@claim_template("bank_duplicate_payment")
+def _render_bank_duplicate_payment(claim: Claim) -> str:
+    when_text = claim.subjects[0] if claim.subjects else "an unknown date"
+    paid_text = money_text(claim.figures.get("amount"), claim.currency)
+    return f"{paid_text} paid on {when_text} looks like {claim.entity} being paid twice"
+
+
+@claim_template("cash_shortfall")
+def _render_cash_shortfall(claim: Claim) -> str:
+    short_text = money_text(claim.figures.get("shortfall"), claim.currency)
+    balance_text = money_text(claim.figures.get("closing_balance"), claim.currency)
+    horizon_text = days_text(claim.figures.get("horizon_days"))
+    return (
+        f"{short_text} more is due in the next {horizon_text} than the "
+        f"{balance_text} on this statement"
+    )
+
+
+@claim_template("order_not_fully_invoiced")
+def _render_order_not_fully_invoiced(claim: Claim) -> str:
+    remaining_text = money_text(claim.figures.get("remaining"), claim.currency)
+    return f"{remaining_text} of this order has not been invoiced yet"
+
+
+@claim_template("order_over_invoiced")
+def _render_order_over_invoiced(claim: Claim) -> str:
+    excess_text = money_text(claim.figures.get("excess"), claim.currency)
+    return f"{excess_text} more has been invoiced than this order authorised"
+
+
+@claim_template("expected_outflow")
+def _render_expected_outflow(claim: Claim) -> str:
+    total_text = money_text(claim.figures.get("total"), claim.currency)
+    when_text = claim.subjects[0] if claim.subjects else "an unknown date"
+    return f"{total_text} is likely to be payable around {when_text}"
 
 
 def card_cash_cover(row: Any, db_session: Any, ctx: dict) -> InsightCard:
@@ -890,15 +1352,21 @@ def card_cash_cover(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     shortfall = figures.get("shortfall_within_30_days")
     if shortfall is not None and shortfall > 0:
         findings.append(
-            finding(
-                f"cash_cover:{row.id}",
-                (
-                    f"{shortfall} more is due in the next 30 days than the "
-                    f"{figures['closing_balance']} on this statement"
+            claim_finding(
+                Claim(
+                    kind="cash_shortfall",
+                    entity="this statement",
+                    figures={
+                        "shortfall": shortfall,
+                        "closing_balance": figures["closing_balance"],
+                        "horizon_days": 30,
+                    },
+                    severity=SEVERITY_WARN,
+                    currency=row.currency,
                 ),
+                f"cash_cover:{row.id}",
                 card="cash_cover",
                 impact_amount=shortfall,
-                currency=row.currency,
                 confidence="med",
                 confidence_reason=f"as of {figures['as_of']}, from your recorded bills",
                 evidence=figures,
@@ -1111,6 +1579,27 @@ def card_open_po_value(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     invoiced = sum((_dec(r["invoiced_amount"]) or Decimal("0")) for r in rows)
     remaining = ordered - invoiced
 
+    # Gap 512: this card used to say "no invoice has been recorded against this order number
+    # yet" whenever `v_3way_match` returned nothing, while `card_agreed_vs_billed` — reading
+    # `ctx["invoices"]`, a DIFFERENT source of truth for the same question — named a probable
+    # match in the same bubble. Both statements were internally true and together they read
+    # as a contradiction.
+    #
+    # The fix is one fact, declared once and asserted by both cards, so L1 can see any future
+    # disagreement rather than the user finding it.
+    linked = ctx.get("invoices") or []
+    has_linked = bool(rows) or bool(linked)
+    if rows:
+        link_reason = "from the invoices recorded against this order number"
+    elif linked:
+        link_reason = (
+            "no invoice carries this order number, but "
+            + count_text(len(linked), "invoice")
+            + " is linked to this document by supplier, amount and date"
+        )
+    else:
+        link_reason = "no invoice has been recorded against this order number yet"
+
     figures = {
         "ordered_value": _f(ordered),
         "invoiced_against_order": _f(invoiced),
@@ -1119,29 +1608,37 @@ def card_open_po_value(row: Any, db_session: Any, ctx: dict) -> InsightCard:
     findings = []
     if remaining > 0:
         findings.append(
-            finding(
+            claim_finding(
+                Claim(
+                    kind="order_not_fully_invoiced",
+                    entity=str(po_number),
+                    figures={"remaining": remaining, "ordered": ordered, "invoiced": invoiced},
+                    severity=SEVERITY_INFO,
+                    currency=row.currency,
+                    asserts={"has_linked_invoices": has_linked},
+                ),
                 f"open_po_value:{po_number}",
-                f"{_f(remaining)} of this order has not been invoiced yet",
                 card="open_po_value",
                 impact_amount=_f(remaining),
-                currency=row.currency,
                 confidence="high" if rows else "med",
-                confidence_reason=(
-                    "from the invoices recorded against this order number"
-                    if rows
-                    else "no invoice has been recorded against this order number yet"
-                ),
+                confidence_reason=link_reason,
                 evidence={"po_number": str(po_number), "matched": rows[:5]},
             )
         )
     elif remaining < 0:
         findings.append(
-            finding(
+            claim_finding(
+                Claim(
+                    kind="order_over_invoiced",
+                    entity=str(po_number),
+                    figures={"excess": abs(remaining), "ordered": ordered, "invoiced": invoiced},
+                    severity=SEVERITY_BREACH,
+                    currency=row.currency,
+                    asserts={"has_linked_invoices": has_linked},
+                ),
                 f"open_po_value:over:{po_number}",
-                f"{_f(abs(remaining))} more has been invoiced than this order authorised",
                 card="open_po_value",
                 impact_amount=_f(abs(remaining)),
-                currency=row.currency,
                 confidence="high",
                 confidence_reason="from the invoices recorded against this order number",
                 evidence={"po_number": str(po_number), "matched": rows[:5]},
@@ -1186,12 +1683,18 @@ def card_cash_out_timing(row: Any, db_session: Any, ctx: dict) -> InsightCard:
         title=f"Expected to be payable around {expected.isoformat()}",
         figures={"expected_outflow": _f(total), "payment_days": float(days)},
         findings=[
-            finding(
+            claim_finding(
+                Claim(
+                    kind="expected_outflow",
+                    entity=str(row.doc_number or "this document"),
+                    figures={"total": total},
+                    subjects=[expected.isoformat()],
+                    severity=SEVERITY_INFO,
+                    currency=row.currency,
+                ),
                 f"cash_out_timing:{row.doc_number or row.id}",
-                f"{_f(total)} is likely to be payable around {expected.isoformat()}",
                 card="cash_out_timing",
                 impact_amount=_f(total),
-                currency=row.currency,
                 confidence="med",
                 confidence_reason=f"from this document's own '{data.get('payment_terms')}' terms",
                 evidence={
@@ -1843,10 +2346,24 @@ def build_insight_block(
         "cards": [c.as_dict() for c in cards],
         "findings": findings,
         "figures": figures,
+        # Task 30.19: a card that never ran AND, now, the individual checks inside a card
+        # that ran but could not be evaluated. Before this, only the first kind reached the
+        # user, so "we compared nothing" inside an `ok` card was invisible — the card said
+        # "3 checked" and the two it could not pair were never mentioned.
         "checks_not_run": [
             {"card": c.card, "reason": c.reason}
             for c in cards
             if c.status in (STATUS_SKIPPED, STATUS_BLOCKED)
+        ]
+        + [
+            {
+                "card": c.card,
+                "reason": entry["reason"],
+                "subjects": entry["subjects"],
+                "count": entry["count"],
+            }
+            for c in cards
+            for entry in (c.evidence.get("not_checked") or [])
         ],
         "actions": list(BUBBLE_ACTIONS),
         "verdict": "",
@@ -1854,6 +2371,11 @@ def build_insight_block(
         "generated_at": datetime.utcnow().isoformat(),
     }
     block["findings"] = rank_findings(block)
+    # L1 (spec §11.7 step 4): the answer-contract gate proves a figure is real, never that
+    # the claim about it is true. This is the other half — two cards that assert different
+    # values for the same fact about the same entity are recorded here rather than both
+    # being shown as confident statements (Gap 512).
+    block["contradictions"] = verify_claims(block)
     block["verdict"] = verdict_template(block)
     # BE Gap 494: one boundary where database types become JSON types. Nothing
     # downstream -- three JSONB columns and an SSE event -- can hold a `UUID`,
@@ -1892,7 +2414,20 @@ def rank_findings(block: dict, llm: Any = None) -> list:
     def key(f_: dict):
         weight = {"high": 1.0, "med": 0.6, "low": 0.3}.get(f_.get("confidence", "med"), 0.6)
         amount = f_.get("impact_amount")
-        return (1 if amount else 0, abs(float(amount or 0.0)) * weight)
+        # Gap 519: the old primary key was `1 if amount else 0`, so EVERY finding without a
+        # currency impact sorted below EVERY finding with one. Only the top 3 reach the
+        # narrator, so a compliance breach — which never carries an amount — could not be
+        # spoken at all, no matter how serious.
+        #
+        # Severity now leads. It comes from the claim (30.20), so a card states how bad a
+        # thing is rather than relying on the size of a number to imply it, and an
+        # unquantifiable breach can outrank a large but routine figure. Money still orders
+        # findings of equal severity.
+        severity = (f_.get("claim") or {}).get("severity", SEVERITY_INFO)
+        return (
+            SEVERITY_RANK.get(severity, SEVERITY_RANK[SEVERITY_INFO]),
+            abs(float(amount or 0.0)) * weight,
+        )
 
     return sorted(findings, key=key, reverse=True)
 

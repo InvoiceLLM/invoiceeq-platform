@@ -22,6 +22,10 @@ output line, not a recollection.
 | 6 | Tracker status marker and gap entry updated, gap numbers carrying their `BE`/`FE`/`Website` prefix? |
 | 7 | Test evidence filed and the coverage map row updated, if this was functional-tester work? |
 | 8 | Changes uncommitted and visible in the founder's Changes panel? |
+| 9 | `tests/test_no_hardcoding.py` run and passing, or each failure named and justified? |
+| 10 | Gap entry states the defect **class**, not the symptom, and gives call sites found vs fixed? |
+| 11 | Fix states what it does **not** handle — a boundary, not "everything seen so far"? |
+| 12 | Tests assert a **property**, not the fixture's literal output, and survive a mutated fixture (vendor renamed, currency swapped, line added)? |
 
 ## Verdict
 

@@ -184,11 +184,14 @@ class Settings(BaseSettings):
     # table.py` / `test_document_type_classifier.py` / `test_document_delete.py`
     # ran 243 passed against real Postgres on 2026-09-05.
     #
-    # KNOWN CONSEQUENCE, accepted knowingly: the 27 flag-OFF parity tests in
-    # `tests/test_generic_extraction.py` read this setting at import time
-    # instead of forcing it, so they now fail on EVERY machine rather than only
-    # on ones with `ENABLE_GENERIC_EXTRACTION=true` in `.env`. That is a defect
-    # in those tests, not in this feature -- see Gap 461 in the tracker.
+    # RESOLVED 2026-09-07 (Gap 477 re-baseline; Gap 461 closed 2026-09-09).
+    # Pinning this True used to break the 27 flag-OFF parity tests in
+    # `tests/test_generic_extraction.py`, because they read the setting at
+    # import time instead of forcing it and so inherited whatever this default
+    # was. They now force it per test via the `generic_flag_off` /
+    # `generic_flag_on` fixtures, which monkeypatch `config.settings` directly.
+    # The flag-off path is still exercised; it just no longer depends on this
+    # default. Do not reintroduce an import-time read of this setting in a test.
     #
     # ═══ ALWAYS TRUE. NEVER SET THIS TO FALSE. ═══════════════════════════════
     # Founder ruling, 2026-09-05: "the flag is always on". Not a default to be

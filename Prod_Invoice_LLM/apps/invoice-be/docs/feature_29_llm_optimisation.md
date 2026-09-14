@@ -962,3 +962,29 @@ The bias a second rater existed to remove is still real, and is now handled by *
 is rather than by how many there are: the 2026-09-07 calibration file records that its verdicts
 came from the same session that wrote the code under test, which is precisely the conflict the
 founder is not subject to.
+
+
+## 12. Open design decision — L1 validates figures, not claims (raised 2026-09-09)
+
+Raised by the Feature 30 design review (`feature_30_business_intelligence.md` §11), founder-directed
+after a dry run of all ten `showcase/vpi_demo` §5 attachment scenarios.
+
+§4.1 adopts the answer contract and deterministic groundedness gate as "the single cheapest
+correctness control we have", and for hallucinated arithmetic it is exactly that: `_answer_contract_gate()`
+rejects any sentence containing a figure that is not already in the payload, and the template text
+stands. That guard holds.
+
+**What it does not do is check the CLAIM about the figure.** A sentence that copies every number
+correctly but attaches the wrong reading passes the gate cleanly. Two open gaps are that same hole:
+
+- **Gap 512** — a bubble says "no invoice has been recorded against this order number" (true: no
+  invoice quotes the PO number) beside a chip saying "probable match: RAJ-2009" (true: matched on
+  party and date). Every figure is real; the two sentences contradict each other.
+- **Gap 480** — the eval harness fails a *correct abstention*, because an answer that says "this field
+  does not exist" has no tool context to be faithful to. The same assumption, inverted: "figures check
+  out" is being read as "the answer is right", so an answer with no figures cannot be right.
+
+§4.3 states the progression as router → planner → verifier → multi-agent and records "we are at
+router", with the verifier stage under "not yet". **This review is the evidence for revisiting that
+ordering.** No work proposed here — the decision is the founder's, and it is sequenced after Feature
+30 tasks 30.19 / 30.20 in that review's §11.7.

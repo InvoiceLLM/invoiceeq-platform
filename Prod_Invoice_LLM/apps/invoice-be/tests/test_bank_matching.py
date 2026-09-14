@@ -317,17 +317,52 @@ def test_an_ambiguous_row_is_never_given_an_invoice_id(pg_session, world):
 
 
 def test_the_sync_bubble_reports_the_match_and_the_as_of_date(pg_session, world, flag_on):
+    # This module's own docstring promises "1 unmatched credit", and the shared fixture never
+    # had one — its only credit (U4) matches INV-D, which is why `test_the_six_line_statement`
+    # asserts `unmatched_credits == []`. Feature 30 §11.5 recorded that the 30.5 verification
+    # therefore could not have been run as written. Added here rather than to the shared
+    # fixture so the other tests' balances and counts are untouched.
+    receipt = BankStatementLine(
+        tenant_id=world["tenant_id"],
+        attachment_id=world["attachment"].id,
+        statement_date=date(2026, 3, 31),
+        line_date=date(2026, 3, 30),
+        narration="NEFT CR UNRECOGNISED CUSTOMER",
+        credit=5000.0,
+        balance=1023221.75,
+        utr_ref="U8",
+    )
+    pg_session.add(receipt)
+    pg_session.commit()
+
     block = ai.build_insight_block(world["attachment"], pg_session, world["tenant_id"], stage="sync")
     cards = {c["card"]: c for c in block["cards"]}
 
     assert cards["bank_reconcile"]["status"] == "ok"
     assert cards["bank_reconcile"]["figures"]["matched_count"] == 4.0
-    assert cards["bank_reconcile"]["figures"]["closing_balance"] == 1018221.75
+    assert cards["bank_reconcile"]["figures"]["closing_balance"] == 1023221.75
     assert cards["bank_reconcile"]["evidence"]["statement_date"] == "2026-03-31"
     assert "as of 2026-03-31" in cards["bank_reconcile"]["title"]
 
+    # RE-BASELINED 2026-09-13 by task 30.19 / Gap 515.2, with the reason in the body rather
+    # than as a silent edit. The old assertion required an unmatched DEBIT to be a finding.
+    # That is the defect: an ordinary business payment (a salary run, a tax remittance, a
+    # utility bill) has no invoice behind it and was therefore reported to the owner as a
+    # problem. A row the matcher could not match is an UNKNOWN, so it is now a NOT_CHECKED
+    # entry naming what could not be evaluated, and only a bill paid twice is a finding.
     keys = {f["finding_key"].split(":")[1] for f in block["findings"] if f["card"] == "bank_reconcile"}
-    assert "duplicate" in keys and "unmatched_debit" in keys
+    assert keys == {"duplicate"}
+
+    # Gap 515.1: the matcher returns five buckets and the card rendered three. Both unmatched
+    # buckets must now be spoken — the spec's own 30.5 verification row asks for the credit,
+    # which was computed, counted in `figures` and never turned into a sentence.
+    unchecked = cards["bank_reconcile"]["evidence"]["not_checked"]
+    reasons = " ".join(entry["reason"] for entry in unchecked)
+    assert "no invoice on file matches this payment" in reasons
+    assert "no outbound invoice matches this receipt" in reasons
+
+    # The title counts them separately — "N checked, M not checked", never "N checked".
+    assert "not checked" in cards["bank_reconcile"]["title"]
 
     # The cash-cover card is async and says so rather than running early.
     assert cards["cash_cover"]["status"] == "skipped"

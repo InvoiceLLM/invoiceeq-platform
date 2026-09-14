@@ -1346,10 +1346,19 @@ def test_gap_429_hide_and_prune_on_postgres():
         )
 
         try:
+            # BE Gap 521(b): these two runs used to be seeded at a hardcoded
+            # `datetime(2026, 9, 1, ...)`, and the retention assertion below sets a 7-day
+            # window. That was inside the window when the test was written and outside it
+            # from 2026-09-08 onward, at which point `drop`'s own FAILED row also became
+            # prunable and the expected count silently went from 1 to 2. The test drifted
+            # with the calendar rather than with the code. Seeded RELATIVE to now, so the
+            # relationship the test means to assert -- these runs are INSIDE the retention
+            # window, the aged rows below are outside it -- is the one it encodes.
+            recent = datetime.utcnow() - timedelta(days=1)
             keep = _seed_run(pg, ["SUCCESS"], tenant_id=tenant_id,
-                             started=datetime(2026, 9, 1, 8, 0, 0))
+                             started=recent)
             drop = _seed_run(pg, ["SUCCESS", "FAILED"], tenant_id=tenant_id,
-                             started=datetime(2026, 9, 1, 10, 0, 0))
+                             started=recent + timedelta(hours=2))
 
             assert hide_autopilot_run(batch_id=str(drop), context=ctx, db_session=pg).hidden == 2
 

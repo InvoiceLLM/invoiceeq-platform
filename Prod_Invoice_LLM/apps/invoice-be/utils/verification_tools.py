@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 REL_TOLERANCE = 0.0005  # 0.05%
 DEFAULT_ABS_TOLERANCE = 1.00
 
+# BE Gap 520: the builder's render self-check is NOT an extraction-arithmetic check and must
+# not share its tolerance. `DEFAULT_ABS_TOLERANCE` answers "does this supplier's printed total
+# agree with their own line items", where a rounding gap is ordinary and Gap 504 deliberately
+# set the floor at one currency unit. `verify_builder_readback()` answers "did the PDF WE
+# rendered print the number WE computed" — we own both sides, so any drift at all is a render
+# fault. Named for its own question so a future change to the extraction tolerance cannot
+# silently reach it again.
+BUILDER_READBACK_ABS_TOLERANCE = 0.01
+
 
 def _within_tolerance(
     actual: float, expected: float, abs_tol: float = DEFAULT_ABS_TOLERANCE, rel_tol: float = REL_TOLERANCE
@@ -874,7 +883,7 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
         # different extractors as either sign; the magnitude is the claim.
         if intent_key == "discount_total" and actual is not None:
             actual, intended = abs(actual), abs(intended)
-        if actual is None or abs(actual - intended) > DEFAULT_ABS_TOLERANCE:
+        if actual is None or abs(actual - intended) > BUILDER_READBACK_ABS_TOLERANCE:
             report(intent_key, intended, extracted.get(extracted_key))
 
     # BE Gap 463: a multi-rate invoice (CGST + SGST printed as two rows) that
@@ -903,7 +912,7 @@ def verify_builder_readback(intent: dict, extracted: dict) -> list[dict]:
                 continue
             item = extracted_items[index] if index < len(extracted_items) else {}
             actual = _as_float((item or {}).get("amount"))
-            if actual is None or abs(actual - intended) > DEFAULT_ABS_TOLERANCE:
+            if actual is None or abs(actual - intended) > BUILDER_READBACK_ABS_TOLERANCE:
                 report(f"items[{index}].amount", intended, (item or {}).get("amount"))
 
     # --- BE Gap 467: the fields Gap 463 had to leave out ---------------------
