@@ -30,6 +30,7 @@ from chroma_client import delete_document_chunks, delete_invoice_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
 from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
 from services.invoice_visibility import invoice_not_deleted
+from utils.alert_ids import with_alert_ids
 from services.invoice_deletion import (
     delete_document_rows,
     delete_invoice_rows,
@@ -225,7 +226,7 @@ async def _ingest_single_file(
             file_hash=file_hash,
             status="DUPLICATE",
             duplicate_of_invoice_id=duplicate_of_invoice_id,
-            sa_alerts=[duplicate_alert],
+            sa_alerts=with_alert_ids([duplicate_alert]),  # BE Gap 566
             tags=tags,
             submitted_by_email=submitter,
             **copied,

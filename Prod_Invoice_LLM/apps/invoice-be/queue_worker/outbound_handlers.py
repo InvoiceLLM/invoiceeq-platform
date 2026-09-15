@@ -9,6 +9,7 @@ from models import Invoice, ExtractionTemplate
 from queue_worker.handlers import _run_ocr, _publish_sse_events, _persist_processing_failure
 from agents.outbound_extraction_agent import run_outbound_extraction_agent
 from config import get_settings
+from utils.alert_ids import with_alert_ids
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,7 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 invoice.field_confidence = field_confidence
                 invoice.source_document_json = source_document_json
                 invoice.status = status
-                invoice.sa_alerts = alerts
+                invoice.sa_alerts = with_alert_ids(alerts)  # BE Gap 566
                 invoice.items = extracted_data.get("items", [])
                 # Post-Gap-283 correction: `OutboundInvoiceExtractionSchema` now
                 # carries `taxes[]` (needed so Gap 69's component-aware

@@ -42,6 +42,7 @@ from sqlmodel import Session, select
 from config import get_settings
 from models import Invoice
 from services.invoice_visibility import invoice_not_deleted
+from utils.alert_ids import with_alert_ids
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ def mark_invoice_failed(
     alerts.append({"type": alert_type, "message": reason})
 
     invoice.status = FAILED_STATUS
-    invoice.sa_alerts = alerts
+    invoice.sa_alerts = with_alert_ids(alerts)  # BE Gap 566: the failure alert gets an id; existing ids are kept
     invoice.completed_at = datetime.utcnow()
     session.add(invoice)
     session.commit()

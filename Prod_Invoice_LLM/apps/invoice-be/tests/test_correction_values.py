@@ -123,7 +123,7 @@ def test_parse_tags_refuses_non_word_lists(raw):
 
 
 def test_list_entry_model_reads_the_schema_field_not_a_same_named_class():
-    """BE Gap 531: extraction_agent.py defines DeductionItem twice; the invoice schema's deductions use the first."""
+    """BE Gap 531: the entry model is read from the schema field — for deductions, the invoice deduction model."""
     from agents.extraction_agent import InvoiceExtractionSchema
 
     from utils.correction_values import list_entry_model

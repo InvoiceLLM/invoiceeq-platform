@@ -1460,6 +1460,12 @@ Written **before** any code, per the founder's run instruction of 2026-09-03
 the founder's: **C1 → B2 → B1 → A1 → A2-pre → A2 → A4 → C2 → C3 → A3 → C4 → C5**.
 Nothing here is committed by the agent; every block ends at the approval gate.
 
+### BE Gap 569 — the SQL route may read only the `invoice` table (2026-09-15)
+
+**What was wrong.** C1 below binds every generated statement to the asking tenant's *rows*, but nothing bound it to a *table*. Any tenant-scoped table passed both the regex and the AST guard: reproduced on in-memory SQLite, `SELECT target_url, secret FROM webhook_subscriptions WHERE tenant_id = '<t>'` and `SELECT action, details FROM audit_logs WHERE …` came back through `execute_generated_sql` — 34 tables carry `tenant_id` (users, widget tokens, connections, chat sessions, audit history …), and a JOIN on a tenant-guarded table reaches the rest. The only barrier was a prompt line saying those tables do not exist.
+
+**What changed.** Safety Check 5, `agents/query_agent.py::assert_reads_only_allowed_tables()`, runs right after the AST tenant guard: every named table anywhere in the statement — FROM, JOIN, subqueries, CTE bodies — must be in `_CHAT_SQL_READABLE_TABLES = {"invoice"}`, the one table every SQL prompt describes. A reference to a CTE defined in the same statement is not a table; a table-valued function (`json_each(...)`) has no table name; a schema qualifier other than `public` is refused; an unparseable statement fails closed. The refusal uses the same "Access Denied" prefix, so the repair loop and `user_safe_error_detail` handle it unchanged. Tests: `tests/test_chat_sql_table_allowlist.py` (both rule 6d shapes, CTE, subquery and schema-qualified `public.invoice` allowed; every other table in `SQLModel.metadata` refused; the reproduction now raises). Full record: `be_features_tracker.md` Gap 569.
+
 ### C1 — AST tenant guard (Gap 414, P0) — *in progress, run 1*
 
 **What changes.** `execute_generated_sql` gains a second, independent isolation

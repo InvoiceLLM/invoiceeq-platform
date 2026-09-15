@@ -3066,12 +3066,12 @@ def test_t_r_8_deductions_are_individually_reported_never_netted():
     an explanation. One unexplained 8,000 gap is a support ticket; "TDS 6,000 +
     chargeback 2,000" is an answer. The schema carries a LIST for that reason, and
     the prompt says so; this pins the shape."""
-    from agents.extraction_agent import DeductionItem, GenericDocumentSchema
+    from agents.extraction_agent import GenericDocumentSchema, RemittanceDeductionItem
 
     doc = GenericDocumentSchema(
         payment_deductions=[
-            DeductionItem(kind="TDS", amount=6000.0, reference="194C"),
-            DeductionItem(kind="CHARGEBACK", amount=2000.0, reference="OTIF-Q3"),
+            RemittanceDeductionItem(kind="TDS", amount=6000.0, reference="194C"),
+            RemittanceDeductionItem(kind="CHARGEBACK", amount=2000.0, reference="OTIF-Q3"),
         ]
     )
     assert len(doc.payment_deductions) == 2
