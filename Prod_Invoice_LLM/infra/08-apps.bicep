@@ -702,6 +702,25 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     cpu: benchmarkEvalCpu
     memory: benchmarkEvalMemory
     replicaTimeout: benchmarkEvalReplicaTimeout
+    // BE Gap 524: same two Document Intelligence settings the backend and queue
+    // worker get -- the Gap 483 attachment eval cases need them (see
+    // benchmark-eval-job-only.bicep for the full note; keep both in step).
+    extraEnv: [
+      {
+        name: 'AZURE_DOC_INTEL_ENDPOINT'
+        value: docIntelAccount.properties.endpoint
+      }
+      {
+        name: 'AZURE_DOC_INTEL_KEY'
+        secretRef: 'docintel-key-secret'
+      }
+    ]
+    extraSecrets: [
+      {
+        name: 'docintel-key-secret'
+        secretName: 'AZURE-DOC-INTEL-KEY'
+      }
+    ]
   }
 }
 

@@ -125,6 +125,12 @@ resource chromaDbApp 'Microsoft.App/containerApps@2024-03-01' existing = {
   name: 'ca-chromadb-${environment}'
 }
 
+// BE Gap 524: the Document Intelligence account the backend already reads its
+// endpoint from (08-apps.bicep `docIntelName`). Same naming, same environment.
+resource docIntelAccount 'Microsoft.CognitiveServices/accounts@2023-05-01' existing = {
+  name: 'docintel-${namingPrefix}-${environment}'
+}
+
 // Identical parameter set to 08-apps.bicep's `benchmarkEvalJob` module -- see
 // that file for the full rationale on each choice (--no-gate/--no-write/
 // --tolerate-fp on Track 1, --paths default only, default judge mode on
@@ -159,6 +165,28 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     cpu: '1.0'
     memory: '2.0Gi'
     replicaTimeout: benchmarkEvalReplicaTimeout
+    // BE Gap 524: the Gap 483 attachment cases (attach_a1..attach_b7) seed their
+    // PDFs through the real chat-attachment pipeline, which calls Azure Document
+    // Intelligence. The backend has these two settings; this job never did, so
+    // every attachment turn failed with "credentials (endpoint or key) are
+    // missing", scored 0 with zero LLM calls, and dragged the nightly pass rate /
+    // accuracy under the Gap 299 red bands every night since 2026-09-13.
+    extraEnv: [
+      {
+        name: 'AZURE_DOC_INTEL_ENDPOINT'
+        value: docIntelAccount.properties.endpoint
+      }
+      {
+        name: 'AZURE_DOC_INTEL_KEY'
+        secretRef: 'docintel-key-secret'
+      }
+    ]
+    extraSecrets: [
+      {
+        name: 'docintel-key-secret'
+        secretName: 'AZURE-DOC-INTEL-KEY'
+      }
+    ]
   }
 }
 
