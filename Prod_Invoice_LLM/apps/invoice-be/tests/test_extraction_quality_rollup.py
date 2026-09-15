@@ -166,3 +166,28 @@ def test_alert_precision_ignores_other_tenants(db_session):
 
     assert alert_precision_rollup(db_session, tenant_a) == []
     assert field_correction_rollup(db_session, tenant_a) == []
+
+
+def test_alert_precision_uses_the_recorded_dismissed_alerts_and_tolerates_object_input(db_session):
+    """BE Gap 537: resolves now record exactly which alerts were removed, and dismissal entries can be
+    objects — the rollup counts only the removed alert and does not crash on a dict entry."""
+    tenant_id = uuid4()
+    subtotal_alert = {"type": "subtotal_not_verified_in_source", "field": "subtotal", "message": "1,250.00"}
+    total_alert = {"type": "grand_total_not_verified_in_source", "field": "grand_total", "message": "1,250.00"}
+    db_session.add(
+        _resolve_log(
+            tenant_id,
+            details={
+                "previous_alerts": [subtotal_alert, total_alert],
+                "dismissed_alerts_input": [subtotal_alert],
+                "dismissed_alerts": [subtotal_alert],
+                "corrections": {"subtotal": {"old": 1250, "new": 1200}},
+            },
+        )
+    )
+    db_session.commit()
+
+    rollup = alert_precision_rollup(db_session, tenant_id)
+    assert [(r["alert_type"], r["dismissed_with_correction"], r["dismissed_without_correction"]) for r in rollup] == [
+        ("subtotal_not_verified_in_source", 1, 0)
+    ]

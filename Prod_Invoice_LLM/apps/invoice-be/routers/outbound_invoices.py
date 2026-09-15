@@ -23,7 +23,7 @@ from dependencies import (
     require_actions_scope,
     TenantContext,
 )
-from models import Invoice, Tenant, User
+from models import AuditLog, Invoice, Tenant, User
 from services.invoice_builder import (
     BuildRequest,
     builder_intent,
@@ -562,9 +562,25 @@ async def confirm_send_outbound_invoice(
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
 
+    previous_status = invoice.status
     invoice.status = "SENT"
     invoice.sent_at = datetime.utcnow()
     db_session.add(invoice)
+    # BE Gap 551: record who confirmed the send, in the same transaction as the status change.
+    db_session.add(AuditLog(
+        tenant_id=invoice.tenant_id,
+        invoice_id=invoice.id,
+        actor_user_id=context.db_user_id,
+        actor_role=context.role,
+        action="CONFIRM_SEND_OUTBOUND_INVOICE",
+        details={
+            "previous_status": previous_status,
+            "target_status": "SENT",
+            "notify_emails": notify_emails or [],
+            **context.trail_identity(),
+        },
+        timestamp=datetime.utcnow(),
+    ))
     db_session.commit()
     db_session.refresh(invoice)
 
@@ -617,9 +633,25 @@ async def mark_outbound_invoice_paid(
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
 
+    previous_status = invoice.status
     invoice.status = "PAID"
     invoice.paid_at = datetime.utcnow()
     db_session.add(invoice)
+    # BE Gap 551: record who marked it paid, in the same transaction as the status change.
+    db_session.add(AuditLog(
+        tenant_id=invoice.tenant_id,
+        invoice_id=invoice.id,
+        actor_user_id=context.db_user_id,
+        actor_role=context.role,
+        action="MARK_PAID_OUTBOUND_INVOICE",
+        details={
+            "previous_status": previous_status,
+            "target_status": "PAID",
+            "notify_emails": notify_emails or [],
+            **context.trail_identity(),
+        },
+        timestamp=datetime.utcnow(),
+    ))
     db_session.commit()
     db_session.refresh(invoice)
 

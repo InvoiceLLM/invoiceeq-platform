@@ -50,3 +50,6 @@ AR mirror of the existing AP metrics endpoint: total invoiced to customers, amou
   - Both active: confirm both halves render simultaneously with correct, independent data; confirm no combined/net figure appears anywhere on the page.
   - Mark an outbound invoice `PAID`; confirm `average_days_to_payment` reflects the real `paid_at - sent_at` elapsed time, not a placeholder.
   - `GET /outbound-dashboard/invoices`: confirm it paginates correctly via `X-Total-Count`, `customer_name` narrows to one customer, and `routers/invoices.py`'s existing `GET /invoices` behavior is completely unaffected (regression check — same file, zero edits).
+
+### Gaps
+- `[x]` **BE Gap 565: AI scores count the outbound review console's corrections** — built 2026-09-15. `ai_field_extraction` and `ai_alert_response` read only inbound `RESOLVE_INVOICE` trail rows, while the outbound review console writes `RESOLVE_OUTBOUND_INVOICE`, so real outbound corrections never moved either score. They now read both actions; the inbound one is kept for rows written before BE Gap 536 closed that path. Tests: `test_outbound_ai_score_metrics` (now through `PUT /outbound-audit/resolve`) and `test_outbound_ai_score_still_counts_legacy_inbound_action_rows`. Full record: `be_features_tracker.md` Gap 565.

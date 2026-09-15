@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
-from models import Invoice, Tenant, ExtractionTemplate
+from models import AuditLog, Invoice, Tenant, ExtractionTemplate
 
 sqlite_url = "sqlite:///:memory:"
 engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -195,6 +195,35 @@ def test_mark_paid_rejects_wrong_status(db_session):
 
     response = client.put(f"/api/v1/outbound-invoices/{invoice_id}/mark-paid")
     assert response.status_code == 400
+
+
+def test_confirm_send_and_mark_paid_each_write_a_trail_row(db_session):
+    """BE Gap 551: who confirmed the send and who marked the invoice paid are recorded in the audit trail."""
+    _seed_tenant(db_session)
+    invoice_id = uuid4()
+    db_session.add(Invoice(id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf", flow_direction="OUTBOUND", status="VERIFIED"))
+    db_session.commit()
+
+    assert client.put(f"/api/v1/outbound-invoices/{invoice_id}/confirm-send").status_code == 200
+    assert client.put(f"/api/v1/outbound-invoices/{invoice_id}/mark-paid").status_code == 200
+
+    logs = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id).order_by(AuditLog.timestamp)).all()
+    assert [log.action for log in logs] == ["CONFIRM_SEND_OUTBOUND_INVOICE", "MARK_PAID_OUTBOUND_INVOICE"]
+    assert [(log.details["previous_status"], log.details["target_status"]) for log in logs] == [("VERIFIED", "SENT"), ("SENT", "PAID")]
+    assert all(log.actor_user_id is not None for log in logs)
+    assert all(log.details["auth_method"] == "clerk" for log in logs)
+
+
+@pytest.mark.parametrize("path,status_value", [("confirm-send", "SENT"), ("mark-paid", "VERIFIED")])
+def test_refused_outbound_transition_writes_no_trail_row(db_session, path, status_value):
+    """BE Gap 551: a transition that is refused records nothing."""
+    _seed_tenant(db_session)
+    invoice_id = uuid4()
+    db_session.add(Invoice(id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/out.pdf", flow_direction="OUTBOUND", status=status_value))
+    db_session.commit()
+
+    assert client.put(f"/api/v1/outbound-invoices/{invoice_id}/{path}").status_code == 400
+    assert db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).all() == []
 
 
 # ── Queue handler ──────────────────────────────────────────────────────────────

@@ -19,12 +19,16 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { alertRef, correctionErrorMessage, resolveNotice, savedValues } from "@/lib/correctionResponse";
 import { formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import AlertConsole, { AlertCorrectionPreview } from "@/components/audit/AlertConsole";
 import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
+import DetailListEditor from "@/components/audit/DetailListEditor";
+import ChangeHistoryPanel from "@/components/audit/ChangeHistoryPanel";
+import { DetailEntry, INBOUND_DETAIL_LISTS } from "@/lib/correctableDetails";
 
 interface LineItem {
   description: string;
@@ -62,11 +66,15 @@ interface InvoiceDetail {
   payment_instructions?: { method_type: string; details: string }[];
   references?: { ref_type: string; value: string }[];
   compliance_metadata?: { key: string; value: string }[];
+  // BE Gap 531: returned by GET /invoices/{id} all along; declared now that they can be corrected.
+  deductions?: { deduction_type: string; amount: number }[];
+  addresses?: { address_type: string; text: string; country?: string }[];
+  tags?: string[];
   // FE Gap 112 item 4: `field` was always on the wire -- every producer in
   // `utils/verification_tools.py` sets it and `sa_alerts` is a raw JSON column
   // -- the FE just never declared or read it. It is what links an alert to the
   // field the auditor has to correct.
-  sa_alerts: { type: string; message: string; field?: string }[];
+  sa_alerts: { id?: string; type: string; message: string; field?: string }[];
   items: LineItem[] | null;
   field_confidence?: Record<string, number>;
   flow_direction?: string;
@@ -102,7 +110,7 @@ interface StandingRuleResult {
 // confidence key that verify_field_confidence() (Gap 3) already populates on
 // invoice.field_confidence — same mapping, kept in sync manually since this is
 // display-only (Task 4.5), not a source of truth.
-const CORRECTABLE_FIELDS: { key: keyof InvoiceDetail; label: string; azureKey: string; type: "text" | "date" | "number" }[] = [
+const CORRECTABLE_FIELDS: { key: keyof InvoiceDetail; label: string; azureKey: string; type: "text" | "date" | "number" | "percent" }[] = [
   { key: "vendor_name", label: "Vendor", azureKey: "VendorName", type: "text" },
   { key: "invoice_number", label: "Invoice Number", azureKey: "InvoiceId", type: "text" },
   { key: "invoice_date", label: "Date", azureKey: "InvoiceDate", type: "date" },
@@ -112,6 +120,12 @@ const CORRECTABLE_FIELDS: { key: keyof InvoiceDetail; label: string; azureKey: s
   { key: "tax_amount", label: "Tax Amount", azureKey: "TotalTax", type: "number" },
   // Gap 205: subtotal was always extracted but never shown in the correction panel.
   { key: "subtotal", label: "Subtotal", azureKey: "SubTotal", type: "number" },
+  // BE Gap 531: the rest of the header fields the backend now accepts. No confidence key is mapped
+  // for these, so they never show the low-confidence ring. Tags are typed comma-separated.
+  { key: "currency", label: "Currency", azureKey: "", type: "text" },
+  { key: "discount_amount", label: "Invoice Discount", azureKey: "", type: "number" },
+  { key: "discount_percent", label: "Discount %", azureKey: "", type: "percent" },
+  { key: "tags", label: "Tags", azureKey: "", type: "text" },
 ];
 const LOW_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -273,7 +287,7 @@ export default function AuditorReviewPage() {
   const isAdmin = role === "Admin";
 
   const [invoice, setInvoice] = useState<InvoiceDetail | null>(null);
-  const [alerts, setAlerts] = useState<{ type: string; message: string; field?: string }[]>([]);
+  const [alerts, setAlerts] = useState<{ id?: string; type: string; message: string; field?: string }[]>([]);
   // FE Gap 112 item 4: which field an alert last asked to open, and a
   // monotonic nonce so re-clicking the same alert chip re-focuses.
   const [focusRequest, setFocusRequest] = useState<{ field: string; nonce: number } | null>(null);
@@ -282,6 +296,11 @@ export default function AuditorReviewPage() {
   // Gap 407: two more non-terminal deferral actions alongside paid/rejected.
   const [actionLoading, setActionLoading] = useState<"paid" | "rejected" | "review_later" | "needs_resubmission" | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // BE Gaps 535/538: a saved resolve that raised an alert or skipped an already-cleared dismissal.
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  // Bumped after every successful save so an open Change history panel reloads.
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("Invoice Error");
   const [error, setError] = useState<string | null>(null);
@@ -429,6 +448,7 @@ export default function AuditorReviewPage() {
     const raw = invoice?.[key];
     if (raw == null) return "";
     if (key === "grand_total" || key === "tax_amount") return String(raw);
+    if (Array.isArray(raw)) return raw.join(", ");
     return String(raw);
   };
 
@@ -439,12 +459,20 @@ export default function AuditorReviewPage() {
   const originalDisplay = (key: keyof InvoiceDetail): string => {
     const raw = invoice?.[key];
     if (raw == null) return "";
-    if (key === "grand_total" || key === "tax_amount") return fmt(Number(raw), invoice?.currency);
+    if (key === "grand_total" || key === "tax_amount" || key === "discount_amount") return fmt(Number(raw), invoice?.currency);
+    if (key === "discount_percent") return `${raw}%`;
+    if (Array.isArray(raw)) return raw.join(", ");
     return String(raw);
   };
 
-  const handleFieldChange = (key: string, next: string) => {
+  const handleFieldChange = (key: string, next: unknown) => {
     setCorrections((prev) => ({ ...prev, [key]: next }));
+  };
+
+  // BE Gap 531: a list detail's current rows — the staged correction if there is one, else what was extracted.
+  const detailRows = (field: string): DetailEntry[] => {
+    const value = field in corrections ? corrections[field] : (invoice as unknown as Record<string, unknown> | null)?.[field];
+    return Array.isArray(value) ? (value as DetailEntry[]) : [];
   };
 
   /** Discards a staged correction, restoring the extracted value. */
@@ -520,13 +548,20 @@ export default function AuditorReviewPage() {
       const res = await apiClient.put(`/audit/resolve/${invoice.id}`, {
         ...(targetStatus ? { status: targetStatus } : {}),
         ...(reasonText ? { reject_reason: reasonText } : {}),
-        dismissed_alerts: alerts.map((a) => a.message),
+        dismissed_alerts: alerts.map(alertRef),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
         ...(targetStatus && notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
       });
-      setInvoice((prev) => (prev ? { ...prev, status: targetStatus ?? prev.status, ...corrections } : prev));
-      setAlerts([]);
+      // FE Gap 499: show what the server saved, not what was typed.
+      setInvoice((prev) =>
+        prev ? { ...prev, status: targetStatus ?? prev.status, ...savedValues<InvoiceDetail>(res.data?.corrections_applied) } : prev
+      );
+      setSaveError(null);
+      // BE Gaps 535/538: keep the server's open alerts (a correction can raise one) and say what was skipped.
+      setSaveNotice(resolveNotice(res.data));
+      setHistoryRefreshKey((key) => key + 1);
+      setAlerts(res.data?.remaining_alerts ?? []);
       setCorrections({});
       setApplyAsStandingRule(false);
       if (res.data?.suggested_rule) {
@@ -537,6 +572,7 @@ export default function AuditorReviewPage() {
       }
     } catch (err) {
       console.error("Resolve failed:", err);
+      setSaveError(correctionErrorMessage(err));
     } finally {
       setActionLoading(null);
       setSavingCorrection(false);
@@ -807,8 +843,12 @@ export default function AuditorReviewPage() {
                   const isLowConfidence = confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
                   const rawValue = displayValue(key);
                   const displayed =
-                    type === "number" && !(key in corrections)
+                    key in corrections
+                      ? rawValue
+                      : type === "number"
                       ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                      : type === "percent" && rawValue
+                      ? `${rawValue}%`
                       : rawValue;
                   return (
                     <EditableField
@@ -826,19 +866,21 @@ export default function AuditorReviewPage() {
                       focusNonce={
                         focusRequest?.field === (key as string) ? focusRequest.nonce : undefined
                       }
-                      inputType={type}
+                      inputType={type === "percent" ? "text" : type}
                     />
                   );
                 })}
               </div>
 
-              {/* Additional Extracted Metadata Panel */}
-              {(invoice.taxes?.length || invoice.discounts?.length || invoice.tax_ids?.length || invoice.payment_instructions?.length || invoice.references?.length || invoice.compliance_metadata?.length || invoice.currency || invoice.doc_type) && (
+              {/* Additional Details Panel. BE Gap 531: every list here is correctable, so the panel
+                  shows on an unresolved invoice even when nothing was extracted — a missing tax ID or
+                  address can be added. Currency and the invoice discount moved up into the fields. */}
+              {(!isResolved || INBOUND_DETAIL_LISTS.some((spec) => detailRows(spec.field).length > 0) || invoice.doc_type) && (
                 <div
                   data-testid="extracted-metadata-panel"
                   className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
                 >
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Extracted Metadata</p>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Details</p>
 
                   {/* FE Gap 378 / BE Feature 27 (G11): document type + the
                       phrase the classifier decided from. Rendered only when the
@@ -866,97 +908,58 @@ export default function AuditorReviewPage() {
                     </div>
                   )}
 
-                  {invoice.currency && (
-                    <div className="flex justify-between gap-3 text-xs">
-                      <span className="min-w-0 break-words text-slate-500">Currency</span>
-                      <span className="min-w-0 break-all text-right font-mono text-slate-300">{invoice.currency}</span>
-                    </div>
-                  )}
-
-                  {(invoice.discount_amount != null || invoice.discount_percent != null) && (
-                    <div className="flex justify-between gap-3 text-xs">
-                      <span className="min-w-0 break-words text-slate-500">Invoice Discount</span>
-                      <span className="min-w-0 break-all text-right font-mono text-slate-300">
-                        {invoice.discount_percent != null ? `${invoice.discount_percent}%` : ""}
-                        {invoice.discount_amount != null ? ` (${fmt(invoice.discount_amount, invoice.currency)})` : ""}
-                      </span>
-                    </div>
-                  )}
-
-                  {invoice.tax_ids && invoice.tax_ids.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax IDs</span>
-                      {invoice.tax_ids.map((t, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{t.id_type}{t.party ? ` (${t.party})` : ""}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{t.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {invoice.taxes && invoice.taxes.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Tax Breakdown</span>
-                      {invoice.taxes.map((t, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{t.tax_type}{t.rate_percent != null ? ` ${t.rate_percent}%` : ""}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(t.amount, invoice.currency)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {invoice.payment_instructions && invoice.payment_instructions.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment Instructions</span>
-                      {invoice.payment_instructions.map((p, i) => (
-                        <div key={i} className="flex min-w-0 flex-col text-xs">
-                          <span className="break-words text-slate-500">{p.method_type}</span>
-                          <span className="font-mono text-slate-400 break-all">{p.details}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {invoice.references && invoice.references.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">References</span>
-                      {invoice.references.map((r, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{r.ref_type}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{r.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {invoice.discounts && invoice.discounts.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Discount Breakdown</span>
-                      {invoice.discounts.map((d, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{d.discount_type}{d.percent != null ? ` ${d.percent}%` : ""}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{fmt(d.amount, invoice.currency)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {invoice.compliance_metadata && invoice.compliance_metadata.length > 0 && (
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Compliance / e-Invoice</span>
-                      {invoice.compliance_metadata.map((c, i) => (
-                        <div key={i} className="flex justify-between gap-3 text-xs">
-                          <span className="min-w-0 break-words text-slate-500">{c.key}</span>
-                          <span className="min-w-0 break-all text-right font-mono text-slate-300">{c.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {INBOUND_DETAIL_LISTS.map((spec) => (
+                    <DetailListEditor
+                      key={spec.field}
+                      spec={spec}
+                      rows={detailRows(spec.field)}
+                      isDirty={spec.field in corrections}
+                      disabled={isResolved}
+                      formatNumber={(value, format) => (format === "money" ? fmt(value, invoice.currency) : `${value}%`)}
+                      onChange={(rows) => handleFieldChange(spec.field, rows)}
+                      onRevert={() => handleRevertField(spec.field)}
+                    />
+                  ))}
                 </div>
               )}
+
+              {/* Admin-only: who changed this invoice, when, and what (routers/audit_history.py). */}
+              {isAdmin && <ChangeHistoryPanel invoiceId={invoice.id} refreshKey={historyRefreshKey} />}
             </div>
+
+            {saveNotice && (
+              <div role="status" className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A]">
+                <div className="flex items-start gap-2 rounded-lg border border-amber-600/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  <span className="flex-1">{saveNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSaveNotice(null)}
+                    aria-label="Dismiss message"
+                    className="shrink-0 text-amber-300 hover:text-amber-100"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {saveError && !isResolved && (
+              <div role="alert" className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A]">
+                <div className="flex items-start gap-2 rounded-lg border border-red-600/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  <span className="flex-1">{saveError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSaveError(null)}
+                    aria-label="Dismiss message"
+                    className="shrink-0 text-red-300 hover:text-red-100"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Pinned Corrections Footer */}
             {hasUnsavedCorrections && !isResolved && (
@@ -1045,9 +1048,14 @@ export default function AuditorReviewPage() {
                     onFocusField={(field) =>
                       setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))
                     }
+                    onError={setSaveError}
                     onDismissed={(res) => {
+                      setSaveError(null);
+                      setSaveNotice(resolveNotice(res));
+                      setHistoryRefreshKey((key) => key + 1);
                       if (Object.keys(corrections).length > 0) {
-                        setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
+                        // FE Gap 499: show what the server saved, not what was typed.
+                        setInvoice((prev) => (prev ? { ...prev, ...savedValues<InvoiceDetail>(res?.corrections_applied) } : prev));
                         setCorrections({});
                       }
                       setApplyAsStandingRule(false);

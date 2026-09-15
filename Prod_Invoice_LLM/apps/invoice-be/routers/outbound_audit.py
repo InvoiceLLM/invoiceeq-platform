@@ -1,4 +1,3 @@
-import json
 import logging
 from uuid import UUID, uuid4
 from typing import Any, Dict, Optional
@@ -16,8 +15,20 @@ from dependencies import (
     require_actions_scope,
     TenantContext,
 )
+from agents.extraction_agent import OutboundInvoiceExtractionSchema
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from services.invoice_visibility import invoice_not_deleted
+from utils.correction_values import (
+    is_blank,
+    list_entry_model,
+    parse_currency,
+    parse_date,
+    parse_entries,
+    parse_money,
+    parse_percent,
+)
+from utils.alert_dismissal import dismiss_alerts
+from utils.correction_recheck import MONEY_FIELDS, alerts_raised_by_correction, snapshot_money_fields
 from utils.rule_schema import (
     build_audit_correction_rule,
     merge_constraints,
@@ -45,7 +56,7 @@ router = APIRouter(
 
 # Feature 7.1: outbound corrections only ever touch these fields -- the
 # same set OutboundInvoiceExtractionSchema extracts (feature_2.1_vendor_flow_ingestion.md),
-# not inbound's field list (no po_number on an outbound invoice, for instance).
+# not inbound's field list (no customer_name inbound; no discount lines, deductions or tags outbound).
 _CORRECTABLE_FIELDS = {
     "customer_name": "str",
     "invoice_number": "str",
@@ -55,7 +66,41 @@ _CORRECTABLE_FIELDS = {
     "grand_total": "float",
     "tax_amount": "float",
     "items": "list",
+    # BE Gap 531 (founder ruling 2026-09-15: all of them): the rest of what
+    # OutboundInvoiceExtractionSchema extracts into an Invoice column since BE Gap 467
+    # (so an outbound invoice does carry vendor_name and po_number now). `round_off` has no column.
+    "vendor_name": "str",
+    "po_number": "str",
+    "notes": "str",
+    "currency": "currency",
+    "discount_amount": "float",
+    "discount_percent": "percent",
+    "taxes": "list",
+    "tax_ids": "list",
+    "payment_instructions": "list",
+    "references": "list",
+    "addresses": "list",
+    "compliance_metadata": "list",
 }
+
+# BE Gap 531: each list field's entries are checked against the model OutboundInvoiceExtractionSchema
+# itself uses for that field (read from the schema, not imported by name — see list_entry_model).
+_LIST_ENTRY_NAMES = {
+    "items": "line item",
+    "taxes": "tax line",
+    "tax_ids": "tax ID",
+    "payment_instructions": "payment instruction",
+    "references": "reference",
+    "addresses": "address",
+    "compliance_metadata": "compliance entry",
+}
+_LIST_ENTRY_MODELS = {
+    field: (list_entry_model(OutboundInvoiceExtractionSchema, field), entry_name)
+    for field, entry_name in _LIST_ENTRY_NAMES.items()
+}
+
+# BE Gap 532 (founder ruling 2026-09-15): fields a correction may change but never empty.
+_REQUIRED_FIELDS = frozenset({"customer_name", "invoice_number", "invoice_date", "grand_total"})
 
 
 class OutboundAuditResolutionPayload(BaseModel):
@@ -63,7 +108,13 @@ class OutboundAuditResolutionPayload(BaseModel):
         default=None,
         description=f"Field name -> corrected value. Allowed fields: {sorted(_CORRECTABLE_FIELDS)}.",
     )
-    dismissed_alerts: Optional[list] = Field(default=None, description="Alert messages, types, or IDs to dismiss")
+    dismissed_alerts: Optional[list] = Field(
+        default=None,
+        description="Alerts to dismiss, one entry per alert (BE Gap 537): an alert object "
+                    '({"id"} or {"type", "field", "message"}) or, from older integrations, an alert id, '
+                    "message or type string. Each entry removes at most one alert; entries that match "
+                    "nothing are returned in `unmatched_dismissals` (BE Gap 538).",
+    )
     apply_as_standing_rule: bool = Field(
         default=False,
         description="Feature 7.1 Task 7.1.3: write this correction directly as the tenant's "
@@ -75,35 +126,43 @@ class OutboundAuditResolutionPayload(BaseModel):
 def _coerce_correction_value(field: str, raw_value: Any):
     field_type = _CORRECTABLE_FIELDS[field]
     if raw_value is None or raw_value == "":
-        return None
+        # BE Gap 531: a list column is cleared to an empty list, never NULL.
+        return [] if field_type == "list" else None
     if field_type == "date":
-        date_str = str(raw_value).split("T")[0].split(" ")[0].strip()
-        return datetime.strptime(date_str, "%Y-%m-%d").date()
+        return parse_date(raw_value)
     if field_type == "float":
-        return float(raw_value)
+        return parse_money(raw_value)
+    if field_type == "percent":
+        return parse_percent(raw_value)
+    if field_type == "currency":
+        return parse_currency(raw_value)
     if field_type == "list":
-        if isinstance(raw_value, list):
-            return raw_value
-        try:
-            val = json.loads(str(raw_value))
-            if isinstance(val, list):
-                return val
-        except Exception:
-            pass
-        return [raw_value]
+        entry_model, entry_name = _LIST_ENTRY_MODELS[field]
+        return parse_entries(raw_value, entry_model, entry_name)
     return str(raw_value)
 
 
 def _apply_corrections(invoice: Invoice, corrections: Dict[str, Any]) -> Dict[str, dict]:
     diff: Dict[str, dict] = {}
+    invalid: list[Dict[str, str]] = []
     for field, raw_value in corrections.items():
         if field not in _CORRECTABLE_FIELDS:
-            logger.warning("Ignoring outbound correction for non-correctable field '%s'", field)
+            # BE Gap 530: reported, not skipped.
+            logger.warning("Rejected outbound correction for non-correctable field '%s'", field)
+            invalid.append({"field": field, "reason": "this field cannot be corrected"})
+            continue
+        if field in _REQUIRED_FIELDS and is_blank(raw_value):
+            # BE Gap 532: a required field is never emptied by a correction. Blank on a field that is
+            # already empty changes nothing, so it is not refused.
+            if getattr(invoice, field) is not None:
+                invalid.append({"field": field, "reason": "this field is required and cannot be left empty"})
             continue
         try:
             new_value = _coerce_correction_value(field, raw_value)
         except (ValueError, TypeError) as e:
-            logger.warning("Ignoring malformed outbound correction for '%s'=%r: %s", field, raw_value, e)
+            # BE Gap 533: report it instead of skipping; the raw value is not logged.
+            logger.warning("Rejected unreadable outbound correction for '%s': %s", field, type(e).__name__)
+            invalid.append({"field": field, "reason": str(e)})
             continue
 
         old_value = getattr(invoice, field)
@@ -114,6 +173,11 @@ def _apply_corrections(invoice: Invoice, corrections: Dict[str, Any]) -> Dict[st
 
         setattr(invoice, field, new_value)
         diff[field] = {"old": old_comparable, "new": new_comparable}
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Some corrections could not be read; nothing was saved.", "invalid_corrections": invalid},
+        )
     return diff
 
 
@@ -123,6 +187,20 @@ def _resolve_changed_by(db_session: Session, context: TenantContext) -> str:
         if user and user.email:
             return user.email
     return context.user_id
+
+
+def _outbound_verification_rules(db_session: Session, tenant_id: UUID) -> dict | None:
+    """BE Gap 535: the tenant's OUTBOUND Global rules (outbound has no vendor scope), so the arithmetic
+    re-check after a correction uses the same tolerance overrides extraction did."""
+    statement = select(ExtractionTemplate).where(
+        ExtractionTemplate.tenant_id == tenant_id,
+        ExtractionTemplate.vendor_name.is_(None),
+        ExtractionTemplate.flow_direction == "OUTBOUND",
+    )
+    template = db_session.exec(statement).first()
+    if template and isinstance(template.rules, dict) and template.rules.get("constraints"):
+        return {"constraints": list(template.rules["constraints"])}
+    return None
 
 
 def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantContext, correction_diff: Dict[str, dict]) -> dict:
@@ -208,35 +286,39 @@ async def resolve_outbound_alert(
     routers/audit.py -- that file's resolve logic isn't factored into
     reusable pieces, and no pattern-detection/suggestion logic here (that's
     an inbound-only concept, see the doc for why)."""
+    # BE Gap 541: lock the row so two simultaneous resolves on one invoice run one after the other.
     statement = select(Invoice).where(
         Invoice.id == invoice_id,
         Invoice.tenant_id == context.tenant_id,
         Invoice.flow_direction == "OUTBOUND",
         invoice_not_deleted(),
-    )
+    ).with_for_update()
     invoice = db_session.exec(statement).first()
     if not invoice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbound invoice not found or access denied.")
 
+    # BE Gaps 537/538: one alert per dismissal — by id, else type + field + message; unmatched ones reported back.
     previous_alerts = list(invoice.sa_alerts or [])
     dismissed_list = payload.dismissed_alerts or []
-
-    new_alerts = []
-    for alert in previous_alerts:
-        if isinstance(alert, str):
-            if alert not in dismissed_list:
-                new_alerts.append(alert)
-        elif isinstance(alert, dict):
-            alert_id = alert.get("id")
-            alert_type = alert.get("type")
-            alert_msg = alert.get("message")
-            if (alert_id not in dismissed_list) and (alert_type not in dismissed_list) and (alert_msg not in dismissed_list):
-                new_alerts.append(alert)
-        else:
-            new_alerts.append(alert)
+    new_alerts, dismissed_alerts, unmatched_dismissals = dismiss_alerts(previous_alerts, dismissed_list)
     invoice.sa_alerts = new_alerts
 
+    values_before = snapshot_money_fields(invoice)
     correction_diff = _apply_corrections(invoice, payload.corrections or {})
+
+    # BE Gap 535: a correction that breaks the arithmetic raises a new alert (founder ruling: an alert, not a block).
+    raised_alerts: list[dict] = []
+    if set(correction_diff) & set(MONEY_FIELDS):
+        raised_alerts = alerts_raised_by_correction(
+            values_before,
+            snapshot_money_fields(invoice),
+            rules=_outbound_verification_rules(db_session, context.tenant_id),
+            doc_type=invoice.doc_type,
+            open_alerts=new_alerts,
+        )
+        if raised_alerts:
+            new_alerts = new_alerts + raised_alerts
+            invoice.sa_alerts = new_alerts
     db_session.add(invoice)
 
     standing_rule_result = None
@@ -251,10 +333,15 @@ async def resolve_outbound_alert(
         action="RESOLVE_OUTBOUND_INVOICE",
         details={
             "dismissed_alerts_input": dismissed_list,
+            # BE Gaps 537/538/535: see routers/audit.py — read by the alert-accuracy metrics.
+            "dismissed_alerts": dismissed_alerts,
+            "unmatched_dismissals": unmatched_dismissals,
+            "raised_alerts": raised_alerts,
             "previous_alerts": previous_alerts,
             "remaining_alerts": new_alerts,
             "corrections": correction_diff,
             "standing_rule_result": standing_rule_result,
+            **context.trail_identity(),
         },
         timestamp=datetime.utcnow(),
     )
@@ -282,4 +369,12 @@ async def resolve_outbound_alert(
     except Exception as ie:
         logger.error("RAG index backfill failed for resolved outbound invoice %s: %s", invoice.id, ie)
 
-    return {"success": True, "corrections_applied": correction_diff, "standing_rule_result": standing_rule_result}
+    return {
+        "success": True,
+        "corrections_applied": correction_diff,
+        "standing_rule_result": standing_rule_result,
+        # BE Gaps 535/537/538: the alerts left open (including any the correction raised) and the unmatched dismissals.
+        "remaining_alerts": new_alerts,
+        "unmatched_dismissals": unmatched_dismissals,
+        "raised_alerts": raised_alerts,
+    }

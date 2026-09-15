@@ -5,12 +5,17 @@ import { useParams, useRouter } from "next/navigation";
 import { CheckCircle, XCircle, Loader2, Pencil, Send, ShieldCheck, X, Undo2, AlertTriangle, Trash2, ChevronDown, FilePlus2 } from "lucide-react";
 import Link from "next/link";
 import { apiClient } from "@/lib/apiClient";
+import { alertRef, correctionErrorMessage, resolveNotice, savedValues } from "@/lib/correctionResponse";
 import { formatCurrency } from "@/lib/utils";
 import { PageHeaderActions, usePageHeader } from "@/components/layout/PageHeaderContext";
 import { canCloneSource } from "@/types/invoice";
 import PdfViewerCanvas from "@/components/audit/PdfViewerCanvas";
 import OutboundAlertConsole, { StandingRuleResult } from "@/components/audit/OutboundAlertConsole";
 import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
+import DetailListEditor from "@/components/audit/DetailListEditor";
+import ChangeHistoryPanel from "@/components/audit/ChangeHistoryPanel";
+import { useAuth } from "@/hooks/useAuth";
+import { DetailEntry, OUTBOUND_DETAIL_LISTS } from "@/lib/correctableDetails";
 
 interface OutboundInvoiceDetail {
   id: string;
@@ -27,17 +32,36 @@ interface OutboundInvoiceDetail {
    * declared it, so every amount on the outbound console rendered as "$".
    */
   currency?: string | null;
-  sa_alerts: { type: string; message: string; field?: string }[];
+  sa_alerts: { id?: string; type: string; message: string; field?: string }[];
   items: { description: string; quantity?: number; unit_price?: number; amount: number }[] | null;
+  // BE Gap 531: returned by GET /invoices/{id} all along; declared now that they can be corrected.
+  vendor_name?: string | null;
+  po_number?: string | null;
+  notes?: string | null;
+  discount_amount?: number | null;
+  discount_percent?: number | null;
+  taxes?: { tax_type: string; rate_percent?: number; amount: number }[];
+  tax_ids?: { id_type: string; value: string; party?: string }[];
+  payment_instructions?: { method_type: string; details: string }[];
+  references?: { ref_type: string; value: string }[];
+  addresses?: { address_type: string; text: string; country?: string }[];
+  compliance_metadata?: { key: string; value: string }[];
 }
 
-const CORRECTABLE_FIELDS: { key: keyof OutboundInvoiceDetail; label: string; type: "text" | "date" | "number" }[] = [
+const CORRECTABLE_FIELDS: { key: keyof OutboundInvoiceDetail; label: string; type: "text" | "date" | "number" | "percent" }[] = [
   { key: "customer_name", label: "Customer", type: "text" },
   { key: "invoice_number", label: "Invoice Number", type: "text" },
   { key: "invoice_date", label: "Date", type: "date" },
   { key: "due_date", label: "Due Date", type: "date" },
   { key: "grand_total", label: "Total Amount", type: "number" },
   { key: "tax_amount", label: "Tax Amount", type: "number" },
+  // BE Gap 531: the rest of the header fields routers/outbound_audit.py now accepts.
+  { key: "vendor_name", label: "Vendor (issuer)", type: "text" },
+  { key: "po_number", label: "PO Number", type: "text" },
+  { key: "currency", label: "Currency", type: "text" },
+  { key: "discount_amount", label: "Invoice Discount", type: "number" },
+  { key: "discount_percent", label: "Discount %", type: "percent" },
+  { key: "notes", label: "Notes", type: "text" },
 ];
 
 /**
@@ -155,15 +179,23 @@ function EditableField({
 export default function OutboundAuditorReviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  // Change history is Admin-only (routers/audit_history.py refuses anyone else).
+  const { role } = useAuth();
+  const isAdmin = role === "Admin";
 
   const [invoice, setInvoice] = useState<OutboundInvoiceDetail | null>(null);
   const [initialInvoice, setInitialInvoice] = useState<OutboundInvoiceDetail | null>(null);
-  const [alerts, setAlerts] = useState<{ type: string; message: string; field?: string }[]>([]);
-  const [corrections, setCorrections] = useState<Record<string, string>>({});
+  const [alerts, setAlerts] = useState<{ id?: string; type: string; message: string; field?: string }[]>([]);
+  const [corrections, setCorrections] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<"send" | "paid" | "delete" | null>(null);
   const [savingCorrection, setSavingCorrection] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // BE Gaps 535/538: a saved resolve that raised an alert or skipped an already-cleared dismissal.
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  // Bumped after every successful save or lifecycle action so an open Change history panel reloads.
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [applyAsStandingRule, setApplyAsStandingRule] = useState(false);
   const [standingRuleResult, setStandingRuleResult] = useState<StandingRuleResult | null>(null);
   const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
@@ -215,11 +247,20 @@ export default function OutboundAuditorReviewPage() {
     if (CORRECTABLE_FIELDS.find((f) => f.key === key)?.type === "number") {
       return fmt(Number(raw), invoice?.currency);
     }
+    if (CORRECTABLE_FIELDS.find((f) => f.key === key)?.type === "percent") {
+      return `${raw}%`;
+    }
     return String(raw);
   };
 
-  const handleFieldChange = (key: string, next: string) => {
+  const handleFieldChange = (key: string, next: unknown) => {
     setCorrections((prev) => ({ ...prev, [key]: next }));
+  };
+
+  // BE Gap 531: a list detail's current rows — the staged correction if there is one, else what was extracted.
+  const detailRows = (field: string): DetailEntry[] => {
+    const value = field in corrections ? corrections[field] : (invoice as unknown as Record<string, unknown> | null)?.[field];
+    return Array.isArray(value) ? (value as DetailEntry[]) : [];
   };
 
   const handleRevertField = (key: string) => {
@@ -235,17 +276,23 @@ export default function OutboundAuditorReviewPage() {
     setSavingCorrection(true);
     try {
       const res = await apiClient.put(`/outbound-audit/resolve/${invoice.id}`, {
-        dismissed_alerts: alerts.map((a) => a.message),
+        dismissed_alerts: alerts.map(alertRef),
         corrections: Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
       });
-      setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
-      setAlerts([]);
+      // FE Gap 499: show what the server saved, not what was typed.
+      setInvoice((prev) => (prev ? { ...prev, ...savedValues<OutboundInvoiceDetail>(res.data?.corrections_applied) } : prev));
+      setSaveError(null);
+      // BE Gaps 535/538: keep the server's open alerts (a correction can raise one) and say what was skipped.
+      setSaveNotice(resolveNotice(res.data));
+      setHistoryRefreshKey((key) => key + 1);
+      setAlerts(res.data?.remaining_alerts ?? []);
       setCorrections({});
       setApplyAsStandingRule(false);
       if (res.data?.standing_rule_result) setStandingRuleResult(res.data.standing_rule_result);
     } catch (err) {
       console.error("Save correction failed:", err);
+      setSaveError(correctionErrorMessage(err));
     } finally {
       setSavingCorrection(false);
     }
@@ -259,6 +306,7 @@ export default function OutboundAuditorReviewPage() {
         ...(notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
       });
       setInvoice((prev) => (prev ? { ...prev, status: "SENT" } : prev));
+      setHistoryRefreshKey((key) => key + 1);
     } catch (err) {
       console.error("Confirm-send failed:", err);
     } finally {
@@ -274,6 +322,7 @@ export default function OutboundAuditorReviewPage() {
         ...(notifyEmails.length > 0 ? { notify_emails: notifyEmails } : {}),
       });
       setInvoice((prev) => (prev ? { ...prev, status: "PAID" } : prev));
+      setHistoryRefreshKey((key) => key + 1);
     } catch (err) {
       console.error("Mark-paid failed:", err);
     } finally {
@@ -461,8 +510,12 @@ export default function OutboundAuditorReviewPage() {
               {CORRECTABLE_FIELDS.map(({ key, label, type }) => {
                 const rawValue = displayValue(key);
                 const displayed =
-                  type === "number" && !(key in corrections)
+                  key in corrections
+                    ? rawValue
+                    : type === "number"
                     ? fmt(rawValue ? Number(rawValue) : null, invoice.currency)
+                    : type === "percent" && rawValue
+                    ? `${rawValue}%`
                     : rawValue;
                 return (
                   <EditableField
@@ -481,7 +534,67 @@ export default function OutboundAuditorReviewPage() {
                 );
               })}
             </div>
+
+            {/* BE Gap 531: the list-shaped details of this invoice, each correctable. Shown on an
+                unsent invoice even when nothing was extracted, so a missing entry can be added. */}
+            {(!isResolved || OUTBOUND_DETAIL_LISTS.some((spec) => detailRows(spec.field).length > 0)) && (
+              <div
+                data-testid="outbound-details-panel"
+                className="flex flex-col gap-2 rounded-xl border border-[#222D3D] bg-[#0B1220] p-3"
+              >
+                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Additional Details</p>
+                {OUTBOUND_DETAIL_LISTS.map((spec) => (
+                  <DetailListEditor
+                    key={spec.field}
+                    spec={spec}
+                    rows={detailRows(spec.field)}
+                    isDirty={spec.field in corrections}
+                    disabled={isResolved}
+                    formatNumber={(value, format) => (format === "money" ? fmt(value, invoice.currency) : `${value}%`)}
+                    onChange={(rows) => handleFieldChange(spec.field, rows)}
+                    onRevert={() => handleRevertField(spec.field)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Admin-only: who changed this invoice, when, and what (routers/audit_history.py). */}
+            {isAdmin && <ChangeHistoryPanel invoiceId={invoice.id} refreshKey={historyRefreshKey} />}
           </div>
+
+          {saveNotice && (
+            <div role="status" className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A]">
+              <div className="flex items-start gap-2 rounded-lg border border-amber-600/40 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                <span className="flex-1">{saveNotice}</span>
+                <button
+                  type="button"
+                  onClick={() => setSaveNotice(null)}
+                  aria-label="Dismiss message"
+                  className="shrink-0 text-amber-300 hover:text-amber-100"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {saveError && !isResolved && (
+            <div role="alert" className="shrink-0 border-t border-[#222D3D] p-3 bg-[#0F172A]">
+              <div className="flex items-start gap-2 rounded-lg border border-red-600/40 bg-red-950/20 px-3 py-2 text-xs text-red-200">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                <span className="flex-1">{saveError}</span>
+                <button
+                  type="button"
+                  onClick={() => setSaveError(null)}
+                  aria-label="Dismiss message"
+                  className="shrink-0 text-red-300 hover:text-red-100"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Pinned Action Footer */}
           {hasUnsavedCorrections && !isResolved && (
@@ -560,9 +673,14 @@ export default function OutboundAuditorReviewPage() {
                   applyAsStandingRule={applyAsStandingRule}
                   resolveCorrection={resolveCorrection}
                   onFocusField={(field) => setFocusRequest((prev) => ({ field, nonce: (prev?.nonce ?? 0) + 1 }))}
+                  onError={setSaveError}
                   onDismissed={(res) => {
+                    setSaveError(null);
+                    setSaveNotice(resolveNotice(res));
+                    setHistoryRefreshKey((key) => key + 1);
                     if (Object.keys(corrections).length > 0) {
-                      setInvoice((prev) => (prev ? { ...prev, ...corrections } : prev));
+                      // FE Gap 499: show what the server saved, not what was typed.
+                      setInvoice((prev) => (prev ? { ...prev, ...savedValues<OutboundInvoiceDetail>(res?.corrections_applied) } : prev));
                       setCorrections({});
                     }
                     setApplyAsStandingRule(false);

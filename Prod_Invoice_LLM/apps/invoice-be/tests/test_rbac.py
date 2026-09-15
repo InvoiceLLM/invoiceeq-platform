@@ -511,6 +511,34 @@ def test_actions_key_passes_the_audit_gate(db_session):
     assert response.status_code == 404
 
 
+def test_api_key_actions_record_which_key_in_the_trail(db_session):
+    """BE Gap 552: a trail row written with an API key names that key's prefix, so an old key and its rotated
+    replacement can be told apart."""
+    from sqlmodel import select
+    from dependencies import KEY_SCOPE_ACTIONS, MOCK_TENANT_ID
+    from models import AuditLog, Invoice
+    from services.api_keys import key_prefix
+
+    prefixes = []
+    for _ in range(2):
+        raw = _tenant_with_key(db_session, KEY_SCOPE_ACTIONS)  # the second call rotates the key
+        invoice_id = uuid4()
+        db_session.add(Invoice(
+            id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/in.pdf", status="AUDIT_REQUIRED", sa_alerts=[],
+        ))
+        db_session.commit()
+
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", headers={"X-API-Key": raw}, json={"status": "PAID"})
+        assert response.status_code == 200
+
+        log = db_session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice_id)).one()
+        assert log.details["auth_method"] == "api_key"
+        assert log.details["api_key_prefix"] == key_prefix(raw)
+        prefixes.append(log.details["api_key_prefix"])
+
+    assert prefixes[0] != prefixes[1]
+
+
 @pytest.mark.parametrize("path", ["confirm-send", "mark-paid"])
 def test_readonly_key_is_refused_outbound_finalization(db_session, path):
     from dependencies import KEY_SCOPE_READONLY

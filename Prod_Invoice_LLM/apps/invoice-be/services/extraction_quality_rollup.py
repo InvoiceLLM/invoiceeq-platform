@@ -105,16 +105,21 @@ def alert_precision_rollup(
 
     for log in logs:
         details = log.details or {}
-        previous_alerts = details.get("previous_alerts") or []
-        dismissed_input = set(details.get("dismissed_alerts_input") or [])
         corrections = details.get("corrections") or {}
+        if "dismissed_alerts" in details:
+            # BE Gap 537: the resolve records exactly which alerts it removed; no re-matching.
+            dismissed = [alert for alert in details.get("dismissed_alerts") or [] if isinstance(alert, dict)]
+        else:
+            # Rows written before BE Gap 537: re-match the raw input. Only string entries can match
+            # (and a dismissal object must not reach set(), which cannot hold a dict).
+            dismissed_input = {entry for entry in details.get("dismissed_alerts_input") or [] if isinstance(entry, str)}
+            dismissed = [
+                alert
+                for alert in details.get("previous_alerts") or []
+                if isinstance(alert, dict) and _alert_key(alert) in dismissed_input
+            ]
 
-        for alert in previous_alerts:
-            if not isinstance(alert, dict):
-                continue
-            key = _alert_key(alert)
-            if key is None or key not in dismissed_input:
-                continue  # not dismissed in this resolve
+        for alert in dismissed:
             alert_type = alert.get("type") or "unknown"
             alert_field = alert.get("field")
             if alert_field and alert_field in corrections:
