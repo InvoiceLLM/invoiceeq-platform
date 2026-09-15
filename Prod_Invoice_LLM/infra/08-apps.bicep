@@ -714,6 +714,26 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
         name: 'AZURE_DOC_INTEL_KEY'
         secretRef: 'docintel-key-secret'
       }
+      {
+        name: 'ENABLE_PRODUCTION_QUALITY_JUDGE'
+        value: enableProductionQualityJudge ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_GENERIC_EXTRACTION'
+        value: enableGenericExtraction ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_GENERIC_DOC_CHAT'
+        value: enableGenericDocChat ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_ASYNC_CHAT_QUEUE'
+        value: enableAsyncChatQueue ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_CHAT_STREAMING'
+        value: enableChatStreaming ? 'true' : 'false'
+      }
     ]
     extraSecrets: [
       {

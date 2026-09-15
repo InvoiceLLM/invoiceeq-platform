@@ -99,6 +99,23 @@ param benchmarkEvalCron string = '0 3 * * *'
 @description('Seconds before the execution is killed. See 08-apps.bicep\'s benchmarkEvalReplicaTimeout for the real measured/extrapolated runtime this is sized against.')
 param benchmarkEvalReplicaTimeout int = 5400
 
+// BE Gap 524: every ENABLE_* switch the backend runs with, defaulted to what
+// Dev actually has (all ON, `az containerapp show ca-invoice-be-dev`, 2026-09-15).
+// The job grades the same agent code the backend serves; grading it with a
+// different flag set measured a product nobody runs. Founder ruling 2026-09-15:
+// all on. Keep this list equal to 08-apps.bicep's benchmarkEvalJob module.
+param enableProductionQualityJudge bool = true
+param enableGenericExtraction bool = true
+param enableGenericDocChat bool = true
+param enableAsyncChatQueue bool = true
+param enableChatStreaming bool = true
+param enableEntityResolver bool = true
+param enableSemanticViews bool = true
+param enableCertifiedExamples bool = true
+param enableKnowledgeLayer bool = true
+param enableRerank bool = true
+param enableAttachmentInsights bool = true
+
 var identityName = 'id-${namingPrefix}-${environment}'
 var caeName = 'cae-${namingPrefix}-${environment}'
 var keyVaultName = 'kv-${namingPrefix}-${environment}'
@@ -165,6 +182,12 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     cpu: '1.0'
     memory: '2.0Gi'
     replicaTimeout: benchmarkEvalReplicaTimeout
+    enableEntityResolver: enableEntityResolver
+    enableSemanticViews: enableSemanticViews
+    enableCertifiedExamples: enableCertifiedExamples
+    enableKnowledgeLayer: enableKnowledgeLayer
+    enableRerank: enableRerank
+    enableAttachmentInsights: enableAttachmentInsights
     // BE Gap 524: the Gap 483 attachment cases (attach_a1..attach_b7) seed their
     // PDFs through the real chat-attachment pipeline, which calls Azure Document
     // Intelligence. The backend has these two settings; this job never did, so
@@ -179,6 +202,26 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
       {
         name: 'AZURE_DOC_INTEL_KEY'
         secretRef: 'docintel-key-secret'
+      }
+      {
+        name: 'ENABLE_PRODUCTION_QUALITY_JUDGE'
+        value: enableProductionQualityJudge ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_GENERIC_EXTRACTION'
+        value: enableGenericExtraction ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_GENERIC_DOC_CHAT'
+        value: enableGenericDocChat ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_ASYNC_CHAT_QUEUE'
+        value: enableAsyncChatQueue ? 'true' : 'false'
+      }
+      {
+        name: 'ENABLE_CHAT_STREAMING'
+        value: enableChatStreaming ? 'true' : 'false'
       }
     ]
     extraSecrets: [
