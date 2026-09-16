@@ -1359,6 +1359,23 @@ def require_permission_or_api_key(permission: str):
 require_can_load_or_api_key = require_permission_or_api_key("can_load")
 
 
+def require_actions_scope_or_human(
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
+) -> TenantContext:
+    """Admit human users of any permission level, but require actions scope for API keys (Gap 573)."""
+    if context.auth_method == "api_key":
+        if context.key_scope != KEY_SCOPE_ACTIONS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is read-only and cannot post chat messages or create sessions. "
+                    "An Admin can switch this workspace's workflow policy to Full Automation in Settings to allow it."
+                ),
+            )
+    return context
+
+
+
 # --- Feature 25 (Gap 341): the widget chat token's own, narrower context ---
 
 

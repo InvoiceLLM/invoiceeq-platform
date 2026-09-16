@@ -20,6 +20,7 @@ from dependencies import (
     # routes at the bottom of this file stay on require_can_train, consistent
     # with `actions` scope deliberately NOT granting can_train.
     get_tenant_or_api_key_context,
+    require_actions_scope_or_human,
     TenantContext,
 )
 from models import ChatAttachment, ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
@@ -54,9 +55,14 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
         from config import get_settings
 
         r = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
-        keys = r.keys(f"chat_answer_cache:{tenant_id}:*")
-        if keys:
-            r.delete(*keys)
+        batch = []
+        for key in r.scan_iter(match=f"chat_answer_cache:{tenant_id}:*", count=100):
+            batch.append(key)
+            if len(batch) >= 100:
+                r.delete(*batch)
+                batch.clear()
+        if batch:
+            r.delete(*batch)
     except Exception as e:
         logger.warning("Failed to invalidate chat answer cache for tenant %s: %s", tenant_id, e)
 
@@ -118,7 +124,7 @@ class SessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class MessageCreate(BaseModel):
-    content: str
+    content: str = Field(min_length=1, max_length=4000)
     # Feature 26 (Gap 366): an optional reference document (PO/quotation) the
     # user attached to this turn, uploaded beforehand via
     # POST /chat/sessions/{id}/attachments. Optional with a None default so
@@ -327,7 +333,7 @@ def list_sessions(
 def create_session(
     payload: SessionCreate,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
+    tenant_context: TenantContext = Depends(require_actions_scope_or_human)
 ):
     """Create a new chat session."""
     title = payload.title or f"Chat Session - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
@@ -520,7 +526,7 @@ def post_chat_message(
     background_tasks: BackgroundTasks,
     sync: bool = False,
     db_session: Session = Depends(get_db_session),
-    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
+    tenant_context: TenantContext = Depends(require_actions_scope_or_human)
 ):
     """Post a new message in a chat session.
 
@@ -594,7 +600,11 @@ def post_chat_message(
     use_async_queue = get_settings().ENABLE_ASYNC_CHAT_QUEUE and not sync
     if use_async_queue:
         # Gap 280: Asynchronous Queue-based Dispatch
-        from services.chat_queue import ChatQueueCapacityError, ChatQueueService
+        from services.chat_queue import (
+            ChatQueueCapacityError,
+            ChatQueueService,
+            ChatQueueUnavailableError,
+        )
         from queue_worker.handlers import handle_process_chat_job
 
         job_id = str(uuid4())
@@ -655,6 +665,16 @@ def post_chat_message(
                     "workspace. Wait for one to finish and try again."
                 ),
                 headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
+        except ChatQueueUnavailableError:
+            db_session.delete(user_msg)
+            if new_title:
+                chat_session.title = original_title
+                db_session.add(chat_session)
+            db_session.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Chat queue service is temporarily unavailable. Please retry shortly.",
             )
 
         # Immediate asynchronous background executor (sub-millisecond handoff).
@@ -814,6 +834,8 @@ def run_sync_chat_turn(
         # produced it. Before this, every attachment key the agent computed was
         # dropped here and again at serialisation.
         attachment_payload=extract_attachment_payload(agent_output),
+        # Gap 596: persist turn_metadata (route, model, tokens, status)
+        turn_metadata=agent_output.get("turn_metadata"),
     )
     db_session.add(assistant_msg)
     db_session.commit()
@@ -1160,6 +1182,11 @@ def _promote_to_eval_bank(message, payload, db_session: Session, tenant_context)
                 reported_answer=(message.content or "")[:8000] or None,
                 reason=payload.reason,
                 note=(payload.note or "").strip()[:2000] or None,
+                # Gap 598: copy SQL, citations, invoice IDs, and metadata into eval bank
+                generated_sql=message.generated_sql,
+                citations=message.citations or [],
+                result_invoice_ids=message.result_invoice_ids or [],
+                turn_metadata=getattr(message, "turn_metadata", None),
             )
         )
         db_session.commit()

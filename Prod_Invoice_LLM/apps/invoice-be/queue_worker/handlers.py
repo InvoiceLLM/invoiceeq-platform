@@ -1756,6 +1756,8 @@ def handle_process_chat_job(
                 # where the symptom looks nothing like the cause. Imported from the
                 # router so the key list has exactly one definition.
                 attachment_payload=_extract_attachment_payload(agent_output),
+                # Gap 596: persist turn_metadata (route, model, tokens, status)
+                turn_metadata=agent_output.get("turn_metadata"),
             )
             session.add(assistant_msg)
 
@@ -1840,8 +1842,10 @@ def handle_process_chat_job(
                         select(ChatMessage).where(ChatMessage.id == UUID(user_msg_id))
                     ).first()
                     if user_msg:
+                        from agents.query_agent import user_safe_error_detail
+
                         user_msg.status = "failed"
-                        user_msg.error_message = str(e)
+                        user_msg.error_message = user_safe_error_detail(e, str(tenant_id))
                         session.add(user_msg)
                         session.commit()
                 except Exception:

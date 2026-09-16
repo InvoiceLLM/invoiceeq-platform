@@ -209,3 +209,66 @@ def test_a_self_contained_question_still_uses_the_cache(monkeypatch):
 
     assert get_calls == SELF_CONTAINED
     assert set_calls == SELF_CONTAINED
+
+
+def test_cache_invalidation_uses_scan_iter_gap604(monkeypatch):
+    """Gap 604: Invalidation uses non-blocking scan_iter instead of blocking keys()."""
+    from routers.chat import _invalidate_chat_answer_cache
+    import redis
+
+    scan_iter_called = []
+    keys_called = []
+
+    class DummyRedis:
+        def scan_iter(self, match=None, count=None):
+            scan_iter_called.append((match, count))
+            return iter(["chat_answer_cache:t-1:key1", "chat_answer_cache:t-1:key2"])
+
+        def keys(self, pattern=None):
+            keys_called.append(pattern)
+            return []
+
+        def delete(self, *keys):
+            pass
+
+    monkeypatch.setattr(redis.Redis, "from_url", lambda *args, **kwargs: DummyRedis())
+    _invalidate_chat_answer_cache("t-1")
+
+    assert len(scan_iter_called) == 1
+    assert scan_iter_called[0][0] == "chat_answer_cache:t-1:*"
+    assert len(keys_called) == 0
+
+
+def test_failed_or_declined_turn_clears_focus_gap586():
+    """Gap 586: An errored or declined turn clears stale session focus."""
+    from uuid import uuid4
+    from sqlmodel import SQLModel, Session, create_engine
+    from models import ChatSession
+    from agents.query_agent import update_session_focus
+
+    engine = create_engine("sqlite:///:memory:")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as db_session:
+        session = ChatSession(tenant_id=uuid4(), title="Test Session", focus={"vendor": "Acme Corp"})
+        db_session.add(session)
+        db_session.commit()
+        db_session.refresh(session)
+
+        assert session.focus == {"vendor": "Acme Corp"}
+
+        # Simulate an errored turn
+        update_session_focus(str(session.id), db_session, {"status": "error", "error": "Query failed"})
+        db_session.refresh(session)
+        assert session.focus is None
+
+        # Reset focus and simulate a declined turn
+        session.focus = {"vendor": "Acme Corp"}
+        db_session.add(session)
+        db_session.commit()
+        db_session.refresh(session)
+
+        update_session_focus(str(session.id), db_session, {"stop_reason": "declined"})
+        db_session.refresh(session)
+        assert session.focus is None
+
+

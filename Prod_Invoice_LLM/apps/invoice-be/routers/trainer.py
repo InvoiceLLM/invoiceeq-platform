@@ -598,9 +598,14 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
     try:
         import redis
         r = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
-        keys = r.keys(f"chat_answer_cache:{tenant_id}:*")
-        if keys:
-            r.delete(*keys)
+        batch = []
+        for key in r.scan_iter(match=f"chat_answer_cache:{tenant_id}:*", count=100):
+            batch.append(key)
+            if len(batch) >= 100:
+                r.delete(*batch)
+                batch.clear()
+        if batch:
+            r.delete(*batch)
     except Exception as e:
         logger.warning("Failed to invalidate chat answer cache for tenant %s: %s", tenant_id, e)
 

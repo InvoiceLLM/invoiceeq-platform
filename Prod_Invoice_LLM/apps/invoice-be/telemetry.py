@@ -2080,3 +2080,21 @@ def track_insight_feedback(
             "run_source": _resolve_run_source(),
         },
     )
+
+
+def track_security_incident(
+    incident_type: str,
+    tenant_id: str = "",
+    details: Optional[dict[str, Any]] = None,
+) -> None:
+    """Gap 610: emit structured telemetry when a security guard or injection check triggers."""
+    props: dict[str, Any] = {
+        "tenant_id": str(tenant_id),
+        "incident_type": incident_type,
+        "run_source": _resolve_run_source(),
+    }
+    if details:
+        for k, v in details.items():
+            props[k] = str(v)[:500]
+    _emit_event(f"security.{incident_type}", props)
+

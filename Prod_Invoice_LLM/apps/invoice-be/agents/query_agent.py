@@ -294,11 +294,15 @@ class SQLGenerationSchema(BaseModel):
     sql: Optional[str] = Field(default=None, description="The exact read-only SELECT SQL statement to execute. Must filter strictly by tenant_id. Set to null if the query requires unsupported columns or filters.")
     explanation_or_error: Optional[str] = Field(default=None, description="A brief explanation of the query if sql is not null, or explain why the query cannot be answered if sql is null.")
 
-# Gap 182: tried first, before ever calling an LLM. Deliberately the same two
-# lists that already existed as an LLM-failure fallback -- only the order
-# changed, not the wording, so this doesn't introduce a second, differently-
-# tuned classifier to keep in sync with the prompt below.
-_SQL_KEYWORDS = ("total", "spent", "sum", "average", "how many", "count", "mean", "min", "max", "date", "status", "vendor", "po number", "purchase order", "currency")
+# Gap 182 / Gap 578: tried first, before ever calling an LLM.
+# Bare generic words ("date", "status", "vendor", "currency", "total") were removed from
+# the bare fast-path so questions like "what date is in the termination clause?" do not
+# erroneously short-circuit to SQL. They now require structured context indicators or aggregation verbs.
+_SQL_KEYWORDS = (
+    "total spent", "total spend", "how many", "sum", "average", "mean",
+    "min", "max", "po number", "purchase order", "invoice date", "due date",
+    "vendor name", "invoice status", "count of"
+)
 _CHAT_KEYWORDS = ("hello", "hi ", "hey", "who are you", "what is your name")
 
 
@@ -716,39 +720,34 @@ def _chat_summary_llm():
         return get_llm()
 
 
+def escape_prompt_delimiters(text: str) -> str:
+    """Neutralize marker delimiters in untrusted user/document text (Gap 609)."""
+    if not text:
+        return ""
+    return text.replace("<<<", "«««").replace(">>>", "»»»")
+
+
 def classify_query(query: str, tenant_id: str = "") -> str:
     """Classifies user queries into RAG, SQL, or CHAT.
 
     `tenant_id` is Feature 23 Phase 1 telemetry attribution only -- it is never
     read by, and can never change, the classification itself.
 
-    Gap 182: keyword match tried first, free and instant -- only falls
-    through to the LLM when neither keyword set confidently matches. Every
-    chat message previously paid for two full sequential LLM round-trips
-    (this classification, then the actual RAG/SQL answer), even though a
-    large share of real questions ("what's my total spend", "hello") are
-    unambiguously classifiable by keyword alone; the keyword lists already
-    existed but were only ever reached as a last-resort fallback if the LLM
-    call itself raised.
-
-    Known tradeoff, accepted rather than silently shipped: the keyword pass
-    is coarser than the LLM's routing prompt. "vendor" is an SQL keyword
-    here (matches e.g. "what's the vendor on invoice X"), but would also
-    fire on a genuinely semantic question like "what does the vendor say
-    about payment terms in their invoice" -- which the LLM prompt below is
-    explicit should route to RAG (free-text document content), not SQL. The
-    LLM path (still used whenever no keyword matches) has that nuance; the
-    fast path trades some of it for speed on the common, unambiguous cases.
-
-    Word-boundary matching, not plain substring: a naive `kw in q` check
-    caught "sum" inside "summarize" and would misfire the same way on "min"
-    inside "administrator" or "date" inside "update" -- tolerable back when
-    this was a rare except-block fallback, not acceptable now that it runs
-    on every message.
+    Gap 182 / Gap 578: keyword match tried first, free and instant -- only falls
+    through to the LLM when neither keyword set confidently matches. Bare generic
+    keywords ("date", "status", "vendor", "currency", "total") were removed from
+    the bare fast path and require co-occurrence with an invoice reference.
     """
     q = query.lower()
     if any(re.search(rf"\b{re.escape(kw.strip())}\b", q) for kw in _SQL_KEYWORDS):
         return "SQL"
+
+    # Gap 578: generic column keywords only route to SQL when co-occurring with an invoice indicator
+    has_column_kw = any(re.search(rf"\b{re.escape(kw)}\b", q) for kw in ("date", "status", "vendor", "currency", "total", "spent", "count"))
+    has_invoice_ref = any(re.search(rf"\b{re.escape(ind)}\b", q) for ind in ("invoice", "invoices", "bill", "bills", "spend", "payment", "ledger"))
+    if has_column_kw and has_invoice_ref:
+        return "SQL"
+
     if any(re.search(rf"\b{re.escape(kw.strip())}\b", q) for kw in _CHAT_KEYWORDS):
         return "CHAT"
 
@@ -757,13 +756,11 @@ def classify_query(query: str, tenant_id: str = "") -> str:
     llm = _fast_llm()
     try:
         structured_llm = llm.with_structured_output(QueryRoutingSchema)
-        # Feature 23 Phase 1. Only the LLM fallback is instrumented: the keyword
-        # fast path above returns without ever calling a model, and emitting an
-        # `llm_agent_call` event for it would inflate the call count Phase 2's
-        # cost rollup reads.
         with tracked_llm_call("chat.classify", llm=llm, tenant_id=tenant_id):
+            escaped_query = escape_prompt_delimiters(query)
             result = structured_llm.invoke(
-                f"Determine the routing logic for this user message: '{query}'. "
+                f"Determine the routing logic for this user message:\n"
+                f"<<<USER_QUESTION_START>>>\n{escaped_query}\n<<<USER_QUESTION_END>>>\n"
                 "SQL: For ANY lookup of a structured invoice field on the 'invoice' table - "
                 "this includes not just quantitative checks (total spent, count of invoices, "
                 "averages, sums) but also plain field lookups like vendor name, invoice/due "
@@ -777,7 +774,12 @@ def classify_query(query: str, tenant_id: str = "") -> str:
             )
         return result.route.upper()
     except Exception as e:
-        logger.warning("Routing classification failed: %s. Defaulting to RAG.", e)
+        logger.warning("Routing classification failed: %s. Defaulting to RAG.", e, exc_info=True)
+        try:
+            from telemetry import track_security_incident
+            track_security_incident("routing_classification_failed", str(tenant_id), {"error": str(e), "query_snippet": query[:100]})
+        except Exception:
+            pass
         return "RAG"
 
 # Gap 237 (BE): phrases that only make sense as a reference back to the rows the
@@ -1230,27 +1232,26 @@ def recover_missed_category_match(
 
     Failure-soft for the same reason `_harvest_invoice_ids_via_companion_query()`
     is: the turn already has an answer to give ("No records found"), and a
-    recovery attempt that fell over must not turn that into an error reply. The
-    rollback matters as much as the catch -- a raised DB error leaves the session
-    needing one, and every later query in this turn would fail with
-    `PendingRollbackError` instead.
+    recovery attempt that fell over must not turn that into an error reply.
     """
     phrases = category_search_phrases(generated_sql)
     if not phrases:
         return None
     try:
-        return category_search_fallback(
+        res = category_search_fallback(
             phrases,
             tenant_id,
             db_session,
             flow_direction=_direction_in_generated_sql(generated_sql or ""),
         )
+        if res:
+            # Gap 581: state constraint relaxation deterministically
+            disclaimer = "_Note: No exact records matched all constraints. Showing closest category matches across all periods:_\n\n"
+            return disclaimer + res
+        return None
     except Exception as e:
         logger.warning("Category-match fallback failed (non-fatal): %s", e)
-        try:
-            db_session.rollback()
-        except Exception:
-            pass
+        # Gap 583: caller owns transaction boundaries; do not rollback here
         return None
 
 
@@ -1346,6 +1347,27 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
     DISTINCT -- it multiplies rows per invoice but never changes which invoices
     match -- while a join to anything else still bails exactly as before.
     """
+    # Gap 581: Check if the original SQL carries HAVING predicates
+    has_having = re.search(r"\bhaving\b", sql, re.IGNORECASE) is not None
+    if has_having:
+        try:
+            import sqlglot
+            tree = sqlglot.parse_one(sql, read=_sqlglot_dialect_for(_sql_dialect_name(db_session)))
+            group = tree.args.get("group")
+            if group and group.expressions:
+                group_cols = [exp.sql(dialect=_sqlglot_dialect_for(_sql_dialect_name(db_session))) for exp in group.expressions]
+                tree.set("order", None)
+                tree.set("limit", None)
+                tree.set("expressions", [sqlglot.parse_one(c) for c in group_cols])
+                inner_sql = tree.sql(dialect=_sqlglot_dialect_for(_sql_dialect_name(db_session)))
+                group_col_join = ", ".join(group_cols)
+                companion = f"SELECT DISTINCT invoice.id FROM invoice WHERE tenant_id = '{tenant_id}' AND ({group_col_join}) IN ({inner_sql}) LIMIT {MAX_SNAPSHOT_INVOICE_IDS}"
+                result = db_session.execute(text(companion))
+                harvested = (_canonical_uuid(row[0]) for row in result.fetchall())
+                return [invoice_id for invoice_id in harvested if invoice_id]
+        except Exception as e:
+            logger.debug("Failed to build HAVING companion query via sqlglot: %s", e)
+
     match = _FROM_INVOICE_TAIL.search(sql)
     if not match:
         return []
@@ -1377,10 +1399,7 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
         return [invoice_id for invoice_id in harvested if invoice_id]
     except Exception as e:
         logger.warning("Result-set snapshot companion query failed (non-fatal): %s", e)
-        try:
-            db_session.rollback()
-        except Exception:
-            pass
+        # Gap 583: caller owns transaction boundaries; do not rollback here
         return []
 
 
@@ -2066,6 +2085,11 @@ def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name:
                 continue
             checked_any = True
             if not _ast_predicate_is_tenant_safe(select_node.args.get("where"), tenant_id):
+                try:
+                    from telemetry import track_security_incident
+                    track_security_incident("chat.tenant_isolation_violation", str(tenant_id), {"sql_snippet": sql_clean[:200]})
+                except Exception:
+                    pass
                 raise ValueError(
                     "Access Denied: SQL query does not force tenant isolation on every table read."
                 )
@@ -2087,15 +2111,17 @@ def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name:
 #: so it is enforced here in code, not left to the prompt line that says other tables do not exist.
 _CHAT_SQL_READABLE_TABLES = frozenset({"invoice"})
 
+#: Gap 574: Forbidden SQL functions that must never be executed by chat SQL
+_CHAT_SQL_FORBIDDEN_FUNCTIONS = frozenset({
+    "pg_sleep", "pg_read_file", "pg_ls_dir", "pg_read_binary_file",
+    "query_to_xml", "pg_stat_file", "system", "exec", "eval",
+    "pg_backend_pid", "pg_terminate_backend", "pg_cancel_backend",
+})
 
-def assert_reads_only_allowed_tables(sql_clean: str, dialect_name: str) -> None:
-    """Reject any statement that reads a table outside `_CHAT_SQL_READABLE_TABLES`.
 
-    Every named table anywhere in the statement counts — FROM, JOIN, subqueries and CTE bodies. A
-    reference to a CTE defined in the same statement is not a table, and a table-valued function
-    such as `json_each(...)` has no table name; neither is checked. A schema qualifier other than
-    `public` (`information_schema.tables`, `pg_catalog.pg_class`, `other.invoice`) is refused.
-    Raises `ValueError` with the "Access Denied" prefix the other safety checks use.
+def assert_reads_only_allowed_tables(sql_clean: str, dialect_name: str, tenant_id: str = "") -> None:
+    """Reject any statement that reads a table outside `_CHAT_SQL_READABLE_TABLES`
+    or calls a forbidden function (Gap 574).
     """
     import sqlglot
     import sqlglot.expressions as sg_exp
@@ -2111,6 +2137,22 @@ def assert_reads_only_allowed_tables(sql_clean: str, dialect_name: str) -> None:
 
     for statement in statements:
         cte_names = {cte.alias.lower() for cte in statement.find_all(sg_exp.CTE) if cte.alias}
+        for func in statement.find_all((sg_exp.Anonymous, sg_exp.Func)):
+            fname = ""
+            if isinstance(func, sg_exp.Anonymous):
+                fname = (func.this or "").lower()
+            elif hasattr(func, "name") and func.name:
+                fname = str(func.name).lower()
+            elif hasattr(func, "key") and func.key:
+                fname = str(func.key).lower()
+            if fname in _CHAT_SQL_FORBIDDEN_FUNCTIONS:
+                try:
+                    from telemetry import track_security_incident
+                    track_security_incident("chat.sql_forbidden_function", str(tenant_id), {"function": fname, "sql_snippet": sql_clean[:200]})
+                except Exception:
+                    pass
+                raise ValueError(f"Access Denied: SQL query calls forbidden function '{fname}'.")
+
         for table in statement.find_all(sg_exp.Table):
             name = (table.name or "").lower()
             if not name:
@@ -2119,6 +2161,11 @@ def assert_reads_only_allowed_tables(sql_clean: str, dialect_name: str) -> None:
             if not schema and not table.catalog and name in cte_names:
                 continue
             if name not in _CHAT_SQL_READABLE_TABLES or schema not in ("", "public") or table.catalog:
+                try:
+                    from telemetry import track_security_incident
+                    track_security_incident("chat.sql_table_guard_violation", str(tenant_id), {"table": name, "schema": schema, "sql_snippet": sql_clean[:200]})
+                except Exception:
+                    pass
                 raise ValueError(refused)
 
 
@@ -2164,7 +2211,14 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
 
     # Safety Check 5 (BE Gap 569): the statement may read only the tables the chat prompts
     # describe. Check 4 binds rows to this tenant; this binds the query to the invoice table.
-    assert_reads_only_allowed_tables(sql_clean, _sql_dialect_name(db_session))
+    assert_reads_only_allowed_tables(sql_clean, _sql_dialect_name(db_session), tenant_id=tenant_id)
+
+    # Gap 574: Local statement timeout to bound runaway statements on Postgres
+    if _sql_dialect_name(db_session) == "postgresql":
+        try:
+            db_session.execute(text("SET LOCAL statement_timeout = '30s'"))
+        except Exception as _timeout_err:
+            logger.warning("Could not set statement_timeout: %s", _timeout_err)
 
     result = db_session.execute(text(sql_clean))
     rows = result.fetchall()
@@ -2723,7 +2777,13 @@ def _wrap_user_input(user_message: str, tenant_id: str) -> str:
             "Possible prompt-injection phrasing detected in chat message for tenant %s: %r",
             tenant_id, user_message[:200],
         )
-    return f"{_USER_TEXT_MARKER_START}\n{user_message}\n{_USER_TEXT_MARKER_END}"
+        try:
+            from telemetry import track_security_incident
+            track_security_incident("chat.prompt_injection_detected", str(tenant_id), {"snippet": user_message[:200]})
+        except Exception:
+            pass
+    escaped = escape_prompt_delimiters(user_message)
+    return f"{_USER_TEXT_MARKER_START}\n{escaped}\n{_USER_TEXT_MARKER_END}"
 
 
 # ---------------------------------------------------------------------------
@@ -2784,7 +2844,7 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
     """
     blocks = []
     for span in spans or []:
-        text_value = str((span or {}).get("document") or "")
+        text_value = escape_prompt_delimiters(str((span or {}).get("document") or ""))
         page = (span or {}).get("page")
         if _INJECTION_HEURISTICS.search(text_value):
             # Deliberately a different message from `_wrap_user_input`'s, so a
@@ -2795,6 +2855,15 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
                 "(tenant %s, attachment %s, page %s): %r",
                 tenant_id, attachment_id, page, text_value[:200],
             )
+            try:
+                from telemetry import track_security_incident
+                track_security_incident(
+                    "chat.document_injection_detected",
+                    str(tenant_id),
+                    {"attachment_id": str(attachment_id), "page": str(page), "snippet": text_value[:200]},
+                )
+            except Exception:
+                pass
         # Gap 388: provenance, not just a boundary. An answer built from five
         # chunks with no attribution cannot be checked by the reader, and the
         # model cannot say which document a claim came from. F26 spans carry
@@ -2825,6 +2894,7 @@ def _wrap_retrieved_document_text(spans, tenant_id: str = "", attachment_id: str
 
 
 _TENANT_STATS_CACHE_TTL_SECONDS = 300  # orientation only -- exact figures always come from a live SQL query, not this snapshot
+_IN_PROCESS_STATS_CACHE: dict[str, tuple[float, str]] = {}
 
 
 @tracked_dependency("chat.tenant_stats", "PostgreSQL")
@@ -2853,6 +2923,13 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
             return cached
     except Exception as e:
         logger.warning("Tenant stats cache lookup failed for %s: %s", tenant_id, e)
+        # Gap 611: In-process fallback cache (60s TTL) avoids 3 DB table scans per turn during Redis degradation
+        cached_tuple = _IN_PROCESS_STATS_CACHE.get(str(tenant_id))
+        if cached_tuple:
+            import time
+            ts, val = cached_tuple
+            if time.time() - ts < 60:
+                return val
 
     try:
         # ORM-level filtering (Invoice.tenant_id == ...), not a raw text() bind
@@ -2887,7 +2964,7 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
         )
         spend_rows = db_session.exec(
             select(currency_expr, func.coalesce(func.sum(Invoice.grand_total), 0))
-            .where(Invoice.tenant_id == tenant_uuid)
+            .where(Invoice.tenant_id == tenant_uuid, invoice_not_deleted())
             .group_by(currency_expr)
             .order_by(func.coalesce(func.sum(Invoice.grand_total), 0).desc())
         ).all()
@@ -2910,6 +2987,8 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
             f"{distinct_vendors} distinct vendors, dates {earliest_date} to {latest_date}, "
             f"status breakdown: {status_breakdown}."
         )
+        import time
+        _IN_PROCESS_STATS_CACHE[str(tenant_id)] = (time.time(), summary)
     except Exception as e:
         logger.warning("Failed to compute tenant stats summary for %s: %s", tenant_id, e)
         return ""
@@ -2957,12 +3036,13 @@ def get_prior_turn_sql(session_id: str, db_session) -> str | None:
         return None
 
     try:
+        # Gap 584: query immediately preceding assistant message without filtering on generated_sql.is_not(None).
+        # Only if that consecutive prior turn had generated_sql, return it; otherwise return None.
         prior = db_session.exec(
             select(ChatMessage)
             .where(
                 ChatMessage.session_id == sess_uuid,
                 ChatMessage.role == "assistant",
-                ChatMessage.generated_sql.is_not(None),
             )
             .order_by(ChatMessage.created_at.desc())
             .limit(1)
@@ -3043,9 +3123,7 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
         selected_messages.reverse()
         window = "".join(selected_messages)
 
-        # Gap 437: everything that did not fit is condensed ONCE and reused. The
-        # summary is stored on the session, so a 60-turn conversation pays for
-        # this at most as often as its oldest half changes -- not per turn.
+        # Gap 437 / Gap 582: rolling history summary updated incrementally as new turns roll off
         dropped = messages[len(selected_messages):]
         if dropped:
             try:
@@ -3053,10 +3131,12 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
 
                 chat_session = db_session.get(ChatSession, sess_uuid)
                 if chat_session is not None:
-                    if not chat_session.history_summary:
-                        chat_session.history_summary = _condense_messages(list(reversed(dropped)))
+                    new_summary = _condense_messages(list(reversed(dropped)))
+                    if new_summary != (chat_session.history_summary or ""):
+                        chat_session.history_summary = new_summary
                         db_session.add(chat_session)
-                        db_session.commit()
+                        db_session.flush()
+                        # Gap 583: caller owns transaction boundaries; flush without committing
                     if chat_session.history_summary:
                         window = (
                             "EARLIER IN THIS CONVERSATION (condensed):\n"
@@ -3064,7 +3144,7 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
                         )
             except Exception as e:  # a summary is a nicety; the window is the contract
                 logger.warning("Rolling history summary failed for session %s: %s", session_id, e)
-                db_session.rollback()
+                # Gap 583: caller owns transaction boundaries; do not rollback here
 
         return window
     except Exception as e:
@@ -3853,10 +3933,8 @@ def _abstain_payload(missing, on_file=None, next_step: str = "") -> dict:
 
     Returned as a payload rather than only as prose so the FE can render it as a
     card and the eval harness can assert on `status` instead of on wording.
-    **Gap 474 note:** `routers/chat.py::MessageResponse` does not yet carry this
-    key, so today it reaches the answer text and the telemetry but not the
-    browser. That gap is filed with a proposed fix and awaits a founder go; this
-    payload is built to the shape that fix will expose.
+    **Gap 474 note:** `routers/chat.py::MessageResponse` carries this key
+    (shipped 2026-09-07), serialising the structured abstention to the browser.
     """
     missing_list = [str(m) for m in (missing or []) if str(m).strip()]
     on_file_list = [str(o) for o in (on_file or []) if str(o).strip()]
@@ -4660,10 +4738,6 @@ def _previous_assistant_sql(session_id: str, db_session) -> Optional[str]:
         ).first()
         return str(row or "") if row else ""
     except Exception as e:
-        try:
-            db_session.rollback()
-        except Exception:  # pragma: no cover - nothing left to salvage
-            pass
         logger.debug("Could not resolve previous turn SQL for session %s: %s", session_id, e)
         return ""
 
@@ -5399,7 +5473,8 @@ def _run_attached_document_turn(
         candidates = found["invoices"]
         attachment.candidate_invoice_ids = [str(inv.id) for inv in candidates]
         db_session.add(attachment)
-        db_session.commit()
+        db_session.flush()
+        # Gap 583: caller owns transaction boundaries; flush without committing
 
         payload = build_confirmation_payload(
             attachment_id=str(attachment.id),
@@ -5563,6 +5638,14 @@ def _run_attached_document_turn(
         "line_items": line_items,
         "unmatched": unmatched,
         "suggested_actions": suggestions[:3],
+        "turn_metadata": {
+            "route": "ATTACHMENT",
+            "model": getattr(turn, "model_deployment", None) or getattr(turn, "model", None) or "default",
+            "tokens_in": getattr(turn, "tokens_in", 0) or 0,
+            "tokens_out": getattr(turn, "tokens_out", 0) or 0,
+            "status": turn.status,
+            "stop_reason": getattr(turn, "stop_reason", None),
+        },
     }
 
 
@@ -5586,21 +5669,41 @@ def update_session_focus(session_id: str, db_session, result: dict) -> None:
         chat_session = db_session.get(ChatSession, UUID(str(session_id)))
         if chat_session is None:
             return
+        # Gap 586: clear focus if turn errored, failed, was declined, or explicitly cleared
+        if (
+            result.get("status") in ("error", "failed")
+            or result.get("stop_reason") in ("declined", "error")
+            or result.get("error")
+            or result.get("declined")
+            or result.get("clear_focus")
+        ):
+            chat_session.focus = None
+            db_session.add(chat_session)
+            db_session.flush()
+            return
+
         invoice_ids = [str(i) for i in (result.get("result_invoice_ids") or [])][:10]
-        snapshot = {k: v for k, v in (result.get("focus") or {}).items() if k in _FOCUS_KEYS}
+        raw_focus = result.get("focus")
+        snapshot = {k: v for k, v in (raw_focus or {}).items() if k in _FOCUS_KEYS}
         if invoice_ids:
             snapshot["invoice_ids"] = invoice_ids
+
+        # If an explicit empty focus dict was supplied, clear focus
+        if raw_focus == {}:
+            chat_session.focus = None
+            db_session.add(chat_session)
+            db_session.flush()
+            return
+
         if not snapshot:
             return
+
         chat_session.focus = snapshot
         db_session.add(chat_session)
-        db_session.commit()
+        db_session.flush()
+        # Gap 583: caller owns transaction boundaries; flush without committing
     except Exception as e:
         logger.warning("Session focus update failed for session %s: %s", session_id, e)
-        try:
-            db_session.rollback()
-        except Exception:
-            pass
 
 
 def session_focus_block(session_id: str, db_session) -> str:
@@ -6990,12 +7093,16 @@ def _run_query_agent(
     # explicit id, a deictic reference, and a document actually in this session.
     # Anything less and an ordinary question would be silently re-routed.
     if not attachment_id and not attachment_ids and _ATTACHMENT_DEICTIC_PATTERN.search(user_message or ""):
-        carried = session_attachments(session_id, _uuid_or_none(tenant_id) or tenant_id, db_session)
-        if carried:
-            attachment_id = str(carried[-1].id)
-            logger.info(
-                "Carrying attachment %s forward for session %s (Gap 441)", attachment_id, session_id
-            )
+        # Gap 575: condition deictic document carry-forward so it does not re-attach
+        # when the immediately preceding assistant turn produced SQL/tabular ledger results.
+        prev_sql = get_prior_turn_sql(session_id, db_session)
+        if not prev_sql:
+            carried = session_attachments(session_id, _uuid_or_none(tenant_id) or tenant_id, db_session)
+            if carried:
+                attachment_id = str(carried[-1].id)
+                logger.info(
+                    "Carrying attachment %s forward for session %s (Gap 441)", attachment_id, session_id
+                )
 
     if not attachment_id and attachment_ids:
         attachment_id = str(attachment_ids[0])
@@ -7029,6 +7136,8 @@ def _run_query_agent(
             )
             turn.status = telemetry.TURN_STATUS_CACHE_HIT
             turn.route = "cached"
+            # Gap 586: update session focus on cache hit
+            update_session_focus(session_id, db_session, attachment_cached)
             return attachment_cached
 
         attachment_result = _run_attached_document_turn(
@@ -7099,6 +7208,8 @@ def _run_query_agent(
         cached["content"] = redact_query_internals(cached.get("content"), tenant_id)
         progress("cached_answer")
         progress("answer_ready")
+        # Gap 586: update session focus on cache hit
+        update_session_focus(session_id, db_session, cached)
         return cached
 
     # Retrieve short-term context history
@@ -7712,7 +7823,7 @@ Conversation History (Short-term context):
             progress("answer_ready", route="RAG")
         except Exception as e:
             logger.error("RAG path execution failed: %s", e)
-            response_text = f"Failed to run document lookup: {str(e)}"
+            response_text = f"Failed to run document lookup: {user_safe_error_detail(e, tenant_id)}"
             turn.status = telemetry.TURN_STATUS_ERROR
             turn.error_type = type(e).__name__
             turn.stop_reason = "rag_answer_failed"
@@ -7756,10 +7867,9 @@ Conversation History:
 """
         progress("composing_answer", route="CHAT")
         try:
-            # 29.5 / decision 2: with full records in the prompt this is no
-            # longer "ordinary conversation" -- it is a grounded answer, and it
-            # narrates on the chat-summary deployment like the other two routes.
-            chat_llm = _chat_summary_llm() if chat_full_record_block else llm
+            # Gap 593: conversational turns and small talk run on the fast summary
+            # model rather than burning expensive primary reasoning quota.
+            chat_llm = _chat_summary_llm()
             # Feature 23 Phase 1
             with tracked_llm_call("chat.conversational", llm=chat_llm, tenant_id=tenant_id):
                 res = chat_llm.invoke(f"{system_prompt}\nUser Message: {wrapped_user_message}")
@@ -7767,7 +7877,7 @@ Conversation History:
             progress("answer_ready", route="CHAT")
         except Exception as e:
             logger.error("Chat path execution failed: %s", e)
-            response_text = f"Error generating message response: {str(e)}"
+            response_text = f"Error generating message response: {user_safe_error_detail(e, tenant_id)}"
             turn.status = telemetry.TURN_STATUS_ERROR
             turn.error_type = type(e).__name__
             turn.stop_reason = "chat_answer_failed"
@@ -7812,27 +7922,38 @@ Conversation History:
 
             referenced_number_matches = re.findall(r"\b(?:the|those|these)\s+(\d{1,3})\b", user_message.lower())
             referenced_counts = {int(n) for n in referenced_number_matches if int(n) > 0}
-            if referenced_counts:
+            is_narrowing = _is_narrowing_followup(user_message)
+            if referenced_counts or is_narrowing:
                 prior = db_session.exec(
                     select(ChatMessage)
                     .where(ChatMessage.session_id == _UUID(session_id), ChatMessage.role == "assistant")
                     .order_by(ChatMessage.created_at.desc())
                     .limit(1)
                 ).first()
-                current_count = len(result_invoice_ids)
-                prior_text = (prior.content or "") if prior is not None else ""
-                grounded_counts = {
-                    n for n in referenced_counts
-                    if re.search(rf"\b{n}\b", prior_text) and current_count < n
-                }
-                if prior is not None and current_count > 0 and grounded_counts:
-                    referenced = max(grounded_counts)
-                    response_text += (
-                        f"\n\n_Heads up: you referenced {referenced} from the previous "
-                        f"answer, but this follow-up only found {current_count}. The filter may have "
-                        f"narrowed unexpectedly -- worth double-checking against the full list if this "
-                        f"looks off._"
-                    )
+                if prior is not None:
+                    current_count = len(result_invoice_ids)
+                    prior_text = (prior.content or "")
+                    grounded_counts = {
+                        n for n in referenced_counts
+                        if re.search(rf"\b{n}\b", prior_text) and current_count < n
+                    }
+                    prior_invoice_ids = getattr(prior, "result_invoice_ids", []) or []
+                    prior_n = len(prior_invoice_ids)
+                    if current_count == 0:
+                        count_to_show = max(grounded_counts) if grounded_counts else prior_n
+                        if count_to_show > 0:
+                            response_text += (
+                                f"\n\n_Heads up: the previous answer covered {count_to_show} "
+                                f"invoices, but this follow-up matched none of them._"
+                            )
+                    elif current_count > 0 and grounded_counts:
+                        referenced = max(grounded_counts)
+                        response_text += (
+                            f"\n\n_Heads up: you referenced {referenced} from the previous "
+                            f"answer, but this follow-up only found {current_count}. The filter may have "
+                            f"narrowed unexpectedly -- worth double-checking against the full list if this "
+                            f"looks off._"
+                        )
         except Exception as e:
             # Never let the safety net itself break a working answer.
             logger.warning("Gap 237 follow-up reconciliation check failed: %s", e)
@@ -7842,17 +7963,23 @@ Conversation History:
         "generated_sql": generated_sql,
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
+        # Gap 596: persist turn_metadata (route, model, tokens, status)
+        "turn_metadata": {
+            "route": route,
+            "model": getattr(turn, "model_deployment", None) or getattr(turn, "model", None) or "default",
+            "tokens_in": getattr(turn, "tokens_in", 0) or 0,
+            "tokens_out": getattr(turn, "tokens_out", 0) or 0,
+            "status": turn.status,
+            "stop_reason": getattr(turn, "stop_reason", None),
+        },
     }
     # Feature 29 task 29.9: what each claim can be traced to -- the invoice row,
     # its number, and the document chunks that were in front of the model. Built
     # from the same `FullRecordSet` the prompt was built from, so it cannot drift
     # from what was actually shown.
     #
-    # **Gap 474**: `routers/chat.py::MessageResponse` does not carry this key
-    # yet, so today it reaches the cache, the telemetry and any in-process caller
-    # but NOT the browser. The gap is filed with a proposed additive fix and
-    # needs a founder go; the key is populated now so that fix is a one-line
-    # schema change rather than a second pass over this file.
+    # **Gap 474**: `routers/chat.py::MessageResponse` carries this key
+    # (shipped 2026-09-07), serialising provenance to the browser.
     if full_record_set is not None and getattr(full_record_set, "records", None):
         result["provenance"] = full_record_set.provenance()
     if gate_abstention is not None:
