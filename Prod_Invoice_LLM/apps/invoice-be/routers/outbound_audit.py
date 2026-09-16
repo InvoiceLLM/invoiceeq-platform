@@ -31,14 +31,22 @@ from utils.alert_dismissal import dismiss_alerts
 from utils.correction_recheck import MONEY_FIELDS, alerts_raised_by_correction, snapshot_money_fields
 from utils.rule_schema import (
     build_audit_correction_rule,
+    is_standing_rule_allowed,
     merge_constraints,
     normalize_constraints,
     ORIGIN_AUDIT_CORRECTION_OUTBOUND,
     SCOPE_OUTBOUND_GLOBAL,
 )
+from utils.rate_limiter import SlidingWindowRateLimiter, rate_limit_key
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# Gap 561: 60 resolve operations per minute per (tenant, principal), separate window from inbound --
+# see utils/rate_limiter.py::rate_limit_key.
+_resolve_rate_limiter = SlidingWindowRateLimiter(
+    key_prefix="ratelimit:outbound_resolve:", max_requests=60, window_seconds=60
+)
 
 # Feature 1.1 (Task 1.1.2): AR-side mirror of routers/audit.py -- same
 # `can_audit` permission gates the outbound review console.
@@ -207,7 +215,28 @@ def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantConte
     """Task 7.1.3: no safety gate, unlike inbound's Gap 62 mechanism -- every
     outbound invoice is the tenant's own single, consistent format, so
     there's no vendor-layout variability to de-risk against before
-    committing. Global-only (vendor_name=NULL), flow_direction='OUTBOUND'."""
+    committing. Global-only (vendor_name=NULL), flow_direction='OUTBOUND'.
+
+    Gap 542: because that Global row applies to every future outbound invoice of every
+    customer, a value correction on a variable transactional field (grand_total,
+    customer_name, invoice_number, dates -- utils/rule_schema.py::VARIABLE_FIELDS) must
+    never become a rule; it is applied to this invoice only."""
+    allowed_diff = {
+        field: diff
+        for field, diff in correction_diff.items()
+        if is_standing_rule_allowed(field, flow_direction="OUTBOUND")
+    }
+    if not allowed_diff:
+        disallowed_names = ", ".join(sorted(correction_diff.keys()))
+        logger.info("Outbound standing rule skipped for variable transactional fields: %s (Gap 542)", disallowed_names)
+        return {
+            "applied": False,
+            "reason": (
+                f"Standing rules cannot be created from outbound corrections to variable transactional fields "
+                f"({disallowed_names}) because outbound templates are tenant-wide. The correction was applied to this invoice only."
+            ),
+        }
+
     # Feature 18: structured rules, same as inbound's `_apply_standing_rule`.
     # Scope is `outbound_global` rather than `vendor`: an outbound invoice has no
     # `vendor_name` at all (the counterparty is `customer_name`, a different
@@ -221,7 +250,7 @@ def _apply_standing_rule_direct(db_session: Session, tenant_context: TenantConte
             scope=SCOPE_OUTBOUND_GLOBAL,
             origin=ORIGIN_AUDIT_CORRECTION_OUTBOUND,
         )
-        for field, diff in correction_diff.items()
+        for field, diff in allowed_diff.items()
     ]
 
     stmt = select(ExtractionTemplate).where(
@@ -286,6 +315,13 @@ async def resolve_outbound_alert(
     routers/audit.py -- that file's resolve logic isn't factored into
     reusable pieces, and no pattern-detection/suggestion logic here (that's
     an inbound-only concept, see the doc for why)."""
+    # Gap 561: resolve calls are rate limited per tenant + principal (utils/rate_limiter.py::rate_limit_key).
+    if not _resolve_rate_limiter.check(rate_limit_key(context)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded: maximum 60 resolve operations per minute per tenant.",
+        )
+
     # BE Gap 541: lock the row so two simultaneous resolves on one invoice run one after the other.
     statement = select(Invoice).where(
         Invoice.id == invoice_id,
@@ -296,6 +332,14 @@ async def resolve_outbound_alert(
     invoice = db_session.exec(statement).first()
     if not invoice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbound invoice not found or access denied.")
+
+    # Gap 544: creating a standing rule writes an extraction template, which needs the Trainer
+    # (`can_train`) permission -- the same gate the Trainer's own endpoints use.
+    if payload.apply_as_standing_rule and not context.can_train:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to create standing rules (AI Trainer permission required). Ask an Admin to grant it.",
+        )
 
     # BE Gaps 537/538: one alert per dismissal — by id, else type + field + message; unmatched ones reported back.
     previous_alerts = list(invoice.sa_alerts or [])

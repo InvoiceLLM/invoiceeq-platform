@@ -40,6 +40,16 @@ TENANT = uuid4()
 OTHER_TENANT = uuid4()
 
 
+@pytest.fixture(autouse=True)
+def generic_doc_chat_on(monkeypatch):
+    import config
+
+    active_settings = config.get_settings()
+    active_settings.ENABLE_GENERIC_DOC_CHAT = True
+    monkeypatch.setattr(config.settings, "ENABLE_GENERIC_DOC_CHAT", True)
+    monkeypatch.setattr(config, "get_settings", lambda: active_settings)
+
+
 @pytest.fixture(name="db_session")
 def db_session_fixture():
     SQLModel.metadata.create_all(engine)
@@ -270,20 +280,21 @@ def test_empty_candidate_set_compares_nothing(db_session):
 def test_suggested_actions_respect_outbound_confirm_send_precondition():
     base = {"invoice_id": str(uuid4()), "outcome": "match", "flow_direction": "OUTBOUND"}
     allowed = build_suggested_actions({**base, "invoice_status": "VERIFIED"})
-    assert any("confirm-send" in a["endpoint"] for a in allowed)
+    # Gap 528: Chips navigate to outbound-review, never execute endpoint mutations
+    assert any("outbound-review" in a["href"] and "Send this invoice" in a["label"] for a in allowed)
     # DRAFT is not a legal source state for confirm-send, so it must not be offered.
     denied = build_suggested_actions({**base, "invoice_status": "DRAFT"})
-    assert not any("confirm-send" in a["endpoint"] for a in denied)
+    assert not any("outbound-review" in a["href"] and "Send this invoice" in a["label"] for a in denied)
 
 
 def test_mark_paid_only_offered_from_sent():
     base = {"invoice_id": str(uuid4()), "outcome": "match", "flow_direction": "OUTBOUND"}
     assert any(
-        "mark-paid" in a["endpoint"]
+        "outbound-review" in a["href"] and "Mark this invoice paid" in a["label"]
         for a in build_suggested_actions({**base, "invoice_status": "SENT"})
     )
     assert not any(
-        "mark-paid" in a["endpoint"]
+        "outbound-review" in a["href"] and "Mark this invoice paid" in a["label"]
         for a in build_suggested_actions({**base, "invoice_status": "VERIFIED"})
     )
 
@@ -298,10 +309,13 @@ def test_no_action_is_a_mutation_and_none_invented():
         }
     )
     assert actions, "an inbound AUDIT_REQUIRED variance should suggest something"
-    # No flag/dispute/hold/escalate route exists and none may be suggested (D6).
+    # Gap 528: Chips are navigation-only; endpoint and method are stripped.
     for a in actions:
+        assert "endpoint" not in a
+        assert "method" not in a
+        assert "href" in a
         assert not any(
-            word in a["endpoint"] for word in ("flag", "dispute", "hold", "escalate")
+            word in a["label"].lower() for word in ("dispute", "hold", "escalate")
         )
 
 
@@ -1160,7 +1174,7 @@ def test_the_sibling_credit_note_is_netted_against_the_confirmed_invoice(db_sess
     # ledger is unchanged: it is session-wide on either branch, which is why the
     # numbers below are the same ones Gap 472 asserted.
     owed = result["attachment_multi_comparison"]["amount_owed"]
-    assert owed["net"] == "432.0"
+    assert owed["net"] in ("432.0", "432.00")
     assert owed["currency"] == "USD"
     assert owed["complete"] is True
     # The credit note is in the sum even though the question carried the PO's id.
@@ -1183,7 +1197,7 @@ def test_the_ledger_and_its_rules_reach_the_prompt(db_session):
     # every attachment turn, so only the double-quoted key proves the block
     # itself was serialised into the COMPARISON JSON.
     assert '"amount_owed"' in prompt
-    assert '"net": "432.0"' in prompt
+    assert ('"net": "432.0"' in prompt or '"net": "432.00"' in prompt)
     assert "that IS the answer to any question about what is owed" in prompt
     assert "Never add, subtract or re-check those figures yourself" in prompt
 

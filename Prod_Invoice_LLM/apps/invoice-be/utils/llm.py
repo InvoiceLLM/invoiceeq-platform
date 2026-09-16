@@ -225,6 +225,10 @@ def build_llm(
                 "api_key": setting.AZURE_OPENAI_API_KEY,
                 "api_version": api_version or setting.AZURE_OPENAI_API_VERSION,
                 "azure_deployment": deployment,
+                # Gap 546: LLM timeout and bounded retries to prevent blocking worker or backend replicas
+                # (config.py: 120s / 1 retry, above the measured 24-53s extraction path).
+                "request_timeout": setting.LLM_REQUEST_TIMEOUT_SECONDS,
+                "max_retries": setting.LLM_MAX_RETRIES,
             }
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens

@@ -172,6 +172,7 @@ def test_outbound_handler_failure_persists_failed(db_session, monkeypatch):
 
     invoice = _seed_invoice(db_session, status="UPLOADED", direction="OUTBOUND")
     monkeypatch.setattr(handlers, "engine", engine)
+    monkeypatch.setattr(outbound_handlers, "engine", engine)
     monkeypatch.setattr(outbound_handlers, "_publish_sse_events", lambda *a, **k: None)
     monkeypatch.setattr(
         outbound_handlers, "_run_ocr",

@@ -7,16 +7,48 @@ from fastapi.testclient import TestClient
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID, MOCK_USER_ID, MOCK_ROLE
-from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion
+from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, Tenant
 
-sqlite_url = "sqlite:///:memory:"
-engine = create_engine(
-    sqlite_url,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
+import os
+import sys
+
+# Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+postgres_test_url = os.getenv("TEST_DATABASE_URL")
+if postgres_test_url:
+    # Gap 525: this fixture runs create_all/drop_all around every test, so the URL must name a
+    # throwaway database (its name contains "test") on the local host -- the dev database
+    # `invoice_db` on localhost:5433 is deliberately refused.
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(postgres_test_url)
+    assert _parsed.hostname in ("localhost", "127.0.0.1"), (
+        "Gap 525 security guard: TEST_DATABASE_URL must point to localhost or 127.0.0.1 to avoid accidental data loss."
+    )
+    assert "test" in (_parsed.path or "").lower(), (
+        "Gap 525 security guard: TEST_DATABASE_URL must name a throwaway database whose name contains 'test' "
+        "(this fixture drops every table after each test)."
+    )
+    engine = create_engine(postgres_test_url)
+else:
+    sqlite_url = "sqlite:///:memory:"
+    engine = create_engine(
+        sqlite_url,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool
+    )
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _reset_resolve_rate_limiter():
+    """Gap 561: the limiter is process-wide (and Redis-backed when Redis is up), so every test
+    starts from an empty window instead of inheriting the previous test's -- or run's -- hits."""
+    from routers import audit as _audit, outbound_audit as _outbound_audit
+    _audit._resolve_rate_limiter.reset()
+    _outbound_audit._resolve_rate_limiter.reset()
+    yield
+    _audit._resolve_rate_limiter.reset()
+    _outbound_audit._resolve_rate_limiter.reset()
 
 @pytest.fixture(name="db_session")
 def db_session_fixture():
@@ -286,7 +318,9 @@ def test_reopen_success_as_admin(db_session):
             json={"status": "AUDIT_REQUIRED", "dismissed_alerts": []},
         )
         assert response.status_code == 200
-        m_webhook.assert_not_called()
+        # Gap 558: Admin reopen dispatches invoice.reopened event
+        m_webhook.assert_called_once()
+        assert m_webhook.call_args[0][2] == "invoice.reopened"
         m_notify.assert_not_called()
 
     db_session.refresh(db_invoice)
@@ -667,12 +701,12 @@ def test_pattern_detection_reads_only_the_newest_corrections(db_session, monkeyp
 
     monkeypatch.setattr(audit_router, "_RULE_SUGGESTION_SCAN_LIMIT", 5)
 
-    # Three older po_number corrections for ACME, buried under five newer unrelated corrections.
+    # Three older currency corrections (an invariant field -- Gap 547 excludes transaction scalars such as po_number) for ACME, buried under five newer unrelated corrections.
     _seed_correction_history(db_session, rows=[
-        *[("ACME Corp", "po_number", f"PO-{i}", 100 + i) for i in range(3)],
+        *[("ACME Corp", "currency", f"CUR-{i}", 100 + i) for i in range(3)],
         *[("Other Vendor", "invoice_number", f"INV-{i}", 10 + i) for i in range(5)],
     ])
-    assert audit_router._detect_correction_pattern(db_session, MOCK_TENANT_ID, "ACME Corp", ["po_number"]) is None
+    assert audit_router._detect_correction_pattern(db_session, MOCK_TENANT_ID, "ACME Corp", ["currency"]) is None
 
 
 def test_pattern_detection_still_suggests_from_recent_repeats_and_quotes_the_newest(db_session, monkeypatch):
@@ -682,15 +716,15 @@ def test_pattern_detection_still_suggests_from_recent_repeats_and_quotes_the_new
     monkeypatch.setattr(audit_router, "_RULE_SUGGESTION_SCAN_LIMIT", 5)
 
     _seed_correction_history(db_session, rows=[
-        ("ACME Corp", "po_number", "PO-NEWEST", 1),
-        ("ACME Corp", "po_number", "PO-MIDDLE", 2),
-        ("ACME Corp", "po_number", "PO-OLDEST", 3),
+        ("ACME Corp", "currency", "EUR", 1),
+        ("ACME Corp", "currency", "GBP", 2),
+        ("ACME Corp", "currency", "USD", 3),
         *[("Other Vendor", "invoice_number", f"INV-{i}", 50 + i) for i in range(5)],
     ])
-    suggestion = audit_router._detect_correction_pattern(db_session, MOCK_TENANT_ID, "ACME Corp", ["po_number"])
+    suggestion = audit_router._detect_correction_pattern(db_session, MOCK_TENANT_ID, "ACME Corp", ["currency"])
     assert suggestion is not None
     assert suggestion["scope"] == "existing_vendor"
-    assert "PO-NEWEST" in suggestion["sample_correction"]
+    assert "EUR" in suggestion["sample_correction"]
 
 
 _LIST_CORRECTIONS = {
@@ -1194,9 +1228,9 @@ def test_standing_rule_applied_when_safety_check_passes(db_session):
 
     with patch("routers.audit._run_ocr", return_value="Mock OCR Text"), \
          patch("routers.audit.run_extraction_agent", return_value={
-             "extracted_data": {"grand_total": 150.0}, "status": "COMPLETED", "alerts": [],
+             "extracted_data": {"vendor_name": "ACME Corporation"}, "status": "COMPLETED", "alerts": [],
          }):
-        payload = {"corrections": {"grand_total": 150.0}, "apply_as_standing_rule": True}
+        payload = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": True}
         response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
 
     assert response.status_code == 200
@@ -1204,7 +1238,7 @@ def test_standing_rule_applied_when_safety_check_passes(db_session):
     assert data["standing_rule_result"]["applied"] is True
 
     templates = db_session.exec(
-        select(ExtractionTemplate).where(ExtractionTemplate.vendor_name == "ACME Corp")
+        select(ExtractionTemplate).where(ExtractionTemplate.vendor_name == "ACME Corporation")
     ).all()
     assert len(templates) == 1
     # Feature 18: the auditor's standing rule is now a structured rule object
@@ -1215,10 +1249,10 @@ def test_standing_rule_applied_when_safety_check_passes(db_session):
 
     stored_rule = templates[0].rules["constraints"][0]
     assert isinstance(stored_rule, dict)
-    assert stored_rule["field"] == "grand_total"
+    assert stored_rule["field"] == "vendor_name"
     assert stored_rule["origin"] == "audit_correction"
     assert stored_rule["kind"] == "extraction"
-    assert "grand total" in normalize_constraints(templates[0].rules["constraints"])[0]
+    assert "vendor name" in normalize_constraints(templates[0].rules["constraints"])[0]
 
     versions = db_session.exec(select(ExtractionTemplateVersion)).all()
     assert len(versions) == 1 and versions[0].version == 1
@@ -1237,22 +1271,81 @@ def test_standing_rule_rejected_when_safety_check_fails(db_session):
 
     with patch("routers.audit._run_ocr", return_value="Mock OCR Text"), \
          patch("routers.audit.run_extraction_agent", return_value={
-             "extracted_data": {"grand_total": 999.0}, "status": "COMPLETED", "alerts": [],
+             "extracted_data": {"vendor_name": "Wrong Extraction Corp"}, "status": "COMPLETED", "alerts": [],
          }):
-        payload = {"corrections": {"grand_total": 150.0}, "apply_as_standing_rule": True}
+        payload = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": True}
         response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
 
     assert response.status_code == 200
     data = response.json()
     assert data["standing_rule_result"]["applied"] is False
     assert "Safety check failed" in data["standing_rule_result"]["reason"]
-    assert data["corrections_applied"] == {"grand_total": {"old": 100.0, "new": 150.0}}  # correction still applied
+    assert data["corrections_applied"] == {"vendor_name": {"old": "ACME Corp", "new": "ACME Corporation"}}  # correction still applied
 
     db_session.refresh(db_invoice)
-    assert db_invoice.grand_total == 150.0  # correction persisted despite rejected rule
+    assert db_invoice.vendor_name == "ACME Corporation"  # correction persisted despite rejected rule
 
     templates = db_session.exec(select(ExtractionTemplate)).all()
     assert templates == []  # no rule was written
+
+
+def test_standing_rule_safety_check_passes_with_canonical_whitespace_or_formatting_gap543(db_session):
+    """Gap 543: Re-extraction producing equivalent text with surrounding whitespace or
+    canonical formatting must pass the safety check (previously failed with strict str != str)."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("routers.audit._run_ocr", return_value="Mock OCR Text"), \
+         patch("routers.audit.run_extraction_agent", return_value={
+             "extracted_data": {"vendor_name": "  ACME Corporation  "}, "status": "COMPLETED", "alerts": [],
+         }):
+        payload = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": True}
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["standing_rule_result"]["applied"] is True
+
+
+def test_standing_rule_safety_check_uses_holdout_invoice_gap543(db_session, tmp_path):
+    """Gap 543: When an eligible holdout invoice from the same vendor exists, safety check
+    validates the candidate rule on the holdout document to avoid tautological self-validation."""
+    # Create holdout file on disk
+    holdout_file = tmp_path / "holdout_invoice.pdf"
+    holdout_file.write_text("Mock PDF Content")
+
+    invoice_id = uuid4()
+    holdout_id = uuid4()
+
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    holdout_invoice = Invoice(
+        id=holdout_id, tenant_id=MOCK_TENANT_ID, file_path=str(holdout_file),
+        vendor_name="ACME Corp", status="COMPLETED", grand_total=120.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.add(holdout_invoice)
+    db_session.commit()
+
+    with patch("routers.audit._run_ocr", return_value="Mock OCR Holdout Text") as m_ocr, \
+         patch("routers.audit.run_extraction_agent", return_value={
+             "extracted_data": {"vendor_name": "ACME Corporation"}, "status": "COMPLETED", "alerts": [],
+         }) as m_agent:
+        payload = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": True}
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["standing_rule_result"]["applied"] is True
+    # Verify extraction agent was called with the holdout invoice file path!
+    m_agent.assert_called_once()
+    assert m_agent.call_args[0][0] == str(holdout_file)
 
 
 def test_standing_rule_skipped_without_vendor_name(db_session):
@@ -1264,10 +1357,99 @@ def test_standing_rule_skipped_without_vendor_name(db_session):
     db_session.add(db_invoice)
     db_session.commit()
 
-    payload = {"corrections": {"grand_total": 150.0}, "apply_as_standing_rule": True}
+    payload = {"corrections": {"vendor_name": "ACME Corp"}, "apply_as_standing_rule": True}
     response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
     assert response.status_code == 200
     assert response.json()["standing_rule_result"]["applied"] is False
+
+
+def test_resolve_with_standing_rule_requires_can_train_gap544(db_session):
+    """Gap 544 (AF-9): Audit resolve with apply_as_standing_rule=True requires the
+    Trainer (can_train) permission. A user with only can_audit gets HTTP 403."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    _viewer_row_with_audit_permission(db_session)
+
+    # With apply_as_standing_rule=True, caller without can_train is denied with 403
+    payload = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": True}
+    response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload, headers=VIEWER)
+    assert response.status_code == 403
+    assert "AI Trainer permission required" in response.json()["detail"]
+
+    # Without apply_as_standing_rule, regular resolve succeeds for the same auditor
+    payload_normal = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": False}
+    response_normal = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload_normal, headers=VIEWER)
+    assert response_normal.status_code == 200
+
+
+def test_resolve_with_standing_rule_allowed_with_can_train_gap544(db_session):
+    """Gap 544: A user with can_train=True is permitted to apply standing rules."""
+    from models import User
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        vendor_name="ACME Corp", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    _viewer_row_with_audit_permission(db_session)
+    user = db_session.exec(select(User).where(User.clerk_user_id == MOCK_USER_ID)).first()
+    user.can_train = True
+    db_session.add(user)
+    db_session.commit()
+
+    with patch("routers.audit._run_ocr", return_value="Mock OCR Text"), \
+         patch("routers.audit.run_extraction_agent", return_value={
+             "extracted_data": {"vendor_name": "ACME Corporation"}, "status": "COMPLETED", "alerts": [],
+         }):
+        payload = {"corrections": {"vendor_name": "ACME Corporation"}, "apply_as_standing_rule": True}
+        response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload, headers=VIEWER)
+
+    assert response.status_code == 200
+    assert response.json()["standing_rule_result"]["applied"] is True
+
+
+
+@pytest.mark.parametrize("var_field, new_val", [
+    ("grand_total", 250.0),
+    ("subtotal", 200.0),
+    ("tax_amount", 50.0),
+    ("invoice_number", "INV-9999"),
+    ("invoice_date", "2026-05-01"),
+    ("due_date", "2026-06-01"),
+    ("po_number", "PO-8888"),
+])
+def test_standing_rule_disallowed_for_variable_transaction_fields_gap542(db_session, var_field, new_val):
+    """Gap 542: A one-invoice correction to variable transactional fields must NEVER
+    become a standing rule across future vendor invoices. The correction applies to the
+    invoice, but the standing rule is skipped with an explanatory notice."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path=f"mock/{var_field}.pdf",
+        vendor_name="Acme Supplies", status="AUDIT_REQUIRED", grand_total=100.0, sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    payload = {"corrections": {var_field: new_val}, "apply_as_standing_rule": True}
+    response = client.put(f"/api/v1/audit/resolve/{invoice_id}", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["standing_rule_result"]["applied"] is False
+    assert "Standing rules cannot be created for variable transactional fields" in data["standing_rule_result"]["reason"]
+    assert var_field in data["standing_rule_result"]["reason"]
+
+    # Verify no template rule was written
+    templates = db_session.exec(select(ExtractionTemplate)).all()
+    assert templates == []
 
 
 def test_standing_rule_not_attempted_when_checkbox_unset(db_session):
@@ -1391,3 +1573,266 @@ def test_deferral_status_not_reachable_via_invalid_status_message(db_session):
     detail = response.json()["detail"]
     for expected in ("PAID", "REJECTED", "AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION"):
         assert expected in detail
+
+
+# ── Gap 557: Unknown currency sent as null/None in webhooks ───────────────────
+
+def test_resolve_webhook_sends_none_currency_when_unknown_gap557(db_session):
+    """Gap 557 (AF-22): Unknown currency must be sent as null/None in webhook payload,
+    not coerced to 'USD'."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED",
+        vendor_name="Global Tech",
+        grand_total=500.0,
+        currency=None,  # unknown currency
+        sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("services.webhooks.dispatch_webhook_event") as m_webhook:
+        response = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "PAID", "dismissed_alerts": []},
+        )
+        assert response.status_code == 200
+        m_webhook.assert_called_once()
+        payload = m_webhook.call_args[0][3]
+        assert payload["currency"] is None
+
+
+def test_reopen_webhook_and_reject_reason_gap558(db_session):
+    """Gap 558: Admin reopen dispatches invoice.reopened webhook;
+    REJECTED finalization includes reject_reason in webhook payload."""
+    db_tenant = db_session.exec(select(Tenant).where(Tenant.id == MOCK_TENANT_ID)).first()
+    if not db_tenant:
+        db_tenant = Tenant(id=MOCK_TENANT_ID, name="Test Workspace", domain="test.example.com")
+        db_session.add(db_tenant)
+        db_session.commit()
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice.pdf",
+        vendor_name="Acme Corp",
+        invoice_number="INV-558",
+        status="PAID",
+        grand_total=500.0,
+        currency="USD",
+        sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    # 1. Admin reopen (PAID -> AUDIT_REQUIRED) dispatches invoice.reopened
+    with patch("services.webhooks.dispatch_webhook_event") as m_webhook:
+        response = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "AUDIT_REQUIRED"},
+        )
+        assert response.status_code == 200
+        m_webhook.assert_called_once()
+        call_args = m_webhook.call_args[0]
+        event_type = call_args[2]
+        payload = call_args[3]
+        assert event_type == "invoice.reopened"
+        assert payload["invoice_id"] == str(invoice_id)
+        assert payload["status"] == "AUDIT_REQUIRED"
+
+    # 2. Reject with reason dispatches invoice.rejected with reject_reason in payload
+    with patch("services.webhooks.dispatch_webhook_event") as m_webhook:
+        response = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "REJECTED", "reject_reason": "Duplicate invoice number for PO-1234"},
+        )
+        assert response.status_code == 200
+        m_webhook.assert_called_once()
+        call_args = m_webhook.call_args[0]
+        event_type = call_args[2]
+        payload = call_args[3]
+        assert event_type == "invoice.rejected"
+        assert payload["invoice_id"] == str(invoice_id)
+        assert payload["status"] == "REJECTED"
+        assert payload["reject_reason"] == "Duplicate invoice number for PO-1234"
+
+
+def test_inbound_resolve_rejects_outbound_invoice_gap536(db_session):
+    """Gap 536: Inbound resolve endpoint must reject OUTBOUND invoices with 404."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/outbound.pdf",
+        status="NEEDS_REVIEW",
+        flow_direction="OUTBOUND",
+        sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": "PAID"},
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("start_status,target_status", [
+    ("PAID", "REJECTED"),
+    ("REJECTED", "PAID"),
+])
+def test_terminal_flip_requires_admin_reopen_gap529(db_session, start_status, target_status):
+    """Gap 529: Direct terminal flip PAID <-> REJECTED must return 400 requiring Admin reopen."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice.pdf",
+        status=start_status,
+        flow_direction="INBOUND",
+        sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    response = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"status": target_status},
+    )
+    assert response.status_code == 400
+    assert "reopen it first" in response.json()["detail"]
+
+
+def test_post_commit_notify_failure_does_not_raise_400_gap556(db_session):
+    """Gap 556: Staff notification failure post-commit must return 200 with notice, never 400."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED",
+        flow_direction="INBOUND",
+        sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    with patch("services.staff_notify.notify_auditor_action", side_effect=Exception("Simulated SMTP timeout")):
+        response = client.put(
+            f"/api/v1/audit/resolve/{invoice_id}",
+            json={"status": "PAID"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["email_notify"] == {"sent": False, "reason": "Simulated SMTP timeout"}
+
+    db_session.refresh(db_invoice)
+    assert db_invoice.status == "PAID"
+
+
+def test_pattern_detection_ignores_variable_fields_gap547(db_session):
+    """Gap 547: Pattern detection excludes variable transaction fields like grand_total."""
+    invoice_id = uuid4()
+    db_invoice = Invoice(
+        id=invoice_id,
+        tenant_id=MOCK_TENANT_ID,
+        file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED",
+        flow_direction="INBOUND",
+        grand_total=100.0,
+        sa_alerts=[],
+    )
+    db_session.add(db_invoice)
+    db_session.commit()
+
+    # Even with corrections on variable field grand_total, no pattern rule is suggested
+    res = client.put(
+        f"/api/v1/audit/resolve/{invoice_id}",
+        json={"corrections": {"grand_total": 120.0}},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["suggested_rule"] is None
+
+
+def test_resolve_rate_limit_exceeded_returns_429_gap561(db_session, monkeypatch):
+    """Gap 561: the (max_requests + 1)th resolve inside the window is refused with HTTP 429 on the real
+    route, and the invoice is untouched by the refused call."""
+    from routers.audit import _resolve_rate_limiter
+    monkeypatch.setattr(_resolve_rate_limiter, "max_requests", 2)
+    invoice_id = uuid4()
+    db_session.add(Invoice(
+        id=invoice_id, tenant_id=MOCK_TENANT_ID, file_path="mock/invoice.pdf",
+        status="AUDIT_REQUIRED", sa_alerts=[{"id": "a1", "type": "x", "message": "m1"}, {"id": "a2", "type": "x", "message": "m2"}],
+    ))
+    db_session.commit()
+
+    first = client.put(f"/api/v1/audit/resolve/{invoice_id}", json={"dismissed_alerts": [{"id": "a1"}]})
+    second = client.put(f"/api/v1/audit/resolve/{invoice_id}", json={"dismissed_alerts": []})
+    third = client.put(f"/api/v1/audit/resolve/{invoice_id}", json={"dismissed_alerts": [{"id": "a2"}]})
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
+    assert "Rate limit" in third.json()["detail"]
+    db_session.expire_all()
+    assert [a["id"] for a in db_session.get(Invoice, invoice_id).sa_alerts] == ["a2"]  # refused call changed nothing
+
+
+def test_rate_limit_window_is_per_tenant_and_principal_gap561():
+    """Gap 561: an API key and a Clerk user of the same tenant do not share one window, and two tenants
+    never do -- so one runaway integration key cannot lock the tenant's auditors out."""
+    from types import SimpleNamespace
+    from utils.rate_limiter import rate_limit_key
+    tenant, other = uuid4(), uuid4()
+    api_key = SimpleNamespace(tenant_id=tenant, auth_method="api_key", api_key_prefix="ieq_ab12", user_id=None)
+    auditor = SimpleNamespace(tenant_id=tenant, auth_method="clerk", api_key_prefix=None, user_id="user_1")
+    other_auditor = SimpleNamespace(tenant_id=other, auth_method="clerk", api_key_prefix=None, user_id="user_1")
+    keys = {rate_limit_key(api_key), rate_limit_key(auditor), rate_limit_key(other_auditor)}
+    assert len(keys) == 3
+    assert rate_limit_key(api_key) == f"{tenant}:key:ieq_ab12"
+    assert rate_limit_key(auditor) == f"{tenant}:user:user_1"
+
+
+def test_rate_limiter_retries_redis_after_the_cooldown_gap561(monkeypatch):
+    """Gap 561: after a Redis failure the limiter degrades to its in-process window, then tries Redis
+    again once the cooldown has passed instead of staying degraded for the life of the process."""
+    from utils.rate_limiter import SlidingWindowRateLimiter
+    limiter = SlidingWindowRateLimiter(key_prefix="ratelimit:test:", max_requests=5, window_seconds=60)
+    limiter.redis_retry_seconds = 0.0
+    attempts = []
+
+    def failing_redis(*_a, **_k):
+        attempts.append(1)
+        raise ConnectionError("down")
+
+    import utils.rate_limiter as rl
+    monkeypatch.setattr(rl, "get_settings", lambda: SimpleNamespaceSettings())
+    monkeypatch.setitem(sys.modules, "redis", type("R", (), {"Redis": type("C", (), {"from_url": staticmethod(failing_redis)})}))
+    assert limiter.check("t") is True   # first call: Redis attempt fails, in-process window used
+    assert limiter.check("t") is True   # cooldown of 0s has passed: Redis is attempted again
+    assert len(attempts) == 2
+
+
+class SimpleNamespaceSettings:
+    REDIS_URL = "redis://localhost:1/0"
+
+
+def test_postgres_test_port_localhost_guard_gap525():
+    """Gap 525: the fixture drops every table after each test, so TEST_DATABASE_URL is accepted only for a
+    local throwaway database whose name says "test". The dev database on localhost is refused too."""
+    from urllib.parse import urlparse
+
+    def guard_accepts(url: str) -> bool:
+        parsed = urlparse(url)
+        return parsed.hostname in ("localhost", "127.0.0.1") and "test" in (parsed.path or "").lower()
+
+    assert not guard_accepts("postgresql://user:pass@production-db.azure.com:5432/invoice_db_test")
+    assert not guard_accepts("postgresql://user:pass@localhost.evil.com:5432/invoice_db_test")
+    assert not guard_accepts("postgresql://postgres:pass@localhost:5433/invoice_db")  # the dev database
+    assert guard_accepts("postgresql://postgres:pass@localhost:5433/invoice_db_test")
+    assert guard_accepts("postgresql://postgres:pass@127.0.0.1:5433/invoice_test")

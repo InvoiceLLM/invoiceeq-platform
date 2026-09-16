@@ -574,6 +574,9 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
     tolerance/threshold/severity rules out of it while `extract_node` renders
     only the prompt-relevant ones. Rendering here would have silently stripped
     every non-prompt rule before it ever reached verification.
+
+    Gap 549: matches templates via exact match, normalized vendor name, or
+    canonical vendor alias lookup from services/vendor_master.
     """
     # BE Gap 568: inbound extraction reads INBOUND templates only. Since Feature 7.1 a tenant can
     # hold one Global row per direction; without this filter a tenant whose only Global template
@@ -584,11 +587,43 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
     )
     if vendor_name is None:
         stmt = stmt.where(ExtractionTemplate.vendor_name.is_(None))
-    else:
-        stmt = stmt.where(ExtractionTemplate.vendor_name == vendor_name)
-    tpl = session.exec(stmt).first()
+        tpl = session.exec(stmt).first()
+        if tpl and isinstance(tpl.rules, dict):
+            return list(tpl.rules.get("constraints", []) or [])
+        return []
+
+    # 1. Exact match on vendor_name
+    tpl = session.exec(stmt.where(ExtractionTemplate.vendor_name == vendor_name)).first()
     if tpl and isinstance(tpl.rules, dict):
         return list(tpl.rules.get("constraints", []) or [])
+
+    # 2. Normalized vendor name match and vendor_master alias resolution (Gap 549)
+    try:
+        from services.vendor_master import normalise_vendor_name, resolve_vendor
+        norm_input = normalise_vendor_name(vendor_name)
+        if norm_input:
+            tenant_templates = session.exec(
+                select(ExtractionTemplate).where(
+                    ExtractionTemplate.tenant_id == UUID(tenant_id),
+                    ExtractionTemplate.vendor_name.is_not(None),
+                )
+            ).all()
+            for t in tenant_templates:
+                if normalise_vendor_name(t.vendor_name) == norm_input:
+                    if isinstance(t.rules, dict):
+                        return list(t.rules.get("constraints", []) or [])
+
+            # Check resolved canonical vendor
+            res = resolve_vendor(vendor_name, UUID(tenant_id), session)
+            if res.is_bound and res.vendor:
+                canonical_norm = normalise_vendor_name(res.vendor.canonical_name)
+                for t in tenant_templates:
+                    if normalise_vendor_name(t.vendor_name) == canonical_norm:
+                        if isinstance(t.rules, dict):
+                            return list(t.rules.get("constraints", []) or [])
+    except Exception as e:
+        logger.debug("Vendor alias lookup in _get_template_rules failed: %s", e)
+
     return []
 
 
@@ -861,12 +896,25 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
     """
     settings = get_settings()
 
-    # Gap 2: real per-stage log lines for the FE terminal feed, replacing the
-    # 4 coarse SSE stages as the only visibility into what's happening.
+    # Gap 540: skip extraction if invoice was already finalized by an auditor.
+    DECIDED_STATUSES = frozenset({"PAID", "REJECTED", "REVIEW_LATER", "NEEDS_RESUBMISSION"})
     with Session(engine) as _lookup_session:
-        _invoice_id_for_log = _lookup_session.exec(
-            select(Invoice.id).where(Invoice.file_path == file_path)
+        _existing_invoice = _lookup_session.exec(
+            select(Invoice).where(Invoice.file_path == file_path)
         ).first()
+        if _existing_invoice and _existing_invoice.status in DECIDED_STATUSES:
+            logger.warning(
+                "Invoice %s already in decided status '%s'; skipping worker overwrite (Gap 540).",
+                _existing_invoice.id,
+                _existing_invoice.status,
+            )
+            return {
+                "invoice_id": str(_existing_invoice.id),
+                "status": _existing_invoice.status,
+                "skipped": True,
+                "reason": f"Invoice already in decided status '{_existing_invoice.status}'",
+            }
+        _invoice_id_for_log = _existing_invoice.id if _existing_invoice else None
 
     def on_log(message: str) -> None:
         _publish_sse_events(batch_id, {
@@ -1056,6 +1104,20 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 }
 
             if invoice:
+                # Gap 540: defensive check before DB write in case status changed mid-extraction
+                if invoice.status in DECIDED_STATUSES:
+                    logger.warning(
+                        "Invoice %s reached persistence block in decided status '%s'; skipping overwrite (Gap 540).",
+                        invoice.id,
+                        invoice.status,
+                    )
+                    return {
+                        "invoice_id": str(invoice.id),
+                        "status": invoice.status,
+                        "skipped": True,
+                        "reason": f"Invoice already in decided status '{invoice.status}'",
+                    }
+
                 vendor_name = extracted_data.get("vendor_name")
                 invoice_number = extracted_data.get("invoice_number")
                 
@@ -1193,10 +1255,8 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                             "status": status,
                             "vendor_name": invoice.vendor_name,
                             "grand_total": invoice.grand_total,
-                            # Gap 215: extraction has run by this point, so
-                            # the real currency is known -- same fix as the
-                            # other two dispatch sites.
-                            "currency": invoice.currency or "USD",
+                            # Gap 557: do not default missing currency to "USD" -- send null/None if unknown
+                            "currency": invoice.currency,
                         })
                     except Exception as we:
                         logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)

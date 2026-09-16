@@ -86,13 +86,16 @@ def verify_line_items_math(
     """
     if subtotal is None:
         return None
+    subtotal = float(subtotal)
+    if invoice_tax_amount is not None:
+        invoice_tax_amount = float(invoice_tax_amount)
 
     line_abs_tol, line_rel_tol = _tolerance_for(tolerances, "line_item_calculation_mismatch")
     sum_abs_tol, sum_rel_tol = _tolerance_for(tolerances, "line_items_mismatch")
 
     try:
         # 1. Verify individual line item math calculations
-        for item in items:
+        for idx, item in enumerate(items):
             qty = item.get("quantity")
             unit_price = item.get("unit_price")
             amount = item.get("amount")
@@ -201,9 +204,11 @@ def verify_totals_math(
     abs_tol, rel_tol = _tolerance_for(tolerances, "tax_mismatch")
 
     try:
-        tax = tax_amount or 0.0
-        adjustment = round_off or 0.0
-        discount = discount_amount or 0.0
+        grand_total = float(grand_total)
+        subtotal = float(subtotal)
+        tax = float(tax_amount) if tax_amount is not None else 0.0
+        adjustment = float(round_off) if round_off is not None else 0.0
+        discount = float(discount_amount) if discount_amount is not None else 0.0
         if discount_percent is not None:
             discount = subtotal * (float(discount_percent) / 100.0)
 

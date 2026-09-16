@@ -515,9 +515,7 @@ def build_suggested_actions(comparison: Dict[str, Any]) -> List[Dict[str, str]]:
                 actions.append(
                     {
                         "label": "Review the flagged figures on this invoice",
-                        "endpoint": f"/api/v1/audit/resolve/{invoice_id}",
-                        "method": "PUT",
-                        "href": f"/auditor/{invoice_id}",
+                        "href": f"/invoices/review/{invoice_id}",
                         # Precondition: routers/audit.py restricts the
                         # resolution status to PAID / REJECTED /
                         # AUDIT_REQUIRED. Not stated as "pay this" — inbound
@@ -528,8 +526,6 @@ def build_suggested_actions(comparison: Dict[str, Any]) -> List[Dict[str, str]]:
             actions.append(
                 {
                     "label": "Open this invoice in the Trainer to correct extraction",
-                    "endpoint": f"/api/v1/trainer/invoice/{invoice_id}",
-                    "method": "GET",
                     "href": f"/trainer/{invoice_id}",
                     "precondition": "none (read-only destination)",
                 }
@@ -539,18 +535,14 @@ def build_suggested_actions(comparison: Dict[str, Any]) -> List[Dict[str, str]]:
                 actions.append(
                     {
                         "label": "Review before sending this invoice",
-                        "endpoint": f"/api/v1/outbound-invoices/{invoice_id}/confirm-send",
-                        "method": "POST",
-                        "href": f"/outbound/{invoice_id}",
+                        "href": f"/invoices/outbound-review/{invoice_id}",
                         "precondition": "status is VERIFIED or NEEDS_REVIEW",
                     }
                 )
             actions.append(
                 {
                     "label": "Resolve the audit findings on this invoice",
-                    "endpoint": f"/api/v1/outbound-audit/{invoice_id}/resolve",
-                    "method": "PUT",
-                    "href": f"/outbound-auditor/{invoice_id}",
+                    "href": f"/invoices/outbound-review/{invoice_id}",
                     # This endpoint never changes status, so it has no
                     # status precondition to check.
                     "precondition": "none (does not change status)",
@@ -562,9 +554,7 @@ def build_suggested_actions(comparison: Dict[str, Any]) -> List[Dict[str, str]]:
             actions.append(
                 {
                     "label": "Send this invoice",
-                    "endpoint": f"/api/v1/outbound-invoices/{invoice_id}/confirm-send",
-                    "method": "POST",
-                    "href": f"/outbound/{invoice_id}",
+                    "href": f"/invoices/outbound-review/{invoice_id}",
                     "precondition": "status is VERIFIED or NEEDS_REVIEW",
                 }
             )
@@ -572,9 +562,7 @@ def build_suggested_actions(comparison: Dict[str, Any]) -> List[Dict[str, str]]:
             actions.append(
                 {
                     "label": "Mark this invoice paid",
-                    "endpoint": f"/api/v1/outbound-invoices/{invoice_id}/mark-paid",
-                    "method": "POST",
-                    "href": f"/outbound/{invoice_id}",
+                    "href": f"/invoices/outbound-review/{invoice_id}",
                     "precondition": "status is SENT",
                 }
             )
