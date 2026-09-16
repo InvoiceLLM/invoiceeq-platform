@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle, Pencil, X, Info } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { alertRef, correctionErrorMessage } from "@/lib/correctionResponse";
 
 interface Alert {
+  /** BE Gap 537: present only on alerts that carry one; a dismissal then uses it. */
+  id?: string;
   type: string;
   message: string;
   field?: string;
@@ -31,6 +34,8 @@ interface OutboundAlertConsoleProps {
   corrections?: Record<string, string>;
   applyAsStandingRule?: boolean;
   onDismissed?: (response: any) => void;
+  /** FE Gap 499: called with a "Not saved" message when the server refuses the dismiss or its corrections. */
+  onError?: (message: string) => void;
   resolveCorrection?: (alert: Alert) => AlertCorrectionPreview | null;
   onFocusField?: (field: string) => void;
 }
@@ -43,24 +48,27 @@ export default function OutboundAlertConsole({
   corrections,
   applyAsStandingRule,
   onDismissed,
+  onError,
   resolveCorrection,
   onFocusField,
 }: OutboundAlertConsoleProps) {
-  const [dismissing, setDismissing] = useState<string | null>(null);
+  // BE Gap 537: the index of the alert being dismissed — two alerts can share a message.
+  const [dismissing, setDismissing] = useState<number | null>(null);
 
-  const handleDismiss = async (alert: Alert) => {
-    setDismissing(alert.message);
+  const handleDismiss = async (alert: Alert, index: number) => {
+    setDismissing(index);
     try {
       const res = await apiClient.put(`/outbound-audit/resolve/${invoiceId}`, {
-        dismissed_alerts: [alert.message],
+        dismissed_alerts: [alertRef(alert)],
         corrections: corrections && Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
       });
-      const remaining = alerts.filter((a) => a.message !== alert.message);
-      onAlertsChange(remaining);
+      // BE Gaps 535/537: the server's list — this one alert gone, plus any alert a correction raised.
+      onAlertsChange(res.data?.remaining_alerts ?? alerts.filter((_, i) => i !== index));
       onDismissed?.(res.data);
     } catch (err) {
       console.error("Failed to dismiss outbound alert:", err);
+      onError?.(correctionErrorMessage(err));
     } finally {
       setDismissing(null);
     }
@@ -92,7 +100,7 @@ export default function OutboundAlertConsole({
           0,
           Object.keys(corrections ?? {}).length - (pending ? 1 : 0)
         );
-        const busy = dismissing === alert.message;
+        const busy = dismissing === idx;
 
         const getSeverity = (a: Alert): "information" | "warning" | "error" => {
           const type = a.type?.toLowerCase() || "";
@@ -156,7 +164,7 @@ export default function OutboundAlertConsole({
                 )}
               </div>
               <button
-                onClick={() => handleDismiss(alert)}
+                onClick={() => handleDismiss(alert, idx)}
                 disabled={busy}
                 title={
                   pending

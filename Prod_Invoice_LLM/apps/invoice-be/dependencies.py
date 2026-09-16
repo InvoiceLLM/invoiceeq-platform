@@ -63,6 +63,16 @@ class TenantContext(BaseModel):
     # -- purely additive there.
     auth_method: str = "clerk"
     key_scope: str | None = None
+    # BE Gap 552: the non-secret prefix of the key that authenticated this request (None on the Clerk path),
+    # so the audit trail can tell an old key from its rotated replacement.
+    api_key_prefix: str | None = None
+
+    def trail_identity(self) -> dict:
+        """BE Gap 552: how the actor authenticated, for audit-trail details — plus which key, when it was one."""
+        identity: dict = {"auth_method": self.auth_method}
+        if self.auth_method == "api_key":
+            identity["api_key_prefix"] = self.api_key_prefix
+        return identity
 
 # Cache for Clerk JWKS keys
 _jwks_cache = {}
@@ -1080,6 +1090,7 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
         can_send_invoices=can_send_invoices,
         auth_method="api_key",
         key_scope=scope,
+        api_key_prefix=tenant.api_key_prefix,
     )
 
 

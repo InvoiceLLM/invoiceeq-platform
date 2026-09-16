@@ -303,7 +303,8 @@ async def get_outbound_dashboard_metrics(
         Invoice, AuditLog.invoice_id == Invoice.id
     ).where(
         AuditLog.tenant_id == context.tenant_id,
-        AuditLog.action == "RESOLVE_INVOICE"
+        # BE Gap 565: outbound reviews write RESOLVE_OUTBOUND_INVOICE; RESOLVE_INVOICE keeps rows written before BE Gap 536.
+        AuditLog.action.in_(("RESOLVE_OUTBOUND_INVOICE", "RESOLVE_INVOICE")),
     )
     for cond in conditions:
         audit_query = audit_query.where(cond)
@@ -349,6 +350,11 @@ async def get_outbound_dashboard_metrics(
         if details:
             prev_alerts = details.get("previous_alerts") or []
             dismissed = details.get("dismissed_alerts_input") or []
+            if "dismissed_alerts" in details:
+                # BE Gap 537: the resolve records exactly which alerts it removed; count those.
+                total_alerts_flagged += sum(1 for a in prev_alerts if get_alert_severity(a) == "error")
+                total_alerts_dismissed += sum(1 for a in details["dismissed_alerts"] or [] if get_alert_severity(a) == "error")
+                continue
             
             error_alerts = [a for a in prev_alerts if get_alert_severity(a) == "error"]
             total_alerts_flagged += len(error_alerts)

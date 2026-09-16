@@ -137,7 +137,7 @@ class _FakeRedis:
         return len(keys)
 
 
-def test_delete_removes_the_row_its_history_and_every_back_reference(pg):
+def test_delete_removes_the_row_and_every_back_reference_but_keeps_its_trail(pg):
     tag = uuid4().hex[:10]
     tenant = _tenant(pg, tag)
     try:
@@ -179,10 +179,11 @@ def test_delete_removes_the_row_its_history_and_every_back_reference(pg):
         assert pg.get(BankStatementLine, line.id).matched_invoice_id is None
         assert pg.exec(select(DocumentComparison).where(DocumentComparison.invoice_id == inv.id)).all() == []
 
-        logs = pg.exec(select(AuditLog).where(AuditLog.invoice_id == inv.id)).all()
-        assert [l.action for l in logs] == ["DELETE_INVOICE"], "exactly one summary row remains"
-        assert logs[0].details["hard_delete"] is True
-        assert logs[0].details["invoice_number"] == f"INV-{tag}"
+        logs = pg.exec(select(AuditLog).where(AuditLog.invoice_id == inv.id).order_by(AuditLog.timestamp)).all()
+        # BE Gap 550: the invoice's own trail is kept; the delete adds one summary row.
+        assert [l.action for l in logs] == ["RESOLVE_INVOICE", "DELETE_INVOICE"]
+        assert logs[1].details["hard_delete"] is True
+        assert logs[1].details["invoice_number"] == f"INV-{tag}"
     finally:
         _cleanup(pg, [tenant.id])
 

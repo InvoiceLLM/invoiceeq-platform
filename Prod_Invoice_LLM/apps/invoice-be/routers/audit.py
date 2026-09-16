@@ -1,7 +1,6 @@
-import json
 import logging
 from uuid import UUID, uuid4
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
@@ -21,7 +20,19 @@ from dependencies import (
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from services.invoice_visibility import invoice_not_deleted
 from queue_worker.handlers import _run_ocr
-from agents.extraction_agent import run_extraction_agent
+from agents.extraction_agent import InvoiceExtractionSchema, run_extraction_agent
+from utils.correction_values import (
+    is_blank,
+    list_entry_model,
+    parse_currency,
+    parse_date,
+    parse_entries,
+    parse_money,
+    parse_percent,
+    parse_tags,
+)
+from utils.alert_dismissal import dismiss_alerts
+from utils.correction_recheck import MONEY_FIELDS, alerts_raised_by_correction, snapshot_money_fields
 from utils.rule_schema import (
     build_audit_correction_rule,
     merge_constraints,
@@ -69,7 +80,42 @@ _CORRECTABLE_FIELDS = {
     "grand_total": "float",
     "tax_amount": "float",
     "items": "list",
+    # BE Gap 531 (founder ruling 2026-09-15: all of them): every other extracted field that has an
+    # Invoice column. `round_off` is extracted but has no column, so there is nothing to correct.
+    "currency": "currency",
+    "discount_amount": "float",
+    "discount_percent": "percent",
+    "tags": "tags",
+    "taxes": "list",
+    "discounts": "list",
+    "deductions": "list",
+    "tax_ids": "list",
+    "payment_instructions": "list",
+    "references": "list",
+    "addresses": "list",
+    "compliance_metadata": "list",
 }
+
+# BE Gap 531: each list field's entries are checked against the model InvoiceExtractionSchema itself
+# uses for that field (read from the schema, not imported by name — see list_entry_model).
+_LIST_ENTRY_NAMES = {
+    "items": "line item",
+    "taxes": "tax line",
+    "discounts": "discount line",
+    "deductions": "deduction",
+    "tax_ids": "tax ID",
+    "payment_instructions": "payment instruction",
+    "references": "reference",
+    "addresses": "address",
+    "compliance_metadata": "compliance entry",
+}
+_LIST_ENTRY_MODELS = {
+    field: (list_entry_model(InvoiceExtractionSchema, field), entry_name)
+    for field, entry_name in _LIST_ENTRY_NAMES.items()
+}
+
+# BE Gap 532 (founder ruling 2026-09-15): fields a correction may change but never empty.
+_REQUIRED_FIELDS = frozenset({"vendor_name", "invoice_number", "invoice_date", "grand_total"})
 
 # Task 7.4: after N corrections on the same field, suggest saving it as a Trainer
 # rule instead of correcting it by hand every time. Same field corrected for one
@@ -77,6 +123,12 @@ _CORRECTABLE_FIELDS = {
 # global-scope suggestion (a Global rule, since it's not vendor-specific behavior).
 _RULE_SUGGESTION_THRESHOLD = 3
 _RULE_SUGGESTION_LOOKBACK_DAYS = 90
+# BE Gap 560: pattern detection reads at most this many of the newest corrections, not the whole lookback window.
+_RULE_SUGGESTION_SCAN_LIMIT = 500
+
+# BE Gap 539: statuses an inbound invoice may be approved or rejected from. PAID/REJECTED are
+# listed so the terminal-state checks (BE Gaps 529, 554) decide those, not this allow-list.
+_FINALIZABLE_FROM_STATUSES = ("COMPLETED", "AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION", "PAID", "REJECTED")
 
 
 class AuditResolutionPayload(BaseModel):
@@ -89,7 +141,13 @@ class AuditResolutionPayload(BaseModel):
                      "Omit to just dismiss alerts and/or save corrections without "
                      "finalizing the invoice.",
     )
-    dismissed_alerts: Optional[List[str]] = Field(default=None, description="Alert messages, types, or IDs to dismiss")
+    dismissed_alerts: Optional[List[Union[str, Dict[str, Any]]]] = Field(
+        default=None,
+        description="Alerts to dismiss, one entry per alert (BE Gap 537): an alert object "
+                    '({"id"} or {"type", "field", "message"}) or, from older integrations, an alert id, '
+                    "message or type string. Each entry removes at most one alert; entries that match "
+                    "nothing are returned in `unmatched_dismissals` (BE Gap 538).",
+    )
     corrections: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Field name -> corrected value, for fields the auditor edited "
@@ -115,39 +173,49 @@ class AuditResolutionPayload(BaseModel):
 def _coerce_correction_value(field: str, raw_value: Any):
     field_type = _CORRECTABLE_FIELDS[field]
     if raw_value is None or raw_value == "":
-        return None
+        # BE Gap 531: a list column is cleared to an empty list, never NULL.
+        return [] if field_type in ("list", "tags") else None
     if field_type == "date":
-        date_str = str(raw_value).split("T")[0].split(" ")[0].strip()
-        return datetime.strptime(date_str, "%Y-%m-%d").date()
+        return parse_date(raw_value)
     if field_type == "float":
-        return float(raw_value)
+        return parse_money(raw_value)
+    if field_type == "percent":
+        return parse_percent(raw_value)
+    if field_type == "currency":
+        return parse_currency(raw_value)
+    if field_type == "tags":
+        return parse_tags(raw_value)
     if field_type == "list":
-        if isinstance(raw_value, list):
-            return raw_value
-        try:
-            val = json.loads(str(raw_value))
-            if isinstance(val, list):
-                return val
-        except Exception:
-            pass
-        return [raw_value]
+        entry_model, entry_name = _LIST_ENTRY_MODELS[field]
+        return parse_entries(raw_value, entry_model, entry_name)
     return str(raw_value)
 
 
 def _apply_corrections(invoice: Invoice, corrections: Dict[str, Any]) -> Dict[str, dict]:
     """Persist corrected values onto the Invoice row. Returns a before/after diff
     (only for fields that actually changed) for the AuditLog and for pattern
-    detection — silently ignores unknown/uncorrectable field names rather than
-    erroring, so a stale FE build sending an extra field can't break a resolve."""
+    detection. A field that cannot be corrected, or a value that cannot be read,
+    raises 422 so the caller is never told a correction saved when it did not."""
     diff: Dict[str, dict] = {}
+    invalid: List[Dict[str, str]] = []
     for field, raw_value in corrections.items():
         if field not in _CORRECTABLE_FIELDS:
-            logger.warning("Ignoring correction for non-correctable field '%s'", field)
+            # BE Gap 530: reported, not skipped.
+            logger.warning("Rejected correction for non-correctable field '%s'", field)
+            invalid.append({"field": field, "reason": "this field cannot be corrected"})
+            continue
+        if field in _REQUIRED_FIELDS and is_blank(raw_value):
+            # BE Gap 532: a required field is never emptied by a correction. Blank on a field that is
+            # already empty changes nothing, so it is not refused.
+            if getattr(invoice, field) is not None:
+                invalid.append({"field": field, "reason": "this field is required and cannot be left empty"})
             continue
         try:
             new_value = _coerce_correction_value(field, raw_value)
         except (ValueError, TypeError) as e:
-            logger.warning("Ignoring malformed correction for '%s'=%r: %s", field, raw_value, e)
+            # BE Gap 533: report it instead of skipping; the raw value is not logged.
+            logger.warning("Rejected unreadable correction for '%s': %s", field, type(e).__name__)
+            invalid.append({"field": field, "reason": str(e)})
             continue
 
         old_value = getattr(invoice, field)
@@ -158,6 +226,11 @@ def _apply_corrections(invoice: Invoice, corrections: Dict[str, Any]) -> Dict[st
 
         setattr(invoice, field, new_value)
         diff[field] = {"old": old_comparable, "new": new_comparable}
+    if invalid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"message": "Some corrections could not be read; nothing was saved.", "invalid_corrections": invalid},
+        )
     return diff
 
 
@@ -173,13 +246,15 @@ def _detect_correction_pattern(
 
     cutoff = datetime.utcnow() - timedelta(days=_RULE_SUGGESTION_LOOKBACK_DAYS)
     stmt = (
-        select(AuditLog, Invoice.vendor_name)
+        select(AuditLog.details, Invoice.vendor_name)
         .join(Invoice, AuditLog.invoice_id == Invoice.id)
         .where(
             AuditLog.tenant_id == tenant_id,
             AuditLog.action == "RESOLVE_INVOICE",
             AuditLog.timestamp >= cutoff,
         )
+        .order_by(AuditLog.timestamp.desc())
+        .limit(_RULE_SUGGESTION_SCAN_LIMIT)
     )
     try:
         rows = db_session.exec(stmt).all()
@@ -190,13 +265,17 @@ def _detect_correction_pattern(
     for field in corrected_fields:
         vendor_hit_count = 0
         distinct_vendors: set[str] = set()
+        sample_found = False
         sample_value = None
-        for log_row, log_vendor_name in rows:
-            corr = (log_row.details or {}).get("corrections") or {}
+        for details, log_vendor_name in rows:
+            corr = (details or {}).get("corrections") or {}
             if field not in corr:
                 continue
             entry = corr[field]
-            sample_value = entry.get("new") if isinstance(entry, dict) else entry
+            if not sample_found:
+                # Rows are newest first, so the sample is the most recent correction.
+                sample_value = entry.get("new") if isinstance(entry, dict) else entry
+                sample_found = True
             if log_vendor_name:
                 distinct_vendors.add(log_vendor_name)
                 if log_vendor_name == vendor_name:
@@ -363,6 +442,24 @@ def _apply_standing_rule(
     }
 
 
+def _verification_rules(db_session: Session, tenant_id: UUID, vendor_name: str | None) -> dict | None:
+    """BE Gap 535: the tenant's INBOUND Global + vendor rules, merged as extraction merges them (vendor last),
+    so the arithmetic re-check after a correction uses the same tolerance overrides extraction did."""
+    def constraints(vendor: str | None) -> list:
+        statement = select(ExtractionTemplate).where(
+            ExtractionTemplate.tenant_id == tenant_id,
+            ExtractionTemplate.flow_direction == "INBOUND",
+            ExtractionTemplate.vendor_name.is_(None) if vendor is None else ExtractionTemplate.vendor_name == vendor,
+        )
+        template = db_session.exec(statement).first()
+        if template and isinstance(template.rules, dict):
+            return list(template.rules.get("constraints", []) or [])
+        return []
+
+    merged = merge_constraints(constraints(None), constraints(vendor_name) if vendor_name else [])
+    return {"constraints": merged} if merged else None
+
+
 @router.put("/resolve/{invoice_id}")
 async def resolve_audit_invoice(
     invoice_id: UUID,
@@ -430,11 +527,14 @@ async def resolve_audit_invoice(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
 
     # 2. Retrieve the target invoice with tenant isolation scope
+    # BE Gap 536: inbound only — outbound invoices are resolved by routers/outbound_audit.py.
+    # BE Gap 541: lock the row so two simultaneous decisions on one invoice run one after the other.
     statement = select(Invoice).where(
         Invoice.id == invoice_id,
         Invoice.tenant_id == context.tenant_id,
+        Invoice.flow_direction == "INBOUND",
         invoice_not_deleted(),
-    )
+    ).with_for_update()
     invoice = db_session.exec(statement).first()
     if not invoice:
         raise HTTPException(
@@ -458,23 +558,33 @@ async def resolve_audit_invoice(
             detail=f"Cannot set '{target_status}' on a {invoice.status} invoice — reopen it first (Admin-only)."
         )
 
-    # 3. Dismiss specified warnings
+    # BE Gap 529: a final decision never flips directly (PAID <-> REJECTED), not even for an Admin — reopen first.
+    current_status = (invoice.status or "").upper()
+    if target_status in ("PAID", "REJECTED") and current_status in ("PAID", "REJECTED") and target_status != current_status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot change a {invoice.status} invoice to '{target_status}' directly — reopen it first (Admin-only).",
+        )
+
+    if target_status in ("PAID", "REJECTED") and current_status not in _FINALIZABLE_FROM_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot set '{target_status}' on an invoice with status '{invoice.status}' — only invoices that "
+                "finished extraction (COMPLETED, AUDIT_REQUIRED, REVIEW_LATER, NEEDS_RESUBMISSION) can be approved or rejected."
+            ),
+        )
+
+    # BE Gap 554: finalization side effects fire only when the status really changes.
+    status_changed = target_status is not None and target_status != current_status
+
+    # 3. Dismiss specified warnings.
+    # BE Gap 537: each dismissal removes exactly one alert — by id, else by type + field + message — so two
+    # alerts that share a message (subtotal and grand total both "not verified in source") stay separate.
+    # BE Gap 538: dismissals that match no alert are reported back instead of silently ignored.
     previous_alerts = list(invoice.sa_alerts or [])
     dismissed_list = payload.dismissed_alerts or []
-
-    new_alerts = []
-    for alert in previous_alerts:
-        if isinstance(alert, str):
-            if alert not in dismissed_list:
-                new_alerts.append(alert)
-        elif isinstance(alert, dict):
-            alert_id = alert.get("id")
-            alert_type = alert.get("type")
-            alert_msg = alert.get("message")
-            if (alert_id not in dismissed_list) and (alert_type not in dismissed_list) and (alert_msg not in dismissed_list):
-                new_alerts.append(alert)
-        else:
-            new_alerts.append(alert)
+    new_alerts, dismissed_alerts, unmatched_dismissals = dismiss_alerts(previous_alerts, dismissed_list)
 
     # Assign the new list (needs to be a new list object so SQLModel/SQLAlchemy registers the update)
     invoice.sa_alerts = new_alerts
@@ -483,7 +593,39 @@ async def resolve_audit_invoice(
 
     # 3b. Apply field corrections (Task 7.3), capturing a before/after diff.
     vendor_name_for_pattern = invoice.vendor_name  # capture before a vendor_name correction itself changes it
+    values_before = snapshot_money_fields(invoice)
     correction_diff = _apply_corrections(invoice, payload.corrections or {})
+
+    # BE Gap 535: a correction that breaks the arithmetic raises a new alert (founder ruling: an alert, not a block).
+    raised_alerts: List[dict] = []
+    if set(correction_diff) & set(MONEY_FIELDS):
+        raised_alerts = alerts_raised_by_correction(
+            values_before,
+            snapshot_money_fields(invoice),
+            rules=_verification_rules(db_session, context.tenant_id, invoice.vendor_name),
+            doc_type=invoice.doc_type,
+            open_alerts=new_alerts,
+        )
+        if raised_alerts:
+            new_alerts = new_alerts + raised_alerts
+            invoice.sa_alerts = new_alerts
+
+    # BE Gap 554: repeating the decision already in place, with nothing new, changes and re-sends nothing.
+    if target_status is not None and not status_changed and not correction_diff and new_alerts == previous_alerts:
+        db_session.rollback()
+        return {
+            "success": True,
+            "already_resolved": True,
+            "corrections_applied": {},
+            "remaining_alerts": previous_alerts,
+            "unmatched_dismissals": unmatched_dismissals,
+            "raised_alerts": [],
+            "suggested_rule": None,
+            "standing_rule_result": None,
+            "email_notify": None,
+            "email_summary": None,
+            "drive_archive": None,
+        }
 
     db_session.add(invoice)
 
@@ -503,10 +645,16 @@ async def resolve_audit_invoice(
         "target_status": target_status,
         "reject_reason": payload.reject_reason,
         "dismissed_alerts_input": dismissed_list,
+        # BE Gaps 537/538/535: exactly which alerts were removed, which dismissals matched nothing, and which
+        # alerts this correction raised — the alert-accuracy metrics read these instead of re-matching the input.
+        "dismissed_alerts": dismissed_alerts,
+        "unmatched_dismissals": unmatched_dismissals,
+        "raised_alerts": raised_alerts,
         "previous_alerts": previous_alerts,
         "remaining_alerts": new_alerts,
         "corrections": correction_diff,
         "standing_rule_result": standing_rule_result,
+        **context.trail_identity(),
     }
 
 
@@ -529,7 +677,7 @@ async def resolve_audit_invoice(
     # "audit rate" recommendation in. Gated on target_status actually being
     # set, same condition the status assignment itself used above -- a plain
     # alert-dismiss/correction with no target_status doesn't move it.
-    if target_status is not None:
+    if status_changed:
         try:
             from routers.dashboard import invalidate_insights_cache
             invalidate_insights_cache(invoice.tenant_id)
@@ -567,7 +715,7 @@ async def resolve_audit_invoice(
     # doesn't change the invoice's terminal outcome and isn't one of this
     # feature's subscribable event types. Gap 193's AUDIT_REQUIRED reopen is
     # deliberately excluded too -- it undoes a finalization, it isn't one.
-    if target_status in ("PAID", "REJECTED"):
+    if status_changed and target_status in ("PAID", "REJECTED"):
         try:
             from services.webhooks import dispatch_webhook_event
             event_type = "invoice.approved" if target_status == "PAID" else "invoice.rejected"
@@ -610,7 +758,7 @@ async def resolve_audit_invoice(
     # condition, both credential paths.
     email_summary = None
     drive_archive = None
-    if target_status == "PAID":
+    if status_changed and target_status == "PAID":
         try:
             from services.workflow_outputs import deliver_email_summary
             email_summary = deliver_email_summary(db_session, invoice)
@@ -626,7 +774,7 @@ async def resolve_audit_invoice(
             logger.error("Drive archive delivery failed for invoice %s: %s", invoice.id, de)
 
     email_notify = None
-    if target_status in ("PAID", "REJECTED"):
+    if status_changed and target_status in ("PAID", "REJECTED"):
         try:
             from services.staff_notify import notify_auditor_action
             email_notify = notify_auditor_action(
@@ -649,7 +797,13 @@ async def resolve_audit_invoice(
 
     return {
         "success": True,
+        "already_resolved": False,
         "corrections_applied": correction_diff,
+        # BE Gaps 535/537/538: the alerts left open (including any the correction raised) and the
+        # dismissals that matched nothing, so a client shows the server's alert list, not its own guess.
+        "remaining_alerts": new_alerts,
+        "unmatched_dismissals": unmatched_dismissals,
+        "raised_alerts": raised_alerts,
         "suggested_rule": suggested_rule,
         "standing_rule_result": standing_rule_result,
         "email_notify": email_notify,

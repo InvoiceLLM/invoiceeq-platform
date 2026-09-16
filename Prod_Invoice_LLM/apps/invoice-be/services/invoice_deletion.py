@@ -13,9 +13,11 @@ the row is removed, so no read path — SQL, RAG, views, cache, future feature �
 can leak it by forgetting a filter.
 
 What one invoice delete removes, in one transaction:
-  * every `audit_logs` row for the invoice (they describe data that no longer
-    exists), replaced by ONE `DELETE_INVOICE` summary row (number, vendor, status,
-    who, when) — the only trace allowed to remain;
+  * nothing from `audit_logs` — BE Gap 550 (founder ruling 2026-09-15): the
+    invoice's trail rows stay, still carrying the deleted invoice's id as a
+    historical reference (`audit_logs.invoice_id` has no foreign key), so its
+    correction and alert-accuracy history is not rewritten by the delete; ONE
+    `DELETE_INVOICE` summary row (number, vendor, status, who, when) is added;
   * `document_comparisons` rows keyed on the invoice;
   * back-references: `invoice.duplicate_of_invoice_id`, `invoice.source_invoice_id`
     (both real FKs — the delete would otherwise fail) and
@@ -81,9 +83,7 @@ def delete_invoice_rows(
             DocumentComparison.tenant_id == tenant_id, DocumentComparison.invoice_id == invoice_id
         )
     )
-    db_session.execute(
-        sa_delete(AuditLog).where(AuditLog.tenant_id == tenant_id, AuditLog.invoice_id == invoice_id)
-    )
+    # BE Gap 550: the invoice's AuditLog rows are deliberately NOT deleted (see the module docstring).
 
     details = {
         "hard_delete": True,

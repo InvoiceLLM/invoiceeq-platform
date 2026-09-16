@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
-from models import Invoice
+from models import AuditLog, Invoice
 
 sqlite_url = "sqlite:///:memory:"
 engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
@@ -463,12 +463,11 @@ def test_outbound_ai_score_metrics(db_session):
     db_session.add(inv1)
     db_session.commit()
 
-    # Resolve it as VERIFIED with corrections
+    # BE Gap 565: corrected through the outbound review endpoint, as the outbound review page does
     payload1 = {
-        "status": "PAID",
         "corrections": {"grand_total": 90.0}
     }
-    res = client.put(f"/api/v1/audit/resolve/{inv1_id}", json=payload1)
+    res = client.put(f"/api/v1/outbound-audit/resolve/{inv1_id}", json=payload1)
     assert res.status_code == 200
 
     # 2. Outbound invoice with 2 alerts, 1 dismissed, 1 not dismissed.
@@ -484,10 +483,9 @@ def test_outbound_ai_score_metrics(db_session):
     db_session.commit()
 
     payload2 = {
-        "status": "PAID",
         "dismissed_alerts": ["totals do not reconcile"]
     }
-    res = client.put(f"/api/v1/audit/resolve/{inv2_id}", json=payload2)
+    res = client.put(f"/api/v1/outbound-audit/resolve/{inv2_id}", json=payload2)
     assert res.status_code == 200
 
     # Retrieve metrics
@@ -508,4 +506,25 @@ def test_outbound_ai_score_metrics(db_session):
     # Invoice 2 has 2 alerts. 1 is dismissed (false alarm). 1 remains (correct alert).
     # Alert accuracy = 1 / 2 = 50.0%
     assert data["ai_alert_response"] == 50.0
+
+
+def test_outbound_ai_score_still_counts_legacy_inbound_action_rows(db_session):
+    """BE Gap 565: RESOLVE_INVOICE rows written on outbound invoices before BE Gap 536 still count."""
+    inv = _outbound(status="SENT", grand_total=100.0)
+    db_session.add(inv)
+    db_session.commit()
+    db_session.add(AuditLog(
+        tenant_id=MOCK_TENANT_ID,
+        invoice_id=inv.id,
+        actor_user_id=uuid4(),
+        actor_role="Admin",
+        action="RESOLVE_INVOICE",
+        details={"corrections": {"grand_total": {"old": 100.0, "new": 90.0}}},
+        timestamp=datetime.utcnow(),
+    ))
+    db_session.commit()
+
+    data = client.get(METRICS_URL).json()
+    # 1 decided invoice x 7 fields, 1 corrected -> 6 / 7
+    assert abs(data["ai_field_extraction"] - 85.7) < 0.1
 

@@ -253,6 +253,9 @@ class Invoice(SQLModel, table=True):
         # Feature 17: "show me everything cloned from this invoice", always
         # tenant-scoped like every other lookup on this table.
         sa.Index("ix_invoice_tenant_source_invoice_id", "tenant_id", "source_invoice_id"),
+        # BE Gap 559: the invoice queues filter tenant + direction and sort newest first
+        # (read backwards for ORDER BY created_at DESC; migration c553d559e0a1).
+        sa.Index("ix_invoice_tenant_flow_created_at", "tenant_id", "flow_direction", "created_at"),
     )
 
 
@@ -677,6 +680,12 @@ class AuditLog(SQLModel, table=True):
     action: str = Field(max_length=255)
     details: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT))
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    # BE Gap 553: rule-suggestion pattern detection, the extraction-quality rollup and the
+    # dashboards' AI scores all filter by tenant + action + time (migration c553d559e0a1).
+    __table_args__ = (
+        sa.Index("ix_audit_logs_tenant_action_timestamp", "tenant_id", "action", "timestamp"),
+    )
 
 
 class ExtractionTemplate(SQLModel, table=True):

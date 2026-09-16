@@ -3,8 +3,11 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, CheckCircle, Pencil, X, Info } from "lucide-react";
 import { apiClient } from "@/lib/apiClient";
+import { alertRef, correctionErrorMessage } from "@/lib/correctionResponse";
 
 interface Alert {
+  /** BE Gap 537: present only on alerts that carry one; a dismissal then uses it. */
+  id?: string;
   type: string;
   message: string;
   /** FE Gap 112 item 4: the schema field this alert was raised against.
@@ -43,6 +46,8 @@ interface AlertConsoleProps {
    * rule for the vendor, gated on the backend's safety re-extraction check. */
   applyAsStandingRule?: boolean;
   onDismissed?: (response: any) => void;
+  /** FE Gap 499: called with a "Not saved" message when the server refuses the dismiss or its corrections. */
+  onError?: (message: string) => void;
   /** FE Gap 112 item 4: returns the staged correction linked to this alert, or
    * null when the auditor hasn't corrected that field (or the alert names a
    * field the backend won't accept a correction for — Gap 112 item 6, still
@@ -62,28 +67,31 @@ export default function AlertConsole({
   corrections,
   applyAsStandingRule,
   onDismissed,
+  onError,
   resolveCorrection,
   onFocusField,
 }: AlertConsoleProps) {
-  const [dismissing, setDismissing] = useState<string | null>(null);
+  // BE Gap 537: the index of the alert being dismissed — two alerts can share a message.
+  const [dismissing, setDismissing] = useState<number | null>(null);
 
-  const handleDismiss = async (alert: Alert) => {
-    setDismissing(alert.message);
+  const handleDismiss = async (alert: Alert, index: number) => {
+    setDismissing(index);
     try {
       // `status` is deliberately omitted here — the backend now treats it as
       // optional (Task 7.3), and forcing PAID/REJECTED just to dismiss one
       // alert on a still-AUDIT_REQUIRED invoice used to fail outright since
       // that endpoint only ever accepted PAID/REJECTED as a target status.
       const res = await apiClient.put(`/audit/resolve/${invoiceId}`, {
-        dismissed_alerts: [alert.message],
+        dismissed_alerts: [alertRef(alert)],
         corrections: corrections && Object.keys(corrections).length > 0 ? corrections : undefined,
         apply_as_standing_rule: applyAsStandingRule || undefined,
       });
-      const remaining = alerts.filter((a) => a.message !== alert.message);
-      onAlertsChange(remaining);
+      // BE Gaps 535/537: the server's list — this one alert gone, plus any alert a correction raised.
+      onAlertsChange(res.data?.remaining_alerts ?? alerts.filter((_, i) => i !== index));
       onDismissed?.(res.data);
     } catch (err) {
       console.error("Failed to dismiss alert:", err);
+      onError?.(correctionErrorMessage(err));
     } finally {
       setDismissing(null);
     }
@@ -126,7 +134,7 @@ export default function AlertConsole({
           0,
           Object.keys(corrections ?? {}).length - (pending ? 1 : 0)
         );
-        const busy = dismissing === alert.message;
+        const busy = dismissing === idx;
 
         const getSeverity = (a: Alert): "information" | "warning" | "error" => {
           const type = a.type?.toLowerCase() || "";
@@ -193,7 +201,7 @@ export default function AlertConsole({
                 )}
               </div>
               <button
-                onClick={() => handleDismiss(alert)}
+                onClick={() => handleDismiss(alert, idx)}
                 disabled={busy}
                 title={
                   pending
