@@ -104,6 +104,21 @@ def mark_invoice_failed(
     invoice.completed_at = datetime.utcnow()
     session.add(invoice)
     session.commit()
+    _bump_chat_data_version(invoice)
+
+
+def _bump_chat_data_version(invoice: Invoice) -> None:
+    """BE Gap 577 (CH-10): this invoice's status just changed, so every cached
+    chat answer for the tenant is stale ("how many invoices failed?"). After the
+    commit, never before -- a turn that starts between a bump and its commit
+    would read the old row and file it under the new version. Best-effort: a
+    cache that cannot be invalidated must not fail the status change."""
+    try:
+        from services.chat_cache import bump_tenant_data_version
+
+        bump_tenant_data_version(invoice.tenant_id)
+    except Exception as e:
+        logger.warning("Chat cache data version bump failed for invoice %s: %s", invoice.id, e)
 
 
 def _enqueue(invoice: Invoice) -> bool:
@@ -259,5 +274,6 @@ def force_requeue(session: Session, invoice_id: UUID, now: datetime | None = Non
         )
     session.add(invoice)
     session.commit()
+    _bump_chat_data_version(invoice)
     logger.info("force_requeue: invoice %s re-enqueued, status=%s.", invoice_id, invoice.status)
     return True

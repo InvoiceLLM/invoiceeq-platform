@@ -34,6 +34,7 @@ above with **no feature flag at all**:
 SQLite + a fake LLM, per this repo's narrow-test convention. Hard rule 2 still
 applies to any "verified" claim: the Postgres run is task V's, not this file's.
 """
+import os
 import logging
 from datetime import date
 from types import SimpleNamespace
@@ -47,10 +48,24 @@ from sqlmodel import Session, SQLModel, create_engine
 import config
 from models import ChatAttachment, ChatSession, Invoice
 
-sqlite_url = "sqlite:///:memory:"
-engine = create_engine(
-    sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool
-)
+# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+postgres_test_url = os.getenv("TEST_DATABASE_URL")
+if postgres_test_url:
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(postgres_test_url)
+    assert _parsed.hostname in ("localhost", "127.0.0.1"), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must point to localhost or 127.0.0.1 to avoid accidental data loss."
+    )
+    assert "test" in (_parsed.path or "").lower(), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must name a throwaway database whose name contains 'test' "
+        "(this fixture drops every table after each test)."
+    )
+    engine = create_engine(postgres_test_url)
+else:
+    sqlite_url = "sqlite:///:memory:"
+    engine = create_engine(
+        sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
 
 TENANT = uuid4()
 
@@ -116,6 +131,12 @@ def generic_doc_chat_on(monkeypatch):
 
 @pytest.fixture(name="db_session")
 def db_session_fixture():
+    if postgres_test_url:
+        try:
+            with engine.connect() as conn:
+                pass
+        except Exception as exc:
+            pytest.fail(f"TEST_DATABASE_URL configured but unreachable: {exc}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session

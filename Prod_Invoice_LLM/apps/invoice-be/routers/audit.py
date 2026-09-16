@@ -799,6 +799,13 @@ async def resolve_audit_invoice(
         except Exception as ie:
             logger.error("Insights cache invalidation failed for %s: %s", invoice.id, ie)
 
+    # BE Gap 577 (CH-10): Invalidate chat answer cache on audit resolve/correction
+    try:
+        from services.chat_cache import bump_tenant_data_version
+        bump_tenant_data_version(invoice.tenant_id)
+    except Exception as ce:
+        logger.debug("Chat cache data version bump failed on audit resolve for %s: %s", invoice.id, ce)
+
     # Gap 240 backstop: make sure a resolved invoice is in the RAG index, for
     # any row that predates the ingestion-side fix (or whose ingestion-time
     # indexing failed). Deliberately keyed on **the resolution happening at

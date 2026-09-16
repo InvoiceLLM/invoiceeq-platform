@@ -227,6 +227,16 @@ def _require_owned_session(
         # 404 rather than 403 on a cross-tenant id: confirming that someone
         # else's session exists is itself a disclosure.
         raise HTTPException(status_code=404, detail="Chat session not found.")
+
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=403,
+            detail="API key callers are not permitted to manage chat attachments.",
+        )
+
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+        raise HTTPException(status_code=403, detail="Access forbidden to this chat session.")
+
     return chat_session
 
 

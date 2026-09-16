@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Request, status, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import or_
@@ -25,6 +25,65 @@ from dependencies import (
 from models import ChatAttachment, ChatSession, ChatMessage, ChatFeedback, Invoice, TenantChatRule
 from agents.query_agent import run_query_agent
 from services.online_quality_judge import submit_turn_judgement
+from services.chat_read_audit import record_chat_read_access
+from utils.rate_limiter import SlidingWindowRateLimiter, rate_limit_key
+
+# BE Gap 607 (CH-41), founder ruling 2026-09-16 ("rate limit now, quota later").
+# Ingestion is metered under row lock by `services/billing_quota.py`; chat was not
+# metered at all, on any door, so a script with a valid key could run turns until the
+# Azure OpenAI bill arrived. Reuses the BE Gap 561 limiter rather than growing a
+# second one. Two windows, because they bound different failures:
+#
+#   * per (tenant, principal) -- one runaway integration cannot spend the tenant's
+#     whole budget, and one tenant cannot starve the others;
+#   * per client IP -- the widget door has no principal at all (anonymous visitors
+#     share one token), so IP is the only thing left to count.
+#
+# This throttles; it does not cap. The monthly turn allowance is deferred to the
+# billing-tier work, so the overnight-50,000-turn scenario is slowed, not stopped.
+_chat_turn_rate_limiter = SlidingWindowRateLimiter(
+    key_prefix="ratelimit:chat_turn:", max_requests=20, window_seconds=60
+)
+_chat_ip_rate_limiter = SlidingWindowRateLimiter(
+    key_prefix="ratelimit:chat_turn_ip:", max_requests=40, window_seconds=60
+)
+
+
+def enforce_chat_rate_limit(context, request=None, *, principal: str | None = None) -> None:
+    """Raise 429 when this caller has run too many chat turns in the last minute.
+
+    Off unless `ENABLE_CHAT_RATE_LIMITS` is set, so the numbers can be watched on Dev
+    before they are ever able to refuse a real customer -- the founder ruling names
+    that explicitly. Called from every door that starts a turn, including `?sync=true`
+    and the widget, which are the two that bypass the queue and its concurrency
+    ceiling entirely.
+
+    Degrades the way the limiter does: if Redis is unreachable each replica falls back
+    to its own in-process window, which counts low rather than refusing wrongly.
+    """
+    from config import get_settings
+
+    if not getattr(get_settings(), "ENABLE_CHAT_RATE_LIMITS", False):
+        return
+
+    who = principal or rate_limit_key(context)
+    if not _chat_turn_rate_limiter.check(who):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many chat messages. Wait a moment and try again.",
+            headers={"Retry-After": "60"},
+        )
+
+    client_ip = None
+    if request is not None:
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+        client_ip = forwarded or (request.client.host if request.client else None)
+    if client_ip and not _chat_ip_rate_limiter.check(client_ip):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many chat messages from this network. Wait a moment and try again.",
+            headers={"Retry-After": "60"},
+        )
 from utils.logging_config import request_id_ctx, trace_id_ctx
 from services.chat_rules import (
     list_chat_rule_categories,
@@ -54,6 +113,11 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
         from config import get_settings
 
         r = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        try:
+            from services.chat_cache import bump_tenant_data_version
+            bump_tenant_data_version(tenant_id, client=r)
+        except Exception:
+            pass
         keys = r.keys(f"chat_answer_cache:{tenant_id}:*")
         if keys:
             r.delete(*keys)
@@ -112,6 +176,7 @@ class SessionRename(BaseModel):
 class SessionResponse(BaseModel):
     id: UUID
     tenant_id: UUID
+    user_id: str | None = None
     title: str
     created_at: datetime
 
@@ -314,12 +379,23 @@ def list_sessions(
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
-    """List all previous chat sessions belonging to the requesting tenant."""
-    statement = (
-        select(ChatSession)
-        .where(ChatSession.tenant_id == tenant_context.tenant_id)
-        .order_by(ChatSession.created_at.desc())
-    )
+    """List all previous chat sessions belonging to the requesting tenant.
+
+    BE Gap 572 (CH-5): Enforce user-level isolation.
+    - API keys cannot list chat sessions (returns 403 Forbidden).
+    - Non-admin users only see sessions they created (user_id == caller.user_id).
+    - Admins see all sessions in the tenant, including legacy unowned sessions.
+    """
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key callers are not permitted to list chat sessions.",
+        )
+
+    statement = select(ChatSession).where(ChatSession.tenant_id == tenant_context.tenant_id)
+    if getattr(tenant_context, "role", None) != "Admin":
+        statement = statement.where(ChatSession.user_id == tenant_context.user_id)
+    statement = statement.order_by(ChatSession.created_at.desc())
     results = db_session.exec(statement).all()
     return results
 
@@ -329,13 +405,19 @@ def create_session(
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
-    """Create a new chat session."""
+    """Create a new chat session.
+
+    BE Gap 572 (CH-5): Record user_id on created sessions when called by a
+    signed-in user. API key sessions remain unowned (user_id=None).
+    """
     title = payload.title or f"Chat Session - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
     session_id = uuid4()
+    user_id = tenant_context.user_id if getattr(tenant_context, "auth_method", None) != "api_key" else None
     
     db_session_obj = ChatSession(
         id=session_id,
         tenant_id=tenant_context.tenant_id,
+        user_id=user_id,
         title=title
     )
     db_session.add(db_session_obj)
@@ -374,6 +456,18 @@ def rename_session(
             detail="Access forbidden to this chat session."
         )
 
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key callers are not permitted to modify chat sessions.",
+        )
+
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat session."
+        )
+
     # `min_length=1` only rejects an empty string -- "   " passes it and would
     # persist a blank sidebar label, so the stripped value is checked too.
     title = payload.title.strip()
@@ -406,6 +500,18 @@ def delete_session(
         )
         
     if chat_session.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat session."
+        )
+
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key callers are not permitted to delete chat sessions.",
+        )
+
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
@@ -469,7 +575,19 @@ def get_session_messages(
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
-    """Retrieve all historical messages for a chat session, validating tenant ownership."""
+    """Retrieve all historical messages for a chat session, validating tenant and user ownership.
+
+    BE Gap 572 (CH-5):
+    - API keys cannot read session history (returns 403 Forbidden).
+    - Non-admin users can only read their own sessions.
+    - Legacy sessions (user_id is None) are visible only to Admins.
+    """
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key callers are not permitted to read chat session history.",
+        )
+
     # 1. Fetch and assert session exists and belongs to requesting tenant
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
     chat_session = db_session.exec(session_statement).first()
@@ -481,6 +599,12 @@ def get_session_messages(
         )
         
     if chat_session.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat session."
+        )
+
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
@@ -518,6 +642,7 @@ def post_chat_message(
     session_id: UUID,
     payload: MessageCreate,
     background_tasks: BackgroundTasks,
+    request: Request,
     sync: bool = False,
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
@@ -525,11 +650,10 @@ def post_chat_message(
     """Post a new message in a chat session.
 
     Gap 280 added an async queue path (enqueue, return HTTP 202 + job_id
-    immediately, worker processes in the background). Gated behind
-    settings.ENABLE_ASYNC_CHAT_QUEUE (default False) rather than being the
-    unconditional default -- see that setting's docstring in config.py for
-    why. sync=True forces the synchronous path even when the flag is on,
-    kept for the legacy test suites that already relied on it.
+    immediately, worker processes in the background), gated behind
+    settings.ENABLE_ASYNC_CHAT_QUEUE. sync=True forces the synchronous path
+    even when the flag is on, kept for the legacy test suites that already
+    relied on it.
     """
     # 1. Assert session exists and belongs to requesting tenant
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
@@ -545,6 +669,44 @@ def post_chat_message(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
+        )
+
+    # BE Gap 572 (CH-5):
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        if chat_session.user_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API keys cannot post messages to user-owned chat sessions.",
+            )
+    elif getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat session."
+        )
+
+    # BE Gap 607 (CH-41): before anything is persisted or enqueued, and before the
+    # session lock below -- a refused turn should cost nothing and hold nothing.
+    enforce_chat_rate_limit(tenant_context, request)
+
+    # BE Gap 587 (CH-20): Check if a turn is already executing or queued for this session.
+    # Founder ruling 2026-09-16: return 409 immediately on lock contention.
+    # No waiting, no held worker thread, no implicit queueing.
+    from services.chat_queue import is_chat_session_locked
+    if is_chat_session_locked(str(session_id)):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A chat turn is already running in this session.",
+        )
+
+    active_turn = db_session.exec(
+        select(ChatMessage.id)
+        .where(ChatMessage.session_id == session_id)
+        .where(ChatMessage.status.in_(["queued", "processing"]))
+    ).first()
+    if active_turn:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A chat turn is already running in this session.",
         )
 
     # Feature 25 (Gap 340): meter the turn if this is an unclaimed sandbox
@@ -587,10 +749,6 @@ def post_chat_message(
     # the ceiling governs (an embedding call, a vector search and a narration
     # call). Leaving them unwired was widening an existing noisy-neighbour hole.
     #
-    # `ENABLE_ASYNC_CHAT_QUEUE` is NOT flipped by this change and stays False
-    # until Gap 365 / D7's five criteria are cleared against real Postgres and
-    # real Redis. Wiring it means that when someone does flip it, attachment
-    # turns are already correct; it does not flip anything.
     use_async_queue = get_settings().ENABLE_ASYNC_CHAT_QUEUE and not sync
     if use_async_queue:
         # Gap 280: Asynchronous Queue-based Dispatch
@@ -610,8 +768,9 @@ def post_chat_message(
         db_session.commit()
         db_session.refresh(user_msg)
 
+        enqueued_result = None
         try:
-            ChatQueueService.enqueue_chat_job(
+            enqueued_result = ChatQueueService.enqueue_chat_job(
                 session_id=str(session_id),
                 user_msg_id=str(user_msg.id),
                 content=payload.content,
@@ -623,23 +782,13 @@ def post_chat_message(
                 # three carrying a value nobody ever sets.
                 attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
                 attachment_ids=[str(i) for i in (payload.attachment_ids or [])] or None,
+                db_session=db_session,
             )
         except ChatQueueCapacityError as exc:
             # Gap 364: the tenant is at PER_TENANT_MAX_ACTIVE_CHAT. Undo the row
             # staged a few lines up before answering, so a rejected turn leaves
             # no `queued` ChatMessage that no worker will ever finish -- the
             # session list renders those as a turn stuck thinking forever.
-            #
-            # Deviation from the task's preferred shape, stated rather than
-            # hidden: the row is still written *before* the enqueue and deleted
-            # on rejection, not written after a successful enqueue. Writing it
-            # afterwards would open a real race on the other call path --
-            # `queue_worker/main_worker.py` runs in a different process and can
-            # pop the job off `chat_tasks_queue` between the `lpush` and this
-            # process's commit, and `handle_process_chat_job` would then find no
-            # user row to move off `queued` (handlers.py L1059-1068 logs and
-            # continues), producing the exact orphan this is meant to prevent.
-            # Net effect on the rejection path is identical: no orphan row.
             db_session.delete(user_msg)
             # The title was rewritten from this message's text further up; a
             # turn that was never accepted should not have renamed the session.
@@ -657,29 +806,32 @@ def post_chat_message(
                 headers={"Retry-After": str(exc.retry_after_seconds)},
             )
 
-        # Immediate asynchronous background executor (sub-millisecond handoff).
-        #
-        # Gap 302/304 attribution fix: `ThreadPoolExecutor.submit()` does not
-        # copy contextvars, so before this the whole queued turn ran on a pool
-        # thread where `trace_id_ctx`/`tenant_id_ctx`/`request_id_ctx` were all
-        # empty -- every `llm_agent_call` it emitted, and every judge call it
-        # went on to submit, landed in `customEvents` with `trace_id=""`. The
-        # IDs are passed explicitly and re-bound inside the handler, the same
-        # shape `queue_worker/main_worker.py::_process_message` uses for the
-        # real queue path, rather than `copy_context().run(...)`: copying the
-        # whole context would also carry the OpenTelemetry span context, which
-        # would silently re-parent this turn's dependency spans under an HTTP
-        # request that has already returned 202.
-        _chat_background_pool.submit(
-            handle_process_chat_job,
-            job_id=job_id,
-            session_id=str(session_id),
-            user_msg_id=str(user_msg.id),
-            content=payload.content,
-            tenant_id=str(tenant_context.tenant_id),
-            trace_id=trace_id_ctx.get(),
-            request_id=request_id_ctx.get(),
-        )
+        # BE Gap 600 (CH-33): Mutually exclusive execution path.
+        # If the job was successfully enqueued to Redis, the external queue worker
+        # (main_worker.py) will pop and process it. Do NOT submit to the local
+        # _chat_background_pool, which caused every queued turn to execute twice.
+        # Fall back to the local thread pool ONLY if Redis enqueue was not performed / failed.
+        is_enqueued_to_redis = bool(enqueued_result.get("enqueued")) if isinstance(enqueued_result, dict) else False
+        if not is_enqueued_to_redis:
+            logger.info(
+                "Chat job %s not queued to Redis worker; falling back to local background pool",
+                job_id,
+            )
+            _chat_background_pool.submit(
+                handle_process_chat_job,
+                job_id=job_id,
+                session_id=str(session_id),
+                user_msg_id=str(user_msg.id),
+                content=payload.content,
+                tenant_id=str(tenant_context.tenant_id),
+                trace_id=trace_id_ctx.get(),
+                request_id=request_id_ctx.get(),
+            )
+        else:
+            logger.info(
+                "Chat job %s successfully pushed to Redis queue; skipping local background pool submission",
+                job_id,
+            )
 
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -702,6 +854,10 @@ def post_chat_message(
         attachment_id=str(payload.attachment_id) if payload.attachment_id else None,
         attachment_intent=payload.attachment_intent,
         attachment_ids=[str(i) for i in (payload.attachment_ids or [])] or None,
+        # BE Gap 595 (CH-28): who to file this read under. An API key has no `users`
+        # row, so `db_user_id` is None there and `actor_role` says what it was.
+        actor_user_id=tenant_context.db_user_id,
+        actor_role=("api_key" if getattr(tenant_context, "auth_method", None) == "api_key" else "user"),
     )
 
     # Feature 26 H16 (Gap 386): flatten the stored contract back onto the wire,
@@ -724,6 +880,8 @@ def run_sync_chat_turn(
     attachment_id: str | None = None,
     attachment_intent: str | None = None,
     attachment_ids: list | None = None,
+    actor_user_id: UUID | None = None,
+    actor_role: str = "user",
 ) -> ChatMessage:
     """One complete synchronous chat turn: persist, answer, persist, observe.
 
@@ -746,114 +904,138 @@ def run_sync_chat_turn(
     attached-document branch when it is set. Nothing about the turn's own
     ordering or persistence changes.
     """
-    user_msg = ChatMessage(
-        id=uuid4(),
-        session_id=session_id,
-        role="user",
-        content=content,
-        status="completed",
-    )
-    db_session.add(user_msg)
+    from services.chat_queue import ChatSessionLockedError, chat_session_lock
 
-    # Gap 304 half (2): the turn's own wall clock, so a production
-    # `agent_eval_run` row carries a real `latency_ms` instead of a 0.0 that
-    # would average into the golden bank's latency series as a free turn.
-    turn_started = time.perf_counter()
     try:
-        agent_output = run_query_agent(
-            session_id=str(session_id),
-            user_message=content,
-            tenant_id=str(tenant_id),
-            db_session=db_session,
-            attachment_id=attachment_id,
-            attachment_intent=attachment_intent,
-            attachment_ids=attachment_ids,
+        with chat_session_lock(str(session_id), raise_on_contention=True):
+            user_msg = ChatMessage(
+                id=uuid4(),
+                session_id=session_id,
+                role="user",
+                content=content,
+                status="completed",
+            )
+            db_session.add(user_msg)
+
+            # Gap 304 half (2): the turn's own wall clock, so a production
+            # `agent_eval_run` row carries a real `latency_ms` instead of a 0.0 that
+            # would average into the golden bank's latency series as a free turn.
+            turn_started = time.perf_counter()
+            try:
+                agent_output = run_query_agent(
+                    session_id=str(session_id),
+                    user_message=content,
+                    tenant_id=str(tenant_id),
+                    db_session=db_session,
+                    attachment_id=attachment_id,
+                    attachment_intent=attachment_intent,
+                    attachment_ids=attachment_ids,
+                )
+            except Exception as e:
+                logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)
+                db_session.rollback()
+                agent_output = {
+                    "content": "Sorry, something went wrong answering that — please try again.",
+                    "generated_sql": None,
+                    "citations": [],
+                    "result_invoice_ids": [],
+                    # Gap 302: a turn that blew up inside the agent still has to appear
+                    # in the turn stream -- this is the one outcome that previously
+                    # produced no telemetry of any kind, and an error rate cannot be
+                    # computed from events that were never emitted. `run_query_agent()`
+                    # raised, so its own accumulator never reached the caller; this is
+                    # the minimum honest record of what happened.
+                    "turn_telemetry": {
+                        "status": telemetry.TURN_STATUS_ERROR,
+                        "route": "unknown",
+                        "error_type": type(e).__name__,
+                        "stop_reason": "agent_raised",
+                        "session_id": str(session_id),
+                        "tenant_id": str(tenant_id),
+                    },
+                }
+
+            turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
+
+            if user_msg not in db_session:
+                db_session.add(user_msg)
+            if new_title is not None and chat_session is not None and chat_session.title != new_title:
+                chat_session.title = new_title
+                db_session.add(chat_session)
+
+            assistant_msg = ChatMessage(
+                id=uuid4(),
+                session_id=session_id,
+                role="assistant",
+                content=agent_output["content"],
+                generated_sql=agent_output["generated_sql"],
+                citations=agent_output["citations"],
+                result_invoice_ids=agent_output.get("result_invoice_ids") or [],
+                status="completed",
+                # Feature 26 H16 (Gap 386): persist the answer contract with the turn that
+                # produced it. Before this, every attachment key the agent computed was
+                # dropped here and again at serialisation.
+                attachment_payload=extract_attachment_payload(agent_output),
+            )
+            db_session.add(assistant_msg)
+            db_session.commit()
+            db_session.refresh(assistant_msg)
+
+            # BE Gap 595 (CH-28): a chat turn that returned invoices is a read of the
+            # financial record and belongs in the same trail as an approval. After the
+            # commit, and best-effort inside: the user already has this answer, so a
+            # trail write that fails must not take it away from them.
+            record_chat_read_access(
+                db_session,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                question=content,
+                invoice_ids=assistant_msg.result_invoice_ids,
+                actor_user_id=actor_user_id,
+                actor_role=actor_role,
+                route=(agent_output.get("turn_telemetry") or {}).get("route"),
+            )
+
+            # Gap 304 half (2): score this turn with the golden bank's own judge, off the
+            # response path. After the commit, so `message_id` points at a row that
+            # exists; on the background pool, so the two judge model calls happen after
+            # the user already has their answer. Fire and forget by construction -- the
+            # future is not held, and `submit_turn_judgement()` is a no-op with
+            # `ENABLE_PRODUCTION_QUALITY_JUDGE` off (the default) and never raises.
+            submit_turn_judgement(
+                question=content,
+                answer=assistant_msg.content,
+                evidence=agent_output.get("judge_evidence"),
+                generated_sql=agent_output.get("generated_sql"),
+                tenant_id=str(tenant_id),
+                message_id=str(assistant_msg.id),
+                latency_ms=turn_latency_ms,
+                # Gap 304 attribution fix: the judge's two model calls run on the same
+                # pool and inherit no contextvars, so without these `eval.combined_soft`
+                # and `eval.persona` landed in `customEvents` with empty trace/tenant/
+                # request ids on every judged turn -- a score that could not be joined
+                # back to the turn it scored.
+                trace_id=trace_id_ctx.get(),
+                request_id=request_id_ctx.get(),
+            )
+
+            # Gap 302/303: the Trace. Same hook point and same reasoning as the judging
+            # call above -- after the commit, so `message_id` points at a row that
+            # exists. Unlike judging this is *not* flag-gated and fires on every outcome
+            # including declined, errored and cache-hit turns, because those three are
+            # exactly the ones that had no telemetry before and are the whole point.
+            telemetry.track_chat_turn(
+                **(agent_output.get("turn_telemetry") or {}),
+                message_id=str(assistant_msg.id),
+                latency_ms=turn_latency_ms,
+            )
+
+            return assistant_msg
+    except ChatSessionLockedError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A chat turn is already running in this session.",
         )
-    except Exception as e:
-        logger.error("run_query_agent failed unexpectedly for session %s: %s", session_id, e)
-        db_session.rollback()
-        agent_output = {
-            "content": "Sorry, something went wrong answering that — please try again.",
-            "generated_sql": None,
-            "citations": [],
-            "result_invoice_ids": [],
-            # Gap 302: a turn that blew up inside the agent still has to appear
-            # in the turn stream -- this is the one outcome that previously
-            # produced no telemetry of any kind, and an error rate cannot be
-            # computed from events that were never emitted. `run_query_agent()`
-            # raised, so its own accumulator never reached the caller; this is
-            # the minimum honest record of what happened.
-            "turn_telemetry": {
-                "status": telemetry.TURN_STATUS_ERROR,
-                "route": "unknown",
-                "error_type": type(e).__name__,
-                "stop_reason": "agent_raised",
-                "session_id": str(session_id),
-                "tenant_id": str(tenant_id),
-            },
-        }
-
-    turn_latency_ms = (time.perf_counter() - turn_started) * 1000.0
-
-    if user_msg not in db_session:
-        db_session.add(user_msg)
-    if new_title is not None and chat_session is not None and chat_session.title != new_title:
-        chat_session.title = new_title
-        db_session.add(chat_session)
-
-    assistant_msg = ChatMessage(
-        id=uuid4(),
-        session_id=session_id,
-        role="assistant",
-        content=agent_output["content"],
-        generated_sql=agent_output["generated_sql"],
-        citations=agent_output["citations"],
-        result_invoice_ids=agent_output.get("result_invoice_ids") or [],
-        status="completed",
-        # Feature 26 H16 (Gap 386): persist the answer contract with the turn that
-        # produced it. Before this, every attachment key the agent computed was
-        # dropped here and again at serialisation.
-        attachment_payload=extract_attachment_payload(agent_output),
-    )
-    db_session.add(assistant_msg)
-    db_session.commit()
-    db_session.refresh(assistant_msg)
-
-    # Gap 304 half (2): score this turn with the golden bank's own judge, off the
-    # response path. After the commit, so `message_id` points at a row that
-    # exists; on the background pool, so the two judge model calls happen after
-    # the user already has their answer. Fire and forget by construction -- the
-    # future is not held, and `submit_turn_judgement()` is a no-op with
-    # `ENABLE_PRODUCTION_QUALITY_JUDGE` off (the default) and never raises.
-    submit_turn_judgement(
-        question=content,
-        answer=assistant_msg.content,
-        evidence=agent_output.get("judge_evidence"),
-        generated_sql=agent_output.get("generated_sql"),
-        tenant_id=str(tenant_id),
-        message_id=str(assistant_msg.id),
-        latency_ms=turn_latency_ms,
-        # Gap 304 attribution fix: the judge's two model calls run on the same
-        # pool and inherit no contextvars, so without these `eval.combined_soft`
-        # and `eval.persona` landed in `customEvents` with empty trace/tenant/
-        # request ids on every judged turn -- a score that could not be joined
-        # back to the turn it scored.
-        trace_id=trace_id_ctx.get(),
-        request_id=request_id_ctx.get(),
-    )
-
-    # Gap 302/303: the Trace. Same hook point and same reasoning as the judging
-    # call above -- after the commit, so `message_id` points at a row that
-    # exists. Unlike judging this is *not* flag-gated and fires on every outcome
-    # including declined, errored and cache-hit turns, because those three are
-    # exactly the ones that had no telemetry before and are the whole point.
-    telemetry.track_chat_turn(
-        **(agent_output.get("turn_telemetry") or {}),
-        message_id=str(assistant_msg.id),
-        latency_ms=turn_latency_ms,
-    )
-
-    return assistant_msg
 
 
 def _require_owned_chat_job(
@@ -931,6 +1113,18 @@ def _require_owned_chat_job(
             detail="Access forbidden to this chat job.",
         )
 
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        if chat_session.user_id is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access forbidden to this chat job.",
+            )
+    elif getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this chat job.",
+        )
+
 
 @router.get("/jobs/{job_id}/status")
 def get_chat_job_status(
@@ -948,6 +1142,59 @@ def get_chat_job_status(
     return ChatQueueService.get_job_status(job_id, db_session=db_session)
 
 
+#: BE Gap 603: how often the stream says "still here" when nothing else is
+#: happening. Well inside any proxy idle timeout and invisible to the client.
+_STREAM_HEARTBEAT_SECONDS = 15.0
+
+#: How many consecutive "no status at all" polls end the stream. The job status key
+#: lives for an hour, so this means the job really is unreachable, not merely slow.
+_STREAM_MISSING_STATUS_LIMIT = 10
+
+
+def _still_running_event(job_id: str) -> str:
+    """BE Gap 603: the stream ended, the turn did not.
+
+    Deliberately NOT `status: "failed"`. The background job has no cancellation
+    token and runs to completion regardless of who is listening, so telling the user
+    it failed is false, and the Retry button the FE offered on that word is what
+    turned one expensive query into two. `retryable: false` is the contract the FE
+    keys on: offer reload, never retry.
+    """
+    return "data: " + json.dumps({
+        "job_id": job_id,
+        "status": "still_running",
+        "retryable": False,
+        "message": (
+            "Still preparing your answer. It is still running -- reload this "
+            "conversation in a moment to see it. Do not resend the question."
+        ),
+    }) + "\n\n"
+
+
+async def _async_redis_client():
+    """BE Gap 602: a non-blocking Redis client for the SSE stream only.
+
+    Separate from `services/chat_queue.get_redis_client()` on purpose -- that one is
+    the synchronous client every worker and request path uses, and converting all of
+    them is a much larger change than this gap. Returns None when Redis is not
+    configured or not reachable, which the caller already handles by polling.
+    """
+    try:
+        import redis.asyncio as aioredis
+
+        from config import get_settings
+
+        settings = get_settings()
+        if not settings.REDIS_URL:
+            return None
+        client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        await client.ping()
+        return client
+    except Exception as e:  # noqa: BLE001 -- falls back to polling, same as before
+        logger.warning("Async Redis unavailable for chat stream: %s", e)
+        return None
+
+
 @router.get("/jobs/{job_id}/stream")
 async def stream_chat_job(
     job_id: str,
@@ -958,6 +1205,7 @@ async def stream_chat_job(
     Yields events: data: {"job_id": "...", "status": "processing", "step": "...", "details": ...}\n\n
     """
     import asyncio
+    import inspect
 
     # Gap 341: same missing ownership check as the status endpoint above, and
     # the more serious of the two -- this one streams the full result payload.
@@ -974,9 +1222,19 @@ async def stream_chat_job(
     )
 
     async def event_generator():
-        r = get_redis_client()
-        # 1. First check if job is already finished
-        cur_status = ChatQueueService.get_job_status(job_id, db_session=db_session)
+        # BE Gap 602 (CH-35): an ASYNC Redis client. The synchronous one used here
+        # before did a blocking socket read of up to 400 ms per iteration, per active
+        # stream, directly on Uvicorn's single event loop -- so ten people streaming
+        # answers stalled every other request in the process, health probes included.
+        # `redis.asyncio` awaits instead of blocking, which is the actual fix rather
+        # than moving the same blocking call to a thread.
+        r = await _async_redis_client()
+        # Every blocking call left in this generator goes through `asyncio.to_thread`
+        # for the same reason: `get_job_status` reads Redis and may fall back to a
+        # Postgres query, and neither belongs on the loop.
+        cur_status = await asyncio.to_thread(
+            ChatQueueService.get_job_status, job_id, db_session=db_session
+        )
         if cur_status.get("status") in ("completed", "failed"):
             yield f"data: {json.dumps(cur_status)}\n\n"
             return
@@ -987,25 +1245,47 @@ async def stream_chat_job(
             # Polling fallback if Redis client is unavailable
             for _ in range(40):
                 await asyncio.sleep(1.5)
-                st = ChatQueueService.get_job_status(job_id, db_session=db_session)
+                st = await asyncio.to_thread(
+                    ChatQueueService.get_job_status, job_id, db_session=db_session
+                )
                 yield f"data: {json.dumps(st)}\n\n"
                 if st.get("status") in ("completed", "failed"):
                     return
+            yield _still_running_event(job_id)
             return
 
         # 2. Redis Pub/Sub listener
         pubsub = r.pubsub()
         channel_name = f"{CHAT_JOB_CHANNEL_PREFIX}{job_id}"
-        pubsub.subscribe(channel_name)
+        await pubsub.subscribe(channel_name)
 
         try:
-            timeout_seconds = 120
+            # BE Gap 603 (CH-36). What was here was `timeout_seconds = 120`, then a
+            # `status: "failed", error: "Stream timeout"` -- a clock, reported as a
+            # failure, on a job that was still running and about to save its answer.
+            # The FE turned that into a Retry button, so the user launched a second
+            # identical expensive query while the first one finished unseen. Measured
+            # p95 SQL latency alone is 89 s, so 120 s was inside the normal
+            # distribution, not outside it.
+            #
+            # Founder ruling 2026-09-16: measure before choosing a number, jointly with
+            # the statement timeout in BE Gap 574, and until then ship neither. So this
+            # no longer ends on a clock at all. It ends when the job ends, or when the
+            # job can no longer be found -- and `CHAT_STREAM_MAX_SECONDS` is the seat
+            # for the measured ceiling when it lands, defaulting to 0 (no ceiling).
+            from config import get_settings as _get_settings
+
+            ceiling = float(getattr(_get_settings(), "CHAT_STREAM_MAX_SECONDS", 0) or 0)
             start_time = asyncio.get_event_loop().time()
+            last_heartbeat = start_time
+            missing_status_polls = 0
 
             while True:
-                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.4)
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.4)
                 if message and message.get("data"):
                     raw_data = message["data"]
+                    if isinstance(raw_data, bytes):
+                        raw_data = raw_data.decode("utf-8", "replace")
                     yield f"data: {raw_data}\n\n"
                     try:
                         parsed = json.loads(raw_data)
@@ -1015,22 +1295,50 @@ async def stream_chat_job(
                         pass
 
                 # Check Redis status cache periodically in case event was missed
-                cur = ChatQueueService.get_job_status(job_id)
-                if cur.get("status") in ("completed", "failed"):
+                cur = await asyncio.to_thread(ChatQueueService.get_job_status, job_id)
+                cur_state = cur.get("status")
+                if cur_state in ("completed", "failed"):
                     yield f"data: {json.dumps(cur)}\n\n"
                     break
 
-                if asyncio.get_event_loop().time() - start_time > timeout_seconds:
-                    yield f"data: {json.dumps({'job_id': job_id, 'status': 'failed', 'error': 'Stream timeout'})}\n\n"
+                # "The job is gone" is the one honest reason to stop early: the status
+                # key has a 1 h TTL, so a job that no longer reports at all is not one
+                # this stream can say anything further about. Several consecutive
+                # misses, not one, so a transient Redis blip does not end a live turn.
+                if not cur_state or cur_state == "unknown":
+                    missing_status_polls += 1
+                    if missing_status_polls >= _STREAM_MISSING_STATUS_LIMIT:
+                        yield _still_running_event(job_id)
+                        break
+                else:
+                    missing_status_polls = 0
+
+                now = asyncio.get_event_loop().time()
+                if ceiling and (now - start_time) > ceiling:
+                    yield _still_running_event(job_id)
                     break
+
+                # An SSE comment, not an event: it keeps the connection and any proxy
+                # in front of it from idling out, and no client renders it.
+                if (now - last_heartbeat) >= _STREAM_HEARTBEAT_SECONDS:
+                    last_heartbeat = now
+                    yield ": ping\n\n"
 
                 await asyncio.sleep(0.2)
         finally:
-            try:
-                pubsub.unsubscribe(channel_name)
-                pubsub.close()
-            except Exception:
-                pass
+            # `aclose()` on redis-py >= 5, `close()` before it. Both are awaitable on
+            # the async client, and neither failing may break the response.
+            for target in (pubsub, r):
+                try:
+                    if target is pubsub:
+                        await pubsub.unsubscribe(channel_name)
+                    closer = getattr(target, "aclose", None) or getattr(target, "close", None)
+                    if closer is not None:
+                        result = closer()
+                        if inspect.isawaitable(result):
+                            await result
+                except Exception:
+                    pass
 
     return StreamingResponse(
         event_generator(),
@@ -1054,6 +1362,18 @@ def _get_owned_message(message_id: UUID, db_session: Session, tenant_context: Te
     chat_session = db_session.exec(select(ChatSession).where(ChatSession.id == message.session_id)).first()
     if not chat_session or chat_session.tenant_id != tenant_context.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access forbidden to this message.")
+
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key callers are not permitted to manage message feedback.",
+        )
+
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden to this message.",
+        )
 
     return message
 

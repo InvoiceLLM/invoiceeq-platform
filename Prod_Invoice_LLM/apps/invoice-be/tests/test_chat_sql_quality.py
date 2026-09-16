@@ -37,16 +37,52 @@ from agents.query_agent import (
 )
 from agents.query_tools import parse_results_table
 
-sqlite_url = "sqlite:///:memory:"
-engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+postgres_test_url = os.getenv("TEST_DATABASE_URL")
+if postgres_test_url:
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(postgres_test_url)
+    assert _parsed.hostname in ("localhost", "127.0.0.1"), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must point to localhost or 127.0.0.1 to avoid accidental data loss."
+    )
+    assert "test" in (_parsed.path or "").lower(), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must name a throwaway database whose name contains 'test' "
+        "(this fixture drops every table after each test)."
+    )
+    engine = create_engine(postgres_test_url)
+else:
+    sqlite_url = "sqlite:///:memory:"
+    engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 
 @pytest.fixture(name="db_session")
 def db_session_fixture():
+    if postgres_test_url:
+        try:
+            with engine.connect() as conn:
+                pass
+        except Exception as exc:
+            pytest.fail(f"TEST_DATABASE_URL configured but unreachable: {exc}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
     SQLModel.metadata.drop_all(engine)
+
+
+def test_postgres_test_port_localhost_guard_gap570():
+    """Gap 570 / Gap 525: the fixture drops every table after each test, so TEST_DATABASE_URL is accepted only for a
+    local throwaway database whose name says 'test'. The dev database on localhost is refused too."""
+    from urllib.parse import urlparse
+
+    def guard_accepts(url: str) -> bool:
+        parsed = urlparse(url)
+        return parsed.hostname in ("localhost", "127.0.0.1") and "test" in (parsed.path or "").lower()
+
+    assert not guard_accepts("postgresql://user:pass@production-db.azure.com:5432/invoice_db_test")
+    assert not guard_accepts("postgresql://user:pass@localhost.evil.com:5432/invoice_db_test")
+    assert not guard_accepts("postgresql://postgres:pass@localhost:5433/invoice_db")  # the dev database
+    assert guard_accepts("postgresql://postgres:pass@localhost:5433/invoice_db_test")
+    assert guard_accepts("postgresql://postgres:pass@127.0.0.1:5433/invoice_test")
 
 
 def _seed_invoice(db_session, **kwargs):

@@ -106,16 +106,25 @@ def normalize_origin(value: str | None) -> str | None:
 def origin_is_allowed(token: WidgetToken, origin: str | None) -> bool:
     """Defence-in-depth only -- see the module docstring before relying on this.
 
-    An empty `allowed_origins` list means the layer is not applied for this
-    token (an Admin who registered no origins gets no origin check), which is a
-    deliberate opt-in rather than a default-deny: defaulting to deny with an
-    empty list would make every freshly issued token dead on arrival, and the
-    fix a support ticket rather than a setting.
+    **BE Gap 571 (CH-4 + CH-42), founder ruling 2026-09-16.** This used to return
+    True on an empty list -- "a deliberate opt-in rather than a default-deny",
+    reasoned from the failure it avoided: defaulting to deny would make a freshly
+    issued token dead on arrival and turn a setting into a support ticket. That
+    reasoning is answered rather than overruled: `issue_widget_token()` now refuses
+    to mint a token with no origins at all, so a live token always has at least one,
+    and an empty list means something has gone wrong rather than "not configured
+    yet". So it fails closed.
+
+    Still defence-in-depth, not authorization: `Origin` is a request header and any
+    non-browser client can set it to whatever it likes. It narrows who can embed the
+    widget in a page; it is the rate limiting on the endpoint that bounds what a
+    scraped token can do, and neither bounds how much of the ledger it can read --
+    the founder kept full reach deliberately (see the tracker entry).
     """
     allowed = [normalize_origin(o) for o in (token.allowed_origins or [])]
     allowed = [o for o in allowed if o]
     if not allowed:
-        return True
+        return False
     return normalize_origin(origin) in allowed
 
 
@@ -140,6 +149,16 @@ def issue_widget_token(
         cleaned = normalize_origin(origin)
         if cleaned and cleaned not in normalized:
             normalized.append(cleaned)
+
+    # BE Gap 571: the other half of making `origin_is_allowed()` fail closed. A token
+    # with no registered origin can be embedded on any page on the internet, so it is
+    # refused at the one moment the Admin is present to fix it -- rather than minted
+    # wide open and discovered later from a bill.
+    if not normalized:
+        raise ValueError(
+            "A widget token needs at least one allowed origin (for example "
+            "https://www.yourcompany.com). The widget only runs on the domains you list."
+        )
 
     token = WidgetToken(
         id=uuid4(),

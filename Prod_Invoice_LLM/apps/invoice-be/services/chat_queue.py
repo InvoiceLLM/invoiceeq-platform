@@ -1,6 +1,9 @@
+from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
 import logging
-from datetime import datetime, timezone
+import time
+from typing import Optional
 from uuid import uuid4
 import redis
 from sqlmodel import Session, select
@@ -20,12 +23,38 @@ CHAT_TENANT_INFLIGHT_PREFIX = "chat_inflight:"
 # Prevents single tenant bursts from monopolizing worker threads or triggering Azure OpenAI 429s
 PER_TENANT_MAX_ACTIVE_CHAT = 3
 JOB_STATUS_TTL_SECONDS = 3600  # 1 hour TTL for cached job outcomes
+CHAT_INFLIGHT_LEASE_TTL_SECONDS = 300  # Gap 605: 5 minutes self-healing lease TTL for tenant concurrency slots
 
 # Gap 364: how long the caller is told to wait before retrying a rejected turn.
 # Lives here rather than in the router because the ceiling it belongs to lives
 # here -- the router should not have to invent a number for a limit it does not
 # own.
 CHAT_CAPACITY_RETRY_AFTER_SECONDS = 5
+
+# Gap 365 / Gap 587: Per-session lock constants
+CHAT_SESSION_LOCK_PREFIX = "chat_session_lock:"
+CHAT_SESSION_LOCK_TTL_SECONDS = 300
+CHAT_SESSION_LOCK_WAIT_SECONDS = 120
+CHAT_SESSION_LOCK_POLL_SECONDS = 0.1
+
+
+class ChatSessionLockedError(Exception):
+    """Gap 587 (CH-20): A turn is already running in this chat session.
+
+    Founder ruling 2026-09-16: return 409 immediately on lock contention.
+    A second turn arriving while the session lock is held is refused with
+    'A chat turn is already running in this session.' -- no waiting, no held
+    worker thread, no implicit queueing.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        message: str = "A chat turn is already running in this session.",
+    ):
+        super().__init__(message)
+        self.session_id = session_id
+        self.message = message
 
 
 class ChatQueueCapacityError(Exception):
@@ -74,6 +103,117 @@ def get_redis_client() -> redis.Redis | None:
         return None
 
 
+@contextmanager
+def chat_session_lock(
+    session_id: str,
+    *,
+    client: Optional[redis.Redis] = None,
+    wait_seconds: float = CHAT_SESSION_LOCK_WAIT_SECONDS,
+    ttl_seconds: int = CHAT_SESSION_LOCK_TTL_SECONDS,
+    poll_seconds: float = CHAT_SESSION_LOCK_POLL_SECONDS,
+    raise_on_contention: bool = False,
+):
+    """Hold `chat_session_lock:{session_id}` for the duration of one turn.
+
+    Yields True if the lock was really held, False if it was skipped (no Redis,
+    no session id) or timed out. Never raises unless raise_on_contention=True:
+    Redis being unreachable degrades to today's behaviour (unserialised) rather than
+    taking chat down with it, which is criterion 5 of the flip criteria in
+    `config.py`.
+
+    If raise_on_contention=True and Redis is reachable and the lock cannot be acquired
+    immediately, raises ChatSessionLockedError without waiting (Founder ruling 2026-09-16:
+    return 409 immediately on lock contention, no waiting, no held worker thread, no implicit queueing).
+
+    Released with a token check so a turn that overran the TTL cannot delete a
+    lock the *next* turn has since acquired.
+    """
+    r = client
+    if r is None and session_id:
+        try:
+            r = get_redis_client()
+        except Exception as e:
+            logger.warning("Redis unavailable for chat session lock: %s", e)
+            r = None
+
+    key = f"{CHAT_SESSION_LOCK_PREFIX}{session_id}"
+    token = str(uuid4())
+    acquired = False
+
+    if r is not None and session_id:
+        if raise_on_contention:
+            try:
+                acquired = bool(r.set(key, token, nx=True, ex=ttl_seconds))
+            except Exception as e:
+                logger.warning(
+                    "Could not acquire chat session lock for %s (%s); "
+                    "processing without per-session serialisation",
+                    session_id, e,
+                )
+                r = None
+                acquired = False
+
+            if not acquired and r is not None:
+                raise ChatSessionLockedError(session_id)
+        else:
+            deadline = time.monotonic() + wait_seconds
+            while True:
+                try:
+                    acquired = bool(r.set(key, token, nx=True, ex=ttl_seconds))
+                except Exception as e:
+                    # Redis went away mid-wait. Same degradation as above.
+                    logger.warning(
+                        "Could not acquire chat session lock for %s (%s); "
+                        "processing without per-session serialisation",
+                        session_id, e,
+                    )
+                    r = None
+                    acquired = False
+                    break
+                if acquired or time.monotonic() >= deadline:
+                    break
+                time.sleep(poll_seconds)
+            if not acquired and r is not None:
+                logger.warning(
+                    "Timed out after %ss waiting on chat session lock for %s; "
+                    "processing without per-session serialisation",
+                    wait_seconds, session_id,
+                )
+
+    try:
+        yield acquired
+    finally:
+        if acquired and r is not None:
+            try:
+                if r.get(key) == token:
+                    r.delete(key)
+            except Exception as e:
+                logger.warning(
+                    "Failed to release chat session lock for %s: %s", session_id, e
+                )
+
+
+def is_chat_session_locked(session_id: str, client: Optional[redis.Redis] = None) -> bool:
+    """Returns True if a chat turn is currently holding the session lock in Redis."""
+    if not session_id:
+        return False
+    r = client
+    if r is None:
+        try:
+            r = get_redis_client()
+        except Exception as e:
+            logger.warning("Could not connect to Redis to check session lock: %s", e)
+            return False
+    if r is None:
+        return False
+    try:
+        val = r.get(f"{CHAT_SESSION_LOCK_PREFIX}{session_id}")
+        return val is not None
+    except Exception as e:
+        logger.warning("Could not check chat session lock for %s: %s", session_id, e)
+        return False
+
+
 class ChatQueueService:
     """Core Service managing asynchronous chat jobs, tenant concurrency limits,
     and real-time event publishing."""
@@ -94,6 +234,7 @@ class ChatQueueService:
         # unchanged and a message already in the queue at deploy time still runs.
         attachment_ids: list | None = None,
         client: redis.Redis | None = None,
+        db_session: Session | None = None,
     ) -> dict:
         """Enqueues a chat query into the Redis task queue with fair-share throttling.
 
@@ -102,6 +243,12 @@ class ChatQueueService:
         `PER_TENANT_MAX_ACTIVE_CHAT` was referenced nowhere in the application,
         so the "fair-share concurrency limiter" enforced no limit at all. Same
         class of defect as Gap 352: a declared meter that did not meter.
+
+        Gap 605 / 601: Slot reservations now use a lease model with TTL and
+        per-job tracking (`chat_inflight:{tenant_id}:{job_id}`). If worker
+        pods crash without graceful release, slots self-heal when the TTL expires.
+        When Redis is unreachable, the concurrency ceiling fails closed by
+        verifying in-flight messages against the database (Gap 601).
 
         Order matters here. The slot is reserved (INCR) and checked *first*, so
         a rejected turn leaves nothing behind at all -- no status blob for a job
@@ -138,6 +285,7 @@ class ChatQueueService:
             "created_at": now_iso,
         }
 
+        enqueued_to_redis = False
         if r:
             slot_reserved = False
             try:
@@ -150,34 +298,56 @@ class ChatQueueService:
                 active = r.incr(inflight_key)
                 slot_reserved = True
 
+                # Gap 605: Set safety TTL on tenant inflight key so crashes self-heal
+                if hasattr(r, "expire"):
+                    try:
+                        r.expire(inflight_key, CHAT_INFLIGHT_LEASE_TTL_SECONDS)
+                    except Exception:
+                        pass
+
                 try:
                     active_count = int(active)
                 except (TypeError, ValueError):
-                    # Counter unreadable (non-numeric value in the key). Fail
-                    # open -- this limiter exists to smooth bursts, not to
-                    # authorise anything, so a broken counter must not deny an
-                    # otherwise valid turn.
                     active_count = 0
 
                 if active_count > PER_TENANT_MAX_ACTIVE_CHAT:
-                    # Over the ceiling: hand the slot straight back. Not doing
-                    # this would leave the counter permanently above the limit
-                    # and lock the tenant out for good, since nothing else ever
-                    # decrements it for a job that never ran.
-                    ChatQueueService.release_tenant_slot(tenant_id, r)
-                    slot_reserved = False
-                    logger.info(
-                        "Rejected chat job %s for tenant %s: %s in flight, limit %s",
-                        job_id,
-                        tenant_id,
-                        active_count - 1,
-                        PER_TENANT_MAX_ACTIVE_CHAT,
-                    )
-                    raise ChatQueueCapacityError(
-                        tenant_id=tenant_id,
-                        active=active_count,
-                        limit=PER_TENANT_MAX_ACTIVE_CHAT,
-                    )
+                    # Gap 605 self-healing: check if counter was orphaned by crashed workers
+                    actual_active = None
+                    if hasattr(r, "scan_iter"):
+                        try:
+                            lease_keys = [
+                                k for k in r.scan_iter(match=f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}:*", count=50)
+                                if k != inflight_key
+                            ]
+                            actual_active = len(lease_keys)
+                        except Exception:
+                            actual_active = None
+
+                    if actual_active is not None and actual_active <= PER_TENANT_MAX_ACTIVE_CHAT:
+                        try:
+                            r.set(inflight_key, actual_active)
+                            if hasattr(r, "expire"):
+                                r.expire(inflight_key, CHAT_INFLIGHT_LEASE_TTL_SECONDS)
+                            active_count = actual_active
+                        except Exception:
+                            pass
+
+                    if active_count > PER_TENANT_MAX_ACTIVE_CHAT:
+                        # Over the ceiling: hand the slot straight back.
+                        ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
+                        slot_reserved = False
+                        logger.info(
+                            "Rejected chat job %s for tenant %s: %s in flight, limit %s",
+                            job_id,
+                            tenant_id,
+                            active_count - 1,
+                            PER_TENANT_MAX_ACTIVE_CHAT,
+                        )
+                        raise ChatQueueCapacityError(
+                            tenant_id=tenant_id,
+                            active=active_count,
+                            limit=PER_TENANT_MAX_ACTIVE_CHAT,
+                        )
 
                 # 2. Store initial job status cache
                 r.set(
@@ -186,8 +356,16 @@ class ChatQueueService:
                     ex=JOB_STATUS_TTL_SECONDS,
                 )
 
+                # Gap 605: Per-job lease key with TTL for accepted jobs
+                job_lease_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}:{job_id}"
+                try:
+                    r.set(job_lease_key, "1", ex=CHAT_INFLIGHT_LEASE_TTL_SECONDS)
+                except Exception:
+                    pass
+
                 # 3. Push to queue
                 r.lpush(CHAT_QUEUE_KEY, json.dumps(job_payload))
+                enqueued_to_redis = True
 
                 logger.info(
                     "Enqueued chat job %s for tenant %s (session %s)",
@@ -198,17 +376,69 @@ class ChatQueueService:
             except ChatQueueCapacityError:
                 raise
             except Exception as e:
-                # Gap 364, second half: this except used to swallow a failed
-                # `lpush` that happened AFTER the INCR, leaking a slot that
-                # nothing would ever release -- three such failures and the
-                # tenant could never chat again until the key expired (it has no
-                # TTL) or was deleted by hand. Give the slot back before
-                # swallowing.
+                enqueued_to_redis = False
+                # Gap 364 / 605: give the slot and lease back before swallowing
                 if slot_reserved:
-                    ChatQueueService.release_tenant_slot(tenant_id, r)
+                    ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
                 logger.error("Failed to enqueue chat job %s to Redis: %s", job_id, e)
+        else:
+            # Gap 601 (CH-34): Concurrency ceiling fail-closed check when Redis is unconfigured or unreachable.
+            # Query the database for active (queued or processing) turns for this tenant.
+            session_to_close = None
+            try:
+                cur_session = db_session
+                if cur_session is None:
+                    try:
+                        from database import engine
+                        if engine:
+                            session_to_close = Session(engine)
+                            cur_session = session_to_close
+                    except Exception:
+                        cur_session = None
 
-        return {"job_id": job_id, "status": "queued", "created_at": now_iso}
+                if cur_session is not None:
+                    from models import ChatSession
+                    from uuid import UUID
+                    try:
+                        t_uuid = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
+                    except Exception:
+                        t_uuid = None
+
+                    if t_uuid:
+                        msg_uuid = None
+                        if user_msg_id:
+                            try:
+                                msg_uuid = UUID(user_msg_id) if isinstance(user_msg_id, str) else user_msg_id
+                            except Exception:
+                                pass
+
+                        conditions = [
+                            ChatSession.tenant_id == t_uuid,
+                            ChatMessage.status.in_(["queued", "processing"]),
+                        ]
+                        if msg_uuid:
+                            conditions.append(ChatMessage.id != msg_uuid)
+                        if job_id:
+                            conditions.append(ChatMessage.job_id != job_id)
+
+                        stmt = (
+                            select(ChatMessage.id)
+                            .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                            .where(*conditions)
+                        )
+                        active_msgs = cur_session.exec(stmt).all()
+                        active_db_count = len(active_msgs)
+                        if active_db_count >= PER_TENANT_MAX_ACTIVE_CHAT:
+                            raise ChatQueueCapacityError(
+                                tenant_id=str(tenant_id),
+                                active=active_db_count + 1,
+                                limit=PER_TENANT_MAX_ACTIVE_CHAT,
+                            )
+            finally:
+                if session_to_close:
+                    session_to_close.close()
+
+        return {"job_id": job_id, "status": "queued", "created_at": now_iso, "enqueued": enqueued_to_redis}
 
     @staticmethod
     def enqueue_attachment_extraction(
@@ -390,8 +620,8 @@ class ChatQueueService:
                 channel = f"{CHAT_JOB_CHANNEL_PREFIX}{job_id}"
                 r.publish(channel, json.dumps(final_data))
 
-                # 3. Release tenant concurrency slot
-                ChatQueueService.release_tenant_slot(tenant_id, r)
+                # 3. Release tenant concurrency slot and per-job lease (Gap 605)
+                ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
             except Exception as e:
                 logger.error("Error finalizing chat job %s in Redis: %s", job_id, e)
 
@@ -478,18 +708,25 @@ class ChatQueueService:
                 channel = f"{CHAT_JOB_CHANNEL_PREFIX}{job_id}"
                 r.publish(channel, json.dumps(fail_data))
 
-                # Release tenant concurrency slot
-                ChatQueueService.release_tenant_slot(tenant_id, r)
+                # Release tenant concurrency slot and per-job lease (Gap 605)
+                ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
             except Exception as e:
                 logger.error("Error failing chat job %s in Redis: %s", job_id, e)
 
     @staticmethod
-    def release_tenant_slot(tenant_id: str, client: redis.Redis | None = None) -> None:
-        """Safely decrements the tenant in-flight counter (clamped at >= 0)."""
+    def release_tenant_slot(tenant_id: str, client: redis.Redis | None = None, job_id: str | None = None) -> None:
+        """Safely decrements the tenant in-flight counter (clamped at >= 0) and deletes per-job lease (Gap 605)."""
         r = client or get_redis_client()
         if not r:
             return
         try:
+            # Clear per-job lease if job_id provided
+            if job_id and hasattr(r, "delete"):
+                try:
+                    r.delete(f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}:{job_id}")
+                except Exception:
+                    pass
+
             key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}"
             val = r.decr(key)
             if isinstance(val, int) and val < 0:

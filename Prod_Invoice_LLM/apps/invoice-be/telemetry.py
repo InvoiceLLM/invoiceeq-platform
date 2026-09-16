@@ -54,6 +54,7 @@ from __future__ import annotations
 import json
 import logging
 import functools
+import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -998,6 +999,87 @@ def track_agent_eval_summary(
 # ---------------------------------------------------------------------------
 
 
+#: BE Gap 597 (CH-30), founder ruling 2026-09-16 ("mask at emission only").
+#: Columns and JSON keys whose VALUE identifies a counterparty or carries payment
+#: or contact detail. The online judge scores faithfulness and relevance -- it
+#: needs the shape of the evidence and the figures in it, never who the
+#: counterparty was -- so masking these costs nothing it uses.
+_TELEMETRY_IDENTITY_FIELDS = (
+    "vendor_name", "customer_name", "payment_instructions", "tax_ids", "notes",
+    "billing_address", "shipping_address", "vendor_address", "customer_address",
+    "contact_email", "contact_phone", "email", "phone", "bank_name", "account_name",
+)
+_TELEMETRY_MASK = "[masked]"
+
+#: `"vendor_name": "Acme Corp"` in a rendered ORM row or full-record block.
+_TELEMETRY_JSON_FIELD_RE = re.compile(
+    r'("(?:' + "|".join(_TELEMETRY_IDENTITY_FIELDS) + r')"\s*:\s*)"(?:[^"\\]|\\.)*"',
+    re.IGNORECASE,
+)
+#: Free-standing contact details, wherever they appear.
+_TELEMETRY_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+
+
+def _mask_identity(text: Any) -> str:
+    """Strip counterparty identity out of a payload before it leaves the process.
+
+    BE Gap 597: `tool_output` carried up to 12,000 characters of raw SQL result
+    tables, JSON ORM rows and document text into `customEvents`, where it inherits
+    the Log Analytics workspace retention (30 days on dev, 90 on prod) with no
+    table-level override and no purge path. Once a tenant hard-deletes an invoice,
+    everything about it is gone from Postgres, blob and Chroma -- and its vendor and
+    figures used to remain here for up to 90 more days with no way to remove them.
+    Masking at emission is what makes that erasure debt not exist in the first place.
+
+    Three passes, all deterministic:
+
+      * JSON-style `"vendor_name": "..."` values;
+      * the cells under an identifying column of a rendered `a | b | c` table,
+        matched by that column's position in the header row;
+      * e-mail addresses anywhere, plus the bank and tax identifiers
+        `agents/query_agent.py` already knows how to find.
+
+    Figures, dates, statuses, invoice numbers, row counts and column names all
+    survive untouched -- that is the shape the judge grades on.
+    """
+    value = str(text or "")
+    if not value:
+        return value
+
+    value = _TELEMETRY_JSON_FIELD_RE.sub(lambda m: f'{m.group(1)}"{_TELEMETRY_MASK}"', value)
+
+    lines = value.split("\n")
+    masked_columns: list = []
+    for index, line in enumerate(lines):
+        if "|" not in line:
+            masked_columns = []
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        lowered = [c.lower() for c in cells]
+        if any(name in lowered for name in _TELEMETRY_IDENTITY_FIELDS):
+            # A header row: remember which positions to mask in the rows under it.
+            masked_columns = [i for i, c in enumerate(lowered) if c in _TELEMETRY_IDENTITY_FIELDS]
+            continue
+        if masked_columns and set(cells[0] or "") <= {"-", " "}:
+            continue  # the `--- | ---` separator
+        if masked_columns:
+            raw = line.split("|")
+            for i in masked_columns:
+                if i < len(raw) and raw[i].strip():
+                    raw[i] = f" {_TELEMETRY_MASK} "
+            lines[index] = "|".join(raw)
+    value = "\n".join(lines)
+
+    value = _TELEMETRY_EMAIL_RE.sub(_TELEMETRY_MASK, value)
+    try:
+        from agents.query_agent import _redact_credentials
+
+        value = _redact_credentials(value)
+    except Exception:  # pragma: no cover - telemetry never fails a turn
+        pass
+    return value
+
+
 def _truncate(text: Any, limit: int) -> str:
     """Cut `text` at `limit`, saying so in the value itself.
 
@@ -1230,7 +1312,9 @@ def track_chat_turn(
     try:
         run_source = _resolve_run_source(extra_attributes.pop("run_source", None))
         sql_text = _truncate(generated_sql, MAX_TURN_SQL_CHARS)
-        tool_text = _truncate(tool_output, MAX_TURN_TOOL_OUTPUT_CHARS)
+        # BE Gap 597: masked BEFORE truncation, so a value cannot survive by being
+        # cut in half, and the character count below still describes the real payload.
+        tool_text = _truncate(_mask_identity(tool_output), MAX_TURN_TOOL_OUTPUT_CHARS)
         attributes: Dict[str, Any] = {
             "turn_id": str(turn_id or ""),
             "session_id": str(session_id or ""),

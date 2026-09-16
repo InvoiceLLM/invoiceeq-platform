@@ -781,6 +781,29 @@ export function useChatSession(): UseChatSessionReturn {
               );
               cleanupStream();
               setIsSending(false);
+            } else if (data.status === "still_running") {
+              // BE Gap 603 (CH-36): the stream ended, the turn did not. The
+              // background job has no cancellation token and runs to completion, so
+              // this is not a failure and must not offer Retry -- that is what
+              // turned one expensive query into two. Left as "processing" so the
+              // message keeps its in-progress treatment and the user is told to
+              // reload rather than resend.
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === placeholderId
+                    ? {
+                        ...m,
+                        status: "processing",
+                        content:
+                          data.message ||
+                          "Still preparing your answer. Reload this conversation in a moment to see it.",
+                        error_message: undefined,
+                      }
+                    : m
+                )
+              );
+              cleanupStream();
+              setIsSending(false);
             } else if (data.status === "failed") {
               setMessages((prev) =>
                 prev.map((m) =>
@@ -855,7 +878,9 @@ export function useChatSession(): UseChatSessionReturn {
                         status: "failed",
                         content:
                           statusData.error ||
-                          "Query took too long or failed. Please retry.",
+                          // BE Gap 603: never "retry" on a timeout -- the job may
+                          // still be running and a resend duplicates it.
+                          "Still preparing your answer. Reload this conversation in a moment to see it.",
                       }
                     : m
                 )

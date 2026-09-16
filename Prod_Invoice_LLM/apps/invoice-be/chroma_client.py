@@ -354,6 +354,36 @@ def get_chroma_client():
     return _chroma_client
 
 
+class ChromaUnavailableError(RuntimeError):
+    """BE Gap 608 (CH-43): raised instead of writing embeddings to a disposable disk.
+
+    The fallback `PersistentClient` writes to a directory inside the container. In
+    Azure Container Apps that directory is empty on every new revision and goes away
+    with the replica, so anything indexed while the fallback is in effect is written
+    to a store no other replica can see and that nothing will ever read back -- a
+    silent, permanent loss of searchability for those pages, and divergence between
+    replicas while it lasts. Failing is strictly better: the blob is still there, and
+    the existing re-index paths (`routers/audit.py`'s resolve backstop,
+    `scripts/reembed_chroma_collections.py`) put the invoice back in the index.
+    """
+
+
+def require_live_chroma(operation: str) -> None:
+    """Refuse a WRITE when this process is holding the local fallback client.
+
+    Reads are deliberately not guarded: a read against the fallback returns nothing,
+    which is a wrong *answer* rather than a wrong *store*, and that is handled where
+    the answer is composed (`agents/query_agent.py`, BE Gap 608's second half) so the
+    user is told search is degraded instead of being told there are no records.
+    """
+    kind = get_chroma_client_kind()
+    if kind != "http":
+        raise ChromaUnavailableError(
+            f"Refusing to {operation}: the vector store is unavailable "
+            f"(client kind {kind!r}). Nothing was written."
+        )
+
+
 def get_chroma_client_kind() -> str:
     """Which client this process holds: "http", "persistent-fallback", or "uninitialised".
 
@@ -707,6 +737,8 @@ def index_invoice_document(
     embeddings = get_embeddings(chunks)
 
     client = get_chroma_client()
+    # BE Gap 608: after `get_chroma_client()`, which is what decides the kind.
+    require_live_chroma(f"index invoice {invoice_id}")
     collection = client.get_or_create_collection(
         name=_tenant_collection_name(tenant_id),
         metadata=_collection_metadata(),
@@ -807,6 +839,9 @@ def index_document_chunks(
     embeddings = get_embeddings(chunks)
 
     collection = get_document_collection(str(tenant_id))
+    # BE Gap 608: same guard as `index_invoice_document()` -- a document indexed into
+    # the container-local fallback is lost with the replica.
+    require_live_chroma(f"index document {document_id}")
     collection.upsert(
         ids=ids,
         embeddings=embeddings,
@@ -943,7 +978,7 @@ def get_all_document_chunks(document_id: str, tenant_id: str) -> list[dict]:
     return chunks
 
 
-def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> None:
+def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> bool:
     """
     Deletes all indexed vector chunks for a given invoice from that tenant's collection.
 
@@ -954,8 +989,15 @@ def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> None:
     path that was never built, and the retained chunks kept a deleted invoice
     answering in RAG chat. A future restore re-indexes from the retained blob.
 
-    Errors are logged and swallowed, matching `delete_document_chunks()`: an
-    unreachable Chroma must not turn a committed soft-delete into a 500.
+    **Returns True if the chunks were deleted, False if the attempt failed.**
+    BE Gap 580 (CH-13): the failure is still not raised -- this runs after the
+    commit, and an unreachable Chroma must not turn a completed delete into a 500
+    the caller would retry against a row that is already gone. What changed is that
+    it is no longer quiet: the failure logs at ERROR with a traceback, and the
+    caller is told, so orphaned chunks are visible in App Insights instead of being
+    discovered later from a chat answer about a deleted invoice. The answer itself
+    is protected independently by `agents/query_agent.py::_visible_invoice_chunks()`,
+    which refuses any chunk whose invoice row is gone.
     """
     try:
         client = get_chroma_client()
@@ -964,11 +1006,15 @@ def delete_invoice_chunks(invoice_id: str, tenant_id: str) -> None:
             metadata=_collection_metadata(),
         )
         collection.delete(where={"invoice_id": str(invoice_id)})
-    except Exception as e:
-        logger.warning(
-            "Failed to delete Chroma chunks for invoice %s (tenant %s): %s",
-            invoice_id, tenant_id, e,
+        return True
+    except Exception:
+        logger.error(
+            "Failed to delete Chroma chunks for invoice %s (tenant %s) -- chunks are now "
+            "orphaned in the vector store and must be pruned "
+            "(scripts/reembed_chroma_collections.py)",
+            invoice_id, tenant_id, exc_info=True,
         )
+        return False
 
 
 def has_invoice_chunks(invoice_id: str, tenant_id: str) -> bool:

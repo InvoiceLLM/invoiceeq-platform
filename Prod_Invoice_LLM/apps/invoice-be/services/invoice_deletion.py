@@ -118,12 +118,24 @@ def purge_invoice_stores(invoice_id: UUID, tenant_id: UUID, file_path: str | Non
     best-effort and logged; an orphaned blob or chunk is reachable by the
     existing sweeps, a 500 here would not be."""
     _delete_blob(file_path, what=f"invoice {invoice_id}")
+    # BE Gap 580 (CH-13), second half: this used to be silent twice over --
+    # `delete_invoice_chunks()` swallowed its own failure, so the `except` here could
+    # never fire. It now reports, and a failure is logged at ERROR naming the
+    # consequence. Still not raised: this runs after the commit, and the module
+    # contract above is that a completed delete is never turned into a 500. Orphaned
+    # chunks can no longer reach an answer either way -- `_visible_invoice_chunks()`
+    # drops any chunk whose invoice row is gone before the prompt is built.
     try:
         from chroma_client import delete_invoice_chunks
 
-        delete_invoice_chunks(str(invoice_id), str(tenant_id))
-    except Exception as e:  # pragma: no cover - chroma_client already swallows
-        logger.warning("Chroma chunk delete failed for invoice %s: %s", invoice_id, e)
+        if not delete_invoice_chunks(str(invoice_id), str(tenant_id)):
+            logger.error(
+                "Invoice %s (tenant %s) was deleted but its Chroma chunks were not -- "
+                "orphaned chunks remain in the vector store",
+                invoice_id, tenant_id,
+            )
+    except Exception:  # pragma: no cover - defensive; the callee reports rather than raises
+        logger.error("Chroma chunk delete failed for invoice %s", invoice_id, exc_info=True)
     invalidate_tenant_chat_cache(tenant_id)
 
 
@@ -142,6 +154,12 @@ def invalidate_tenant_chat_cache(tenant_id: UUID) -> int:
     """Drop every cached chat answer for the tenant. A cached SQL answer built
     before the delete would otherwise keep returning the deleted invoice for
     the cache TTL. Returns the number of keys removed (0 on any failure)."""
+    try:
+        from services.chat_cache import bump_tenant_data_version
+        bump_tenant_data_version(tenant_id)
+    except Exception as e:
+        logger.debug("Failed to bump chat data version on invoice delete: %s", e)
+
     try:
         from agents.query_agent import _get_redis_client
 

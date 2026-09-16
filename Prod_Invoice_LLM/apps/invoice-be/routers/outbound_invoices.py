@@ -588,6 +588,13 @@ async def confirm_send_outbound_invoice(
         db_session, invoice, action_label="Confirm Send (SENT)", notify_emails=notify_emails,
     )
 
+    # BE Gap 577 (CH-10): Invalidate chat answer cache on status change
+    try:
+        from services.chat_cache import bump_tenant_data_version
+        bump_tenant_data_version(invoice.tenant_id)
+    except Exception as ce:
+        logger.debug("Chat cache data version bump failed on confirm-send for %s: %s", invoice.id, ce)
+
     return {
         "success": True,
         "status": invoice.status,
@@ -658,6 +665,13 @@ async def mark_outbound_invoice_paid(
     email_notify = notify_auditor_action(
         db_session, invoice, action_label="Mark Paid", notify_emails=notify_emails,
     )
+
+    # BE Gap 577 (CH-10): Invalidate chat answer cache on status change
+    try:
+        from services.chat_cache import bump_tenant_data_version
+        bump_tenant_data_version(invoice.tenant_id)
+    except Exception as ce:
+        logger.debug("Chat cache data version bump failed on mark-paid for %s: %s", invoice.id, ce)
 
     return {
         "success": True,

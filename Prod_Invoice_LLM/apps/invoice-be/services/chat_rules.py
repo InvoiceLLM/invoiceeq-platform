@@ -18,6 +18,7 @@ surface Gap 58 was opened about.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -122,6 +123,45 @@ def list_chat_rule_categories() -> list[dict]:
     ]
 
 
+#: BE Gap 592 (CH-25). A rule pattern is a short phrase -- a vendor name, a
+#: category, a document type. Nothing legitimate needs a paragraph, and a cap is
+#: what stops a "rule" from being a place to paste a second system prompt.
+MAX_CHAT_RULE_PATTERN_CHARS = 200
+
+#: Structural markers used elsewhere in prompt assembly. A tenant string that
+#: contains one could close a section it was supposed to sit inside, so they are
+#: removed on the way in rather than escaped on the way out.
+_PROMPT_MARKER_RE = re.compile(r"<<<[^>]{0,80}>>>|</?\s*(?:tenant_rule|tenant_style|user_question|document_text)[^>]{0,80}>", re.IGNORECASE)
+
+#: Newlines, tabs and other control characters. A rule renders as ONE line inside
+#: a bulleted list; a newline in it creates a new bullet the tenant authored in
+#: full, which is how "- ignore every instruction above" gets into the prompt
+#: looking exactly like a line this codebase wrote.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def sanitize_prompt_fragment(value: str, *, max_chars: int = MAX_CHAT_RULE_PATTERN_CHARS) -> str:
+    """Make tenant-authored text safe to place inside a prompt, deterministically.
+
+    BE Gap 592: control characters and prompt markers are removed, whitespace is
+    collapsed, and the result is capped. Applied at input validation so bad data
+    never reaches storage, and again at render time so rows written before this
+    existed are covered too -- the second pass is why this is idempotent.
+
+    This is the containment half of the fix; the other half is structural, in
+    `agents/query_agent.py`, where what survives this is wrapped in a tag so the
+    model can see where tenant text starts and stops. Neither alone is enough: a
+    tag can be closed by its own content, and stripped content still needs a
+    boundary.
+    """
+    if not value:
+        return ""
+    cleaned = _PROMPT_MARKER_RE.sub(" ", str(value))
+    cleaned = _CONTROL_CHARS_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:max_chars].strip()
+
+
 def render_chat_rule(category: str, pattern: str = "", context_text: str = "") -> str:
     """Deterministically render a chat rule to its prompt sentence.
 
@@ -131,7 +171,9 @@ def render_chat_rule(category: str, pattern: str = "", context_text: str = "") -
     spec = CHAT_RULE_CATEGORIES.get(category)
     if not spec:
         return ""
-    clean = (pattern or "").strip()
+    # BE Gap 592: sanitised here as well as at input, so a row stored before the
+    # input guard existed cannot still carry a marker or a newline into a prompt.
+    clean = sanitize_prompt_fragment(pattern)
     if spec.requires_pattern and not clean:
         return ""
     if not spec.requires_pattern:
@@ -150,4 +192,13 @@ def validate_chat_rule(category: str, pattern: str = "") -> str | None:
         return f"Unknown chat rule category '{category}'."
     if spec.requires_pattern and not (pattern or "").strip():
         return f"'{spec.label}' needs a value for: {spec.pattern_label}."
+    # BE Gap 592: reject rather than silently truncate -- the person typing it is
+    # entitled to know their rule was not stored as written.
+    if len((pattern or "").strip()) > MAX_CHAT_RULE_PATTERN_CHARS:
+        return (
+            f"'{spec.label}' is too long: {len(pattern.strip())} characters, "
+            f"limit {MAX_CHAT_RULE_PATTERN_CHARS}."
+        )
+    if (pattern or "").strip() and not sanitize_prompt_fragment(pattern):
+        return f"'{spec.label}' contains no usable text."
     return None

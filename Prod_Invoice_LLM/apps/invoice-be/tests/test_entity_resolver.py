@@ -28,13 +28,13 @@ def pg_session_fixture():
     psycopg2 = pytest.importorskip("psycopg2")
     from config import get_settings
 
-    url = get_settings().DATABASE_URL
+    url = os.getenv("TEST_DATABASE_URL") or get_settings().DATABASE_URL
     if not url.startswith("postgresql"):
         pytest.skip("DATABASE_URL is not PostgreSQL")
     try:
         psycopg2.connect(url, connect_timeout=5).close()
     except psycopg2.OperationalError as exc:  # pragma: no cover - env dependent
-        pytest.skip(f"local Postgres not reachable: {exc}")
+        pytest.fail(f"local Postgres not reachable: {exc}")
     engine = create_engine(url)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:

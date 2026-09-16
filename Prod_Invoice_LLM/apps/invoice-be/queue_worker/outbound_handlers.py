@@ -227,6 +227,13 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 session.add(invoice)
                 session.commit()
 
+                # BE Gap 577 (CH-10): Invalidate chat answer cache on outbound invoice ingestion
+                try:
+                    from services.chat_cache import bump_tenant_data_version
+                    bump_tenant_data_version(invoice.tenant_id)
+                except Exception as ce:
+                    logger.debug("Chat cache data version bump failed on outbound invoice %s: %s", invoice.id, ce)
+
                 # Feature 6.1 (Task 6.1.3): index outbound documents so they're
                 # searchable through the same RAG path Chat already uses.
                 # Gap 243: this used to be gated on `status == "VERIFIED"`, the

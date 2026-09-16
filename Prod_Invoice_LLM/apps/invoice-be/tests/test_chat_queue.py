@@ -1,3 +1,4 @@
+import os
 import json
 import pytest
 from unittest.mock import patch, MagicMock
@@ -10,6 +11,7 @@ from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
 from models import ChatSession, ChatMessage
 from services.chat_queue import (
+    CHAT_JOB_STATUS_PREFIX,
     CHAT_TENANT_INFLIGHT_PREFIX,
     PER_TENANT_MAX_ACTIVE_CHAT,
     ChatQueueCapacityError,
@@ -17,13 +19,33 @@ from services.chat_queue import (
 )
 from queue_worker.handlers import handle_process_chat_job
 
-sqlite_url = "sqlite:///:memory:"
-engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+postgres_test_url = os.getenv("TEST_DATABASE_URL")
+if postgres_test_url:
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(postgres_test_url)
+    assert _parsed.hostname in ("localhost", "127.0.0.1"), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must point to localhost or 127.0.0.1 to avoid accidental data loss."
+    )
+    assert "test" in (_parsed.path or "").lower(), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must name a throwaway database whose name contains 'test' "
+        "(this fixture drops every table after each test)."
+    )
+    engine = create_engine(postgres_test_url)
+else:
+    sqlite_url = "sqlite:///:memory:"
+    engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 
 @pytest.fixture(name="db_session")
 def db_session_fixture():
-    """Yields a clean, isolated in-memory test database session."""
+    """Yields a clean, isolated test database session."""
+    if postgres_test_url:
+        try:
+            with engine.connect() as conn:
+                pass
+        except Exception as exc:
+            pytest.fail(f"TEST_DATABASE_URL configured but unreachable: {exc}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         yield session
@@ -656,6 +678,7 @@ class _CountingRedis:
     def __init__(self, fail_lpush: bool = False):
         self.counters: dict[str, int] = {}
         self.blobs: dict[str, str] = {}
+        self.leases: dict[str, str] = {}
         self.queue: list[str] = []
         self.published: list[tuple[str, str]] = []
         self.fail_lpush = fail_lpush
@@ -671,13 +694,24 @@ class _CountingRedis:
     def get(self, key):
         if key in self.counters:
             return str(self.counters[key])
-        return self.blobs.get(key)
+        if key in self.blobs:
+            return self.blobs.get(key)
+        return self.leases.get(key)
 
     def set(self, key, value, ex=None):
         if key in self.counters:
             self.counters[key] = int(value)
-        else:
+        elif key.startswith(CHAT_JOB_STATUS_PREFIX):
             self.blobs[key] = value
+        else:
+            self.leases[key] = value
+
+    def delete(self, *keys):
+        for k in keys:
+            self.blobs.pop(k, None)
+            self.counters.pop(k, None)
+            self.leases.pop(k, None)
+        return len(keys)
 
     def lpush(self, key, value):
         if self.fail_lpush:
@@ -874,7 +908,8 @@ def test_an_accepted_turn_is_unaffected_by_the_new_limiter(db_session):
         )
 
     assert res.status_code == 202
-    assert pool.submit.called
+    # Gap 600 (CH-33): Redis enqueue succeeded, so local pool.submit is skipped to prevent double execution
+    assert not pool.submit.called
     assert len(r.queue) == 1
     assert r.counters[f"{CHAT_TENANT_INFLIGHT_PREFIX}{MOCK_TENANT_ID}"] == 1
 

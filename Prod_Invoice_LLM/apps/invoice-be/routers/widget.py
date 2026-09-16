@@ -129,6 +129,13 @@ class WidgetCORSMiddleware(BaseHTTPMiddleware):
             # Caches and CDNs must not serve one customer's origin header to a
             # different customer's visitor.
             response.headers["Vary"] = "Origin"
+        # BE Gap 571 (CH-4 + CH-42): these routes return JSON and are never a page
+        # meant to be framed, so the strictest value is also the correct one --
+        # stricter than the `frame-ancestors <registered origins>` the gap proposed,
+        # which would have implied these responses are embeddable by someone. If a
+        # widget route ever serves a document, this is the line to revisit.
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Access-Control-Allow-Methods"] = _WIDGET_ALLOWED_METHODS
         response.headers["Access-Control-Allow-Headers"] = _WIDGET_ALLOWED_HEADERS
         response.headers["Access-Control-Max-Age"] = _WIDGET_PREFLIGHT_MAX_AGE
@@ -247,6 +254,7 @@ class WidgetMessageResponse(BaseModel):
 )
 def post_widget_chat_message(
     payload: WidgetMessageRequest,
+    request: Request,
     context: WidgetContext = Depends(get_widget_context),
     db_session: Session = Depends(get_db_session),
 ):
@@ -273,7 +281,20 @@ def post_widget_chat_message(
     # Imported here rather than at module scope: routers/chat.py imports the
     # query agent, which pulls in the whole RAG stack, and this module is
     # imported by main.py at process start.
-    from routers.chat import charge_sandbox_chat_or_402, run_sync_chat_turn
+    from routers.chat import (
+        charge_sandbox_chat_or_402,
+        enforce_chat_rate_limit,
+        run_sync_chat_turn,
+    )
+
+    # BE Gaps 571 and 607: the widget is the one door with no principal at all --
+    # every visitor to a customer's site shares one published token -- and it runs
+    # synchronously, so it bypasses the queue's per-tenant concurrency ceiling too.
+    # Counted per token and per client IP: the token window bounds what one scraped
+    # token can spend, the IP window bounds one scraper holding many tokens.
+    enforce_chat_rate_limit(
+        context, request, principal=f"widget:{context.widget_token_id}"
+    )
 
     if payload.session_id is not None:
         chat_session = db_session.exec(
@@ -288,6 +309,14 @@ def post_widget_chat_message(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access forbidden to this chat session.",
+            )
+        # BE Gap 587 (CH-20): Check if a turn is already executing for this session.
+        # Founder ruling 2026-09-16: return 409 immediately on lock contention.
+        from services.chat_queue import is_chat_session_locked
+        if is_chat_session_locked(str(chat_session.id)):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A chat turn is already running in this session.",
             )
     else:
         chat_session = ChatSession(
@@ -314,6 +343,10 @@ def post_widget_chat_message(
         content=payload.content,
         tenant_id=context.tenant_id,
         db_session=db_session,
+        # BE Gap 595 (CH-28): an anonymous visitor has no user row, and this is the
+        # least accountable door there is -- exactly the read a trail needs to show.
+        actor_user_id=None,
+        actor_role="widget",
     )
 
     return WidgetMessageResponse(

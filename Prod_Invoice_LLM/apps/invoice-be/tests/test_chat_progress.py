@@ -16,6 +16,7 @@ Scope note: this file deliberately does not touch `tests/test_chat_queue.py`
 (Gap 364's file) and asserts nothing about the enqueue-side concurrency limit.
 """
 
+import os
 import logging
 import threading
 import time
@@ -31,13 +32,33 @@ import models  # noqa: F401 - imported for its `SQLModel.metadata` side effect
 
 logger = logging.getLogger(__name__)
 
-_ENGINE = create_engine(
-    "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
-)
+# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+postgres_test_url = os.getenv("TEST_DATABASE_URL")
+if postgres_test_url:
+    from urllib.parse import urlparse as _urlparse
+    _parsed = _urlparse(postgres_test_url)
+    assert _parsed.hostname in ("localhost", "127.0.0.1"), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must point to localhost or 127.0.0.1 to avoid accidental data loss."
+    )
+    assert "test" in (_parsed.path or "").lower(), (
+        "Gap 525/570 security guard: TEST_DATABASE_URL must name a throwaway database whose name contains 'test' "
+        "(this fixture drops every table after each test)."
+    )
+    _ENGINE = create_engine(postgres_test_url)
+else:
+    _ENGINE = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
 
 
 @pytest.fixture(name="db_session")
 def db_session_fixture():
+    if postgres_test_url:
+        try:
+            with _ENGINE.connect() as conn:
+                pass
+        except Exception as exc:
+            pytest.fail(f"TEST_DATABASE_URL configured but unreachable: {exc}")
     SQLModel.metadata.create_all(_ENGINE)
     with Session(_ENGINE) as session:
         yield session

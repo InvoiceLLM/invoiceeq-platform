@@ -1277,6 +1277,13 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     except Exception as ie:
                         logger.error("Insights cache invalidation failed for %s: %s", invoice.id, ie)
 
+                    # BE Gap 577 (CH-10): Invoice data changed; invalidate chat answer cache
+                    try:
+                        from services.chat_cache import bump_tenant_data_version
+                        bump_tenant_data_version(invoice.tenant_id)
+                    except Exception as ce:
+                        logger.error("Chat cache data version bump failed for %s: %s", invoice.id, ce)
+
 
 
             # Run page-level RAG indexing. Gap 240: this used to be gated on
@@ -1520,87 +1527,18 @@ def handle_deliver_webhook(
 # Azure-queue worker (`main_worker._process_message`), the Redis-list drain
 # (`main_worker._process_redis_chat_tasks`) and `routers/chat.py`'s background
 # pool all land here.
-CHAT_SESSION_LOCK_PREFIX = "chat_session_lock:"
-#: Safety TTL. Longer than any real turn (the SQL route is capped at 3 model
-#: round-trips plus a summary call), short enough that a worker killed mid-turn
-#: does not wedge that session until someone notices. A crashed holder costs one
-#: session five minutes, never forever.
-CHAT_SESSION_LOCK_TTL_SECONDS = 300
-#: How long a second turn for the same session waits for the first. On timeout it
-#: proceeds UNSERIALISED rather than failing: a stale-context answer is a
-#: degraded answer, a dropped turn is a broken product.
-CHAT_SESSION_LOCK_WAIT_SECONDS = 120
-CHAT_SESSION_LOCK_POLL_SECONDS = 0.1
-
-
-@contextmanager
-def chat_session_lock(
-    session_id: str,
-    *,
-    client: Optional[redis.Redis] = None,
-    wait_seconds: float = CHAT_SESSION_LOCK_WAIT_SECONDS,
-    ttl_seconds: int = CHAT_SESSION_LOCK_TTL_SECONDS,
-    poll_seconds: float = CHAT_SESSION_LOCK_POLL_SECONDS,
-):
-    """Hold `chat_session_lock:{session_id}` for the duration of one turn.
-
-    Yields True if the lock was really held, False if it was skipped (no Redis,
-    no session id) or timed out. Never raises and never blocks forever: Redis
-    being unreachable degrades to today's behaviour (unserialised) rather than
-    taking chat down with it, which is criterion 5 of the flip criteria in
-    `config.py`.
-
-    Released with a token check so a turn that overran the TTL cannot delete a
-    lock the *next* turn has since acquired.
-    """
-    r = client
-    if r is None and session_id:
-        try:
-            r = _get_redis_sync()
-        except Exception as e:
-            logger.warning("Redis unavailable for chat session lock: %s", e)
-            r = None
-
-    key = f"{CHAT_SESSION_LOCK_PREFIX}{session_id}"
-    token = str(uuid4())
-    acquired = False
-
-    if r is not None and session_id:
-        deadline = time.monotonic() + wait_seconds
-        while True:
-            try:
-                acquired = bool(r.set(key, token, nx=True, ex=ttl_seconds))
-            except Exception as e:
-                # Redis went away mid-wait. Same degradation as above.
-                logger.warning(
-                    "Could not acquire chat session lock for %s (%s); "
-                    "processing without per-session serialisation",
-                    session_id, e,
-                )
-                r = None
-                acquired = False
-                break
-            if acquired or time.monotonic() >= deadline:
-                break
-            time.sleep(poll_seconds)
-        if not acquired and r is not None:
-            logger.warning(
-                "Timed out after %ss waiting on chat session lock for %s; "
-                "processing without per-session serialisation",
-                wait_seconds, session_id,
-            )
-
-    try:
-        yield acquired
-    finally:
-        if acquired and r is not None:
-            try:
-                if r.get(key) == token:
-                    r.delete(key)
-            except Exception as e:
-                logger.warning(
-                    "Failed to release chat session lock for %s: %s", session_id, e
-                )
+# Gap 365 / Gap 587: Session lock definition moved to services/chat_queue.py
+# so routers can import it without circular dependencies. Re-exported here for
+# backward compatibility.
+from services.chat_queue import (
+    CHAT_SESSION_LOCK_PREFIX,
+    CHAT_SESSION_LOCK_TTL_SECONDS,
+    CHAT_SESSION_LOCK_WAIT_SECONDS,
+    CHAT_SESSION_LOCK_POLL_SECONDS,
+    ChatSessionLockedError,
+    chat_session_lock,
+    is_chat_session_locked,
+)
 
 
 #: Gap 365: the user-facing sentence for each step the query agent emits. The
@@ -1680,6 +1618,7 @@ def handle_process_chat_job(
     from utils.logging_config import correlation_context, request_id_ctx, trace_id_ctx
 
     from services.chat_queue import ChatQueueService
+    from services.chat_read_audit import record_chat_read_access
     from agents.query_agent import run_query_agent
     from services.online_quality_judge import submit_turn_judgement
     from models import ChatMessage
@@ -1703,6 +1642,42 @@ def handle_process_chat_job(
 
     def _execute(session: Session) -> dict:
         try:
+            # BE Gap 600 (CH-33): Atomic claim guard to prevent duplicate executions across workers/threads.
+            # 1. Redis atomic claim (SETNX chat_job_claimed:{job_id} with 10-minute TTL)
+            try:
+                r = _get_redis_sync()
+                if r:
+                    claimed = r.set(f"chat_job_claimed:{job_id}", "1", nx=True, ex=600)
+                    if not claimed:
+                        logger.warning(
+                            "Chat job %s already claimed by another runner; aborting duplicate execution",
+                            job_id,
+                        )
+                        return {"job_id": job_id, "status": "duplicate_claimed"}
+            except Exception as e:
+                logger.warning("Redis atomic claim check failed for job %s: %s", job_id, e)
+
+            # 2. Database duplicate check (defense-in-depth)
+            existing_assistant = session.exec(
+                select(ChatMessage).where(
+                    ChatMessage.job_id == job_id,
+                    ChatMessage.role == "assistant",
+                )
+            ).first()
+            if existing_assistant:
+                logger.warning(
+                    "Assistant message already exists for chat job %s; aborting duplicate execution",
+                    job_id,
+                )
+                return {
+                    "id": str(existing_assistant.id),
+                    "session_id": str(existing_assistant.session_id),
+                    "role": existing_assistant.role,
+                    "content": existing_assistant.content,
+                    "status": "completed",
+                    "job_id": job_id,
+                }
+
             # 1. The handler's own bookend: the job has been picked up off the
             #    queue. Everything between here and step 3 now comes from the
             #    agent itself via `on_progress`.
@@ -1785,6 +1760,19 @@ def handle_process_chat_job(
                 "job_id": job_id,
                 "created_at": assistant_msg.created_at.isoformat() if assistant_msg.created_at else None,
             }
+
+            # BE Gap 595 (CH-28): the queued path writes the same read-access trail as
+            # the synchronous one. The actor is resolved from the session owner inside
+            # the helper -- the job payload carries no identity, and widening it at
+            # four call sites for one column is not worth it (see that module).
+            record_chat_read_access(
+                session,
+                tenant_id=tenant_id,
+                session_id=session_id,
+                question=content,
+                invoice_ids=assistant_msg.result_invoice_ids,
+                route=(agent_output.get("turn_telemetry") or {}).get("route"),
+            )
 
             # 5. Mark completed in Redis and release tenant slot
             ChatQueueService.complete_job(

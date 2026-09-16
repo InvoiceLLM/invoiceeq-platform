@@ -136,7 +136,10 @@ class SessionModePayload(BaseModel):
 class BehaviorCommitPayload(BaseModel):
     response_length: Literal["brief", "balanced", "detailed"] = "balanced"
     tone: Literal["formal", "conversational", "technical"] = "conversational"
-    custom_instructions: str = ""
+    # BE Gap 592 (CH-25): `TenantChatSettings.custom_instructions` is a 2000-char
+    # column, and this payload had no bound at all -- a longer value reached the
+    # insert and failed there instead of being refused here with a usable message.
+    custom_instructions: str = Field(default="", max_length=2000)
 
 
 class RuleClassification(BaseModel):
@@ -598,6 +601,11 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
     try:
         import redis
         r = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        try:
+            from services.chat_cache import bump_tenant_data_version
+            bump_tenant_data_version(tenant_id, client=r)
+        except Exception:
+            pass
         keys = r.keys(f"chat_answer_cache:{tenant_id}:*")
         if keys:
             r.delete(*keys)

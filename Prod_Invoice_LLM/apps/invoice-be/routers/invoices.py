@@ -444,6 +444,13 @@ async def upload_invoices(
         )
         job_ids.append(job_id)
 
+    # BE Gap 577 (CH-10): Invalidate cached chat answers on ingestion write
+    try:
+        from services.chat_cache import bump_tenant_data_version
+        bump_tenant_data_version(context.tenant_id)
+    except Exception as e:
+        logger.debug("Failed to bump chat data version on invoice upload: %s", e)
+
     return {
         "batch_id": batch_id,
         "job_ids": job_ids

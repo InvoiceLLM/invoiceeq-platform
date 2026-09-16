@@ -423,6 +423,9 @@ class TenantConnection(SQLModel, table=True):
 class ChatSession(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True)
+    # BE Gap 572 (CH-5): user ownership for chat isolation. Legacy sessions have
+    # user_id = NULL (visible to Admins only). API key sessions are unowned.
+    user_id: str | None = Field(default=None, index=True)
     title: str = Field(max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Feature 26 Phase 2 (Gap 436): what this conversation is currently about --
@@ -675,7 +678,10 @@ class AuditLog(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(index=True)
     invoice_id: UUID = Field(index=True)
-    actor_user_id: UUID = Field(foreign_key="users.id")
+    # BE Gap 595 (CH-28): nullable since migration e2f3a4b5c6d7. A chat read by an
+    # API key or an anonymous widget visitor has no `users` row, and those are the
+    # reads an auditor most needs to see; `actor_role` carries `api_key` / `widget`.
+    actor_user_id: UUID | None = Field(default=None, foreign_key="users.id")
     actor_role: str = Field(max_length=50)
     action: str = Field(max_length=255)
     details: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT))

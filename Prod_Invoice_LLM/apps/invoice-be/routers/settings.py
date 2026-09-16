@@ -857,12 +857,21 @@ async def create_widget_token(
                 ),
             )
 
-    token, raw = issue_widget_token(
-        db_session,
-        context.tenant_id,
-        label=body.label,
-        allowed_origins=body.allowed_origins,
-    )
+    # BE Gap 571 (CH-4 + CH-42): a token with no origin can be embedded anywhere, so
+    # issuing refuses it. Surfaced as a 422 with the same shape as the per-origin
+    # validation above rather than letting the ValueError become a 500.
+    try:
+        token, raw = issue_widget_token(
+            db_session,
+            context.tenant_id,
+            label=body.label,
+            allowed_origins=body.allowed_origins,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
     logger.info(
         "Widget token issued for tenant=%s by user=%s (prefix=%s)",
         context.tenant_id, context.user_id, token.token_prefix,

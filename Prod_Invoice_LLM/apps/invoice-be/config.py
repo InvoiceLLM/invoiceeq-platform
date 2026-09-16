@@ -18,6 +18,23 @@ class Settings(BaseSettings):
     # 24-53s extraction path with margin; one retry keeps the worst case at ~4 min, not infinite.
     LLM_REQUEST_TIMEOUT_SECONDS: float = 120.0
     LLM_MAX_RETRIES: int = 1
+    # BE Gap 603 (CH-36): the seat for a measured SSE stream ceiling, in seconds.
+    # 0 means no ceiling, which is the shipped default *on purpose*. The founder
+    # ruling of 2026-09-16 is to measure p50/p95/p99 for `sql.execute` first and set
+    # this together with the database `statement_timeout` from BE Gap 574, with the
+    # statement timeout the shorter of the two so the database always fails first --
+    # and until that measurement lands, to ship neither number. The old hardcoded
+    # 120 s was inside the measured p95 (89 s) and reported live turns as failures.
+    # Ending the stream never means the turn failed; see `_still_running_event`.
+    CHAT_STREAM_MAX_SECONDS: int = 0
+    # BE Gap 607 (CH-41): the chat rate limiter, off by default. The founder ruling of
+    # 2026-09-16 is "rate limit now, quota later", with the limiter shipped behind a
+    # flag "defaulted off so it can be tuned on Dev before it can refuse a real
+    # customer". Turning it on is a params.dev.json change, not a code change.
+    # The monthly per-tenant turn allowance is deliberately NOT here: it needs
+    # per-tier numbers, which is a pricing decision, and it belongs to the billing
+    # work. Until it lands, chat is throttled but not capped.
+    ENABLE_CHAT_RATE_LIMITS: bool = False
     CLERK_JWT_ISSUER: str = ""
     CLERK_JWKS_URL: str = ""
     # Gap 4: gates the mock/test tenant fallback in dependencies.py.
