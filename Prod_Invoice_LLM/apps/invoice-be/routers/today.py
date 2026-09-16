@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -87,6 +87,12 @@ class QuestionnaireAnswerRequest(BaseModel):
 
 class RoutineAnswerUpdateRequest(BaseModel):
     value: str
+
+
+class AcceptConventionRequest(BaseModel):
+    rule_text: Optional[str] = None
+    title: Optional[str] = None
+    target: Optional[str] = "tenant_chat_rule"
 
 
 class EditConventionRequest(BaseModel):
@@ -331,6 +337,13 @@ def confirm_action_route(
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db_session),
 ) -> dict:
+    settings = get_settings()
+    if not getattr(settings, "ENABLE_ANALYST_ACTIONS", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Analyst actions are currently disabled tenant-wide.",
+        )
+
     t_uuid = UUID(str(context.tenant_id))
     try:
         item_uuid = UUID(item_id)
@@ -373,12 +386,65 @@ def confirm_action_route(
 @router.post("/{proposal_id}/accept", summary="Accept a convention proposal")
 def accept_convention_route(
     proposal_id: str,
+    req: Optional[AcceptConventionRequest] = Body(None),
     context: TenantContext = Depends(get_tenant_context),
     db: Session = Depends(get_db_session),
 ) -> dict:
+    rule_text = req.rule_text if req and req.rule_text else None
+    title = req.title if req and req.title else None
+    rule_target = req.target if req and req.target else "tenant_chat_rule"
+
+    # If rule_text was not explicitly supplied, look up the proposal from ATLAS conventions
+    if not rule_text:
+        try:
+            b_profile = profile_tenant(context.tenant_id, clearance=context.clearance, db_session=db)
+            proposals = propose_conventions(b_profile, facts=[], db_session=db)
+            matching_prop = next(
+                (p for p in proposals if p.id == proposal_id or p.kind == proposal_id),
+                None,
+            )
+            if matching_prop:
+                rule_text = matching_prop.suggested_rule
+                title = title or matching_prop.title
+                rule_target = matching_prop.rule_target
+        except Exception as exc:
+            logger.warning("accept_convention_route: failed to query proposals: %s", exc)
+
+    # Standard fallback definitions if proposal wasn't in the immediate profile snapshot
+    if not rule_text:
+        CONVENTION_DEFAULTS = {
+            "auto_apply_credit_notes": (
+                "Auto-apply Credit Notes to open invoices?",
+                "When a credit note is received, apply it to reduce the balance of open matching invoices for that vendor.",
+            ),
+            "proforma_as_commitment": (
+                "Treat Proforma Invoices as commitments?",
+                "Treat proforma invoices from verified vendors as committed cashflow liabilities.",
+            ),
+            "default_terms": (
+                "Default payment terms NET 30",
+                "Default payment terms are NET 30 days unless explicitly stated otherwise on the invoice.",
+            ),
+        }
+        for k, (def_title, def_rule) in CONVENTION_DEFAULTS.items():
+            if k in proposal_id:
+                title = title or def_title
+                rule_text = def_rule
+                break
+
+    if not rule_text:
+        title = title or f"Convention {proposal_id}"
+        rule_text = f"Convention rule for {proposal_id}"
+
     res = accept_convention(
         tenant_id=context.tenant_id,
-        proposal={"kind": proposal_id, "title": f"Convention {proposal_id}", "suggested_rule": f"Convention rule for {proposal_id}"},
+        proposal={
+            "id": proposal_id,
+            "kind": proposal_id,
+            "title": title,
+            "suggested_rule": rule_text,
+            "rule_target": rule_target,
+        },
         user_id=context.user_id or "user",
         db_session=db,
     )

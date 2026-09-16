@@ -22,6 +22,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 import ChatRulesPanel from "@/components/settings/ChatRulesPanel";
 import { chatTrainingService, type ChatRule } from "@/lib/chat-training-service";
+import RoutineAnswersPanel from "@/components/settings/RoutineAnswersPanel";
 
 const GENERIC_ERRORS = {
   load: "Failed to load chat rules. Please try again.",
@@ -128,6 +129,10 @@ export default function ChatRulesSettingsPage() {
             onDelete={(rule) => void handleDelete(rule)}
           />
         )}
+
+        {/* FE Feature 22 Task 22.27: the routine-questionnaire answers live here too —
+            one home for how answers are shaped, not a Records tab. */}
+        {!authLoading && <RoutineAnswersPanel canTrain={canTrain} />}
       </main>
     </div>
   );

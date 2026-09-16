@@ -254,6 +254,12 @@ export interface ChatSession {
   message_count: number;
   created_at: string;
   updated_at: string;   // Used to sort sessions (most recently active first)
+  /**
+   * FE Feature 22 Task 22.6: `"exec"` marks a private session (🔒 in the rail).
+   * `ChatSession.clearance` exists in the backend model, but `SessionResponse`
+   * does not serialise it yet (plan open item #19) — optional until it does.
+   */
+  clearance?: "ops" | "exec" | string;
 }
 
 // -----------------------------------------------------------------------------

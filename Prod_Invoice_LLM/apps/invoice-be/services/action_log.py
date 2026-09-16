@@ -19,6 +19,7 @@ from sqlmodel import Session
 
 from models import ActionLog
 from agents.capabilities import ACTIONS, role_allows
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +66,16 @@ def execute_action(
     args: Optional[dict] = None,
     role: str = "Admin",
     db_session: Optional[Session] = None,
+    enforce_feature_flag: bool = True,
 ) -> dict:
     """Execute a confirmed action capability with role gating and audit logging.
 
     Steps:
     1. Role gate: role_allows(capability_name, role) -> raises ActionPermissionError if denied.
-    2. Lookup in ACTIONS registry.
-    3. Execute capability function.
-    4. Log action execution in db_session.
+    2. Global feature flag gate: ENABLE_ANALYST_ACTIONS check (if enforce_feature_flag=True).
+    3. Lookup in ACTIONS registry.
+    4. Execute capability function.
+    5. Log action execution in db_session.
     """
     args = args or {}
     t_uuid = UUID(str(tenant_id))
@@ -84,6 +87,16 @@ def execute_action(
             role, capability_name, tenant_id, user_id,
         )
         raise ActionPermissionError(f"Role '{role}' is not permitted to execute '{capability_name}'")
+
+    # 2. Global feature flag check (defense-in-depth)
+    if enforce_feature_flag:
+        settings = get_settings()
+        if not getattr(settings, "ENABLE_ANALYST_ACTIONS", False):
+            logger.warning(
+                "execute_action: ENABLE_ANALYST_ACTIONS is False (tenant=%s user=%s capability=%s)",
+                tenant_id, user_id, capability_name,
+            )
+            raise ActionPermissionError("Analyst actions are currently disabled tenant-wide.")
 
     cap = ACTIONS.get(capability_name)
     if cap is None:

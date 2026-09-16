@@ -1,0 +1,251 @@
+"use client";
+// WHY "use client": this page uses useChatSession which calls useState/useEffect
+//   and calls apiClient (browser Axios).  Next.js requires the client directive
+//   on any component that uses browser-only React hooks or browser APIs.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useChatSession } from "@/hooks/useChatSession";
+import {
+  ATTACHMENT_INTENT_PHRASE,
+  type AttachmentClarificationIntent,
+} from "@/lib/chatAttachments";
+import ChatWindow from "@/components/chat/ChatWindow";
+import ReviewCard from "@/components/chat/cards/ReviewCard";
+import TeachCard from "@/components/chat/cards/TeachCard";
+import { usePageHeader } from "@/components/layout/PageHeaderContext";
+
+/**
+ * FE Feature 22 Task 22.6: where a Today line sends the user (`/ask?...`).
+ *   sessionId  -> open that conversation (created by `POST /today/{id}/open`)
+ *   seed       -> pre-fill the composer with its question; never sent
+ *   attach     -> focus the attach control, opening a new conversation first
+ *                 when none is selected (an input request has no session)
+ */
+export interface ChatDeepLink {
+  sessionId?: string | null;
+  seed?: string | null;
+  attach?: boolean;
+  /** 22.12: `/ask?invoice=<id>` (the old review URL) — pins the ReviewCard, opening a conversation first when none is selected. */
+  invoiceId?: string | null;
+}
+
+interface ChatScreenProps {
+  /** Header title: "Semantic Chat" on /chat (unchanged), "Ask" on /ask. */
+  title?: string;
+  deepLink?: ChatDeepLink;
+}
+
+// Moved unchanged from app/chat/page.tsx (FE Feature 22 Task 22.6) so /chat and
+// /ask render one screen. The deep-link effect below is the only addition.
+export default function ChatScreen({ title = "Semantic Chat", deepLink }: ChatScreenProps) {
+  // FE Gap 110: Chat never had a page title of its own -- it went straight into
+  // ChatWindow's own slim agent strip -- which would have left it as the one
+  // screen with an unnamed header once every other route started declaring
+  // one. Declaring it here costs nothing and changes no page markup.
+  usePageHeader({
+    title,
+    agentIcon: "🧠",
+    agentName: "SAGE",
+    agentRole: "Query & Insights",
+  });
+
+  // Destructure only the values that ChatWindow needs.
+  // useChatSession owns all state and async actions — page.tsx is intentionally
+  // thin so the same hook could power a different layout in the future without
+  // rewriting any business logic.
+  const {
+    sessions,
+    activeSessionId,
+    messages,
+    isLoadingSessions,
+    isLoadingMessages,
+    isSending,
+    error,
+    createSession,
+    selectSession,
+    sendMessage,
+    renameSession,
+    deleteSession,
+    // Feature 26 Part 2, task H12 (§P2.6.6/§P2.6.1): these five are what make
+    // H10's composer control reachable by a real user. ChatWindow renders the
+    // paperclip ONLY when `onAttach` is supplied — until this line existed the
+    // button was deliberately never rendered rather than shipped dead.
+    attachment,
+    uploadAttachment,
+    removeAttachment,
+    cancelAttachment,
+    attachmentCount,
+    // Feature 26 task R6: H12 built this and nothing consumed it, so H11's
+    // confirmation card and clarification buttons rendered read-only. The
+    // handlers below are what make the D4 confirmation gate operable from the UI.
+    confirmMatches,
+    // FE Feature 21 task 21.7: which bubble the async insight stage just
+    // redrew, so the change is visible rather than silent.
+    updatedInsightMessageIds,
+  } = useChatSession();
+
+  // FE Feature 22 Task 22.6: act on the deep link once, after the session list
+  // has loaded — selecting before it lands would be overwritten by the load.
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (!deepLink || deepLinkHandled.current || isLoadingSessions) return;
+    deepLinkHandled.current = true;
+    if (deepLink.sessionId) {
+      void selectSession(deepLink.sessionId);
+    } else if ((deepLink.attach || deepLink.invoiceId) && !activeSessionId) {
+      void createSession();
+    }
+  }, [deepLink, isLoadingSessions, selectSession, createSession, activeSessionId]);
+
+  // FE Feature 22 Task 22.12: the review card pinned above the conversation.
+  // FE Feature 22 Task 22.13: plus the teach card, one at a time — a new
+  // `teach:` replaces the previous card (the nonce remounts it).
+  const reviewInvoiceId = deepLink?.invoiceId ?? null;
+  const [teach, setTeach] = useState<{ text: string; nonce: number } | null>(null);
+  const onTeach = useCallback((text: string) => {
+    setTeach((previous) => ({ text, nonce: (previous?.nonce ?? 0) + 1 }));
+  }, []);
+  const renderTopCard = useMemo(
+    () =>
+      reviewInvoiceId || teach
+        ? (seedComposer: (text: string) => void) => (
+            <div className="space-y-3">
+              {teach && <TeachCard key={teach.nonce} ruleText={teach.text} onClose={() => setTeach(null)} />}
+              {reviewInvoiceId && <ReviewCard invoiceId={reviewInvoiceId} onTellMeWhy={seedComposer} />}
+            </div>
+          )
+        : undefined,
+    [reviewInvoiceId, teach]
+  );
+
+  // R6. `AttachmentTurnHandlers` (components/chat/MessageBubble.tsx:422) is the
+  // contract H11 built the card against; these are the callbacks that satisfy it.
+  const [confirmingAttachmentId, setConfirmingAttachmentId] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmedAttachmentIds, setConfirmedAttachmentIds] = useState<string[]>([]);
+
+  const onConfirmMatches = useCallback(
+    async (attachmentId: string, invoiceIds: string[]) => {
+      setConfirmingAttachmentId(attachmentId);
+      setConfirmError(null);
+      try {
+        await confirmMatches(attachmentId, invoiceIds);
+        // Lock the card. The backend rejects any id it did not offer as a
+        // candidate (routers/chat_attachments.py), so a second confirm on the
+        // same attachment is not merely redundant -- it can 400.
+        setConfirmedAttachmentIds((prev) =>
+          prev.includes(attachmentId) ? prev : [...prev, attachmentId]
+        );
+      } catch (e: unknown) {
+        // Surfaced inline on the card rather than swallowed: the 400 detail is
+        // the only thing that tells a user WHY an invoice could not be confirmed.
+        const detail =
+          (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+          (e as Error)?.message ??
+          "Could not confirm those invoices.";
+        setConfirmError(detail);
+      } finally {
+        setConfirmingAttachmentId(null);
+      }
+    },
+    [confirmMatches]
+  );
+
+  // Both of these go back as an ordinary chat message, which is not a shortcut:
+  // `MessageCreate` carries only `content` and `attachment_id`, and
+  // `_classify_attachment_intent()` is a pure keyword match over the text, so a
+  // phrase in the message IS the mechanism for making an intent explicit.
+  // MessageBubble has already composed `text` via composeClarificationReply().
+  const onClarificationChoice = useCallback(
+    async (text: string, intent: AttachmentClarificationIntent) => {
+      // Gap 432: the choice also travels as a structured field, so the
+      // original question's own words can no longer re-trigger the card.
+      await sendMessage(text, intent === "read" || intent === "compare" ? intent : undefined);
+    },
+    [sendMessage]
+  );
+
+  // The zero-candidate path. The confirm endpoint takes invoice IDs and rejects
+  // anything the matcher did not propose, so a typed invoice NUMBER cannot go
+  // there -- it goes back as a message, which is what the backend's own
+  // zero-candidate copy asks the user to do.
+  // Gap 444: the chip's two buttons. The phrase is the same one the clarify
+  // card would have sent, and the structured intent rides alongside it -- so the
+  // user gets the answer directly instead of being asked which they meant.
+  const onAttachmentIntent = useCallback(
+    async (intent: "read" | "compare") => {
+      await sendMessage(ATTACHMENT_INTENT_PHRASE[intent], intent);
+    },
+    [sendMessage]
+  );
+
+  const onManualInvoiceEntry = useCallback(
+    async (_attachmentId: string, invoiceNumber: string) => {
+      await sendMessage(`Compare it against invoice ${invoiceNumber}.`);
+    },
+    [sendMessage]
+  );
+
+  const attachmentHandlers = useMemo(
+    () => ({
+      onConfirmMatches,
+      onManualInvoiceEntry,
+      onClarificationChoice,
+      confirmingAttachmentId,
+      confirmError,
+      confirmedAttachmentIds,
+    }),
+    [
+      onConfirmMatches,
+      onManualInvoiceEntry,
+      onClarificationChoice,
+      confirmingAttachmentId,
+      confirmError,
+      confirmedAttachmentIds,
+    ]
+  );
+
+  return (
+    // WHY -m-8: the Shell component (components/layout/Shell.tsx) wraps
+    //   <main> with p-8.  A standard scrollable page works great with that
+    //   padding, but the chat layout needs to fill the entire available area
+    //   with no outer gutters so the left thread sidebar and pinned input bar
+    //   reach the edges.  Negative margin cancels the p-8 without modifying
+    //   Shell (which is shared across all pages).
+    //
+    // WHY h-[calc(100vh-4rem)]: the Header is 4rem (64px) tall.  Subtracting
+    //   it from 100vh gives the chat window exactly the remaining vertical
+    //   space.  overflow-hidden is set here so that ChatWindow manages its own
+    //   internal scroll regions (thread list + message area) — the outer page
+    //   should never scroll.
+    <div className="-m-8 h-[calc(100vh-4rem)] overflow-hidden">
+      <ChatWindow
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        messages={messages}
+        isLoadingSessions={isLoadingSessions}
+        isLoadingMessages={isLoadingMessages}
+        isSending={isSending}
+        error={error}
+        onCreateSession={createSession}
+        onSelectSession={selectSession}
+        onSendMessage={sendMessage}
+        onRenameSession={renameSession}
+        onDeleteSession={deleteSession}
+        onAttach={uploadAttachment}
+        attachment={attachment}
+        onRemoveAttachment={removeAttachment}
+        onCancelAttachment={cancelAttachment}
+        attachmentHandlers={attachmentHandlers}
+        attachmentCount={attachmentCount}
+        onAttachmentIntent={onAttachmentIntent}
+        updatedInsightMessageIds={updatedInsightMessageIds}
+        initialSeed={deepLink?.seed ?? null}
+        focusAttach={Boolean(deepLink?.attach)}
+        renderTopCard={renderTopCard}
+        onTeach={onTeach}
+      />
+    </div>
+  );
+}

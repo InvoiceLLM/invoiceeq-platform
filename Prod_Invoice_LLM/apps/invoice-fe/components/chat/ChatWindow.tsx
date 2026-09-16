@@ -17,7 +17,7 @@
 
 "use client";
 
-import { useRef, useEffect, useState, useCallback, KeyboardEvent } from "react";
+import { useRef, useEffect, useState, useCallback, KeyboardEvent, type ReactNode } from "react";
 import {
   MessageSquarePlus,
   MessageSquare,
@@ -34,6 +34,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { MessageStream, type AttachmentTurnHandlers } from "./MessageBubble";
+import SessionRail from "./SessionRail";
 import AttachmentChip from "./AttachmentChip";
 import {
   CHAT_ATTACHMENT_ACCEPT,
@@ -43,224 +44,9 @@ import {
   type AttachmentState,
 } from "@/lib/chatAttachments";
 import type { ChatSession, ChatMessage } from "@/types/chat";
+import { parseTeachCommand } from "@/lib/teach";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatSessionDate(dateStr: string): string {
-  if (!dateStr) return "";
-  const isoStr = dateStr.endsWith("Z") || dateStr.includes("+") ? dateStr : `${dateStr.replace(" ", "T")}Z`;
-  const date = new Date(isoStr);
-  if (isNaN(date.getTime())) return dateStr;
-
-  const now = new Date();
-  const diffHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-  if (diffHours < 24) {
-    return date.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-  }
-  return date.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
-}
-
-// =============================================================================
-// ThreadSidebar — left panel showing the session list with search & rename
-// =============================================================================
-
-interface ThreadSidebarProps {
-  sessions: ChatSession[];
-  activeSessionId: string | null;
-  isLoading: boolean;
-  onSelect: (id: string) => void;
-  onCreate: () => void;
-  onRename: (id: string, newTitle: string) => void;
-  onDelete: (id: string) => void;
-  /** FE Gap 274: hides the whole panel. Undefined = no hide affordance rendered. */
-  onHide?: () => void;
-}
-
-function ThreadSidebar({
-  sessions,
-  activeSessionId,
-  isLoading,
-  onSelect,
-  onCreate,
-  onRename,
-  onDelete,
-  onHide,
-}: ThreadSidebarProps) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState("");
-
-  const filteredSessions = sessions.filter((s) =>
-    (s.title || "New Chat").toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const startRename = (e: React.MouseEvent, s: ChatSession) => {
-    e.stopPropagation();
-    setEditingId(s.id);
-    setEditingTitle(s.title || "New Chat");
-  };
-
-  const confirmRename = (e: React.MouseEvent | React.FormEvent) => {
-    e.preventDefault();
-    if (editingId && editingTitle.trim()) {
-      onRename(editingId, editingTitle.trim());
-    }
-    setEditingId(null);
-  };
-
-  return (
-    <div className="w-64 shrink-0 border-r border-[#222D3D] flex flex-col h-full bg-[#080B12]/60">
-      {/* Header with "+ New Chat" button */}
-      <div className="px-4 py-4 border-b border-[#222D3D] flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-slate-200">Conversations</span>
-        <div className="flex items-center gap-1.5">
-          <button
-            id="chat-new-session-btn"
-            onClick={onCreate}
-            title="New Chat"
-            className="
-              flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300
-              bg-blue-900/20 hover:bg-blue-900/40 border border-blue-800/30
-              px-2.5 py-1.5 rounded-lg transition-all duration-150
-              focus:outline-none focus:ring-1 focus:ring-blue-600
-            "
-          >
-            <MessageSquarePlus className="w-3.5 h-3.5" />
-            New Chat
-          </button>
-          {/* FE Gap 274: hide this panel to reclaim width for the message area. */}
-          {onHide && (
-            <button
-              type="button"
-              onClick={onHide}
-              title="Hide conversation list"
-              aria-label="Hide conversation list"
-              className="text-slate-500 hover:text-slate-200 p-1.5 rounded-lg hover:bg-[#1E293B]/50 transition-colors"
-            >
-              <PanelLeftClose className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Search Input Bar (Gap 149) */}
-      <div className="px-3 py-2 border-b border-[#222D3D]/60">
-        <div className="relative flex items-center">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search threads..."
-            className="w-full bg-[#0F172A] border border-[#222D3D] text-xs text-slate-200 placeholder:text-slate-500 pl-8 pr-2.5 py-1.5 rounded-lg outline-none focus:border-blue-500/50"
-          />
-        </div>
-      </div>
-
-      {/* Thread List — three states: loading, empty, populated */}
-      <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
-          </div>
-        ) : filteredSessions.length === 0 ? (
-          <div className="text-center py-8 text-xs text-slate-500 px-4">
-            {searchQuery ? "No matching conversations." : "No conversations yet. Click \"New Chat\" to start."}
-          </div>
-        ) : (
-          filteredSessions.map((session) => {
-            const isActive = session.id === activeSessionId;
-            const isEditing = session.id === editingId;
-
-            return (
-              <div
-                key={session.id}
-                id={`chat-session-${session.id}`}
-                onClick={() => onSelect(session.id)}
-                className={`
-                  group w-full text-left px-3 py-2.5 rounded-lg cursor-pointer
-                  flex items-start justify-between gap-2 transition-all duration-150
-                  ${isActive
-                    ? "bg-[#1E293B] border border-blue-800/40 text-white"
-                    : "text-slate-400 hover:bg-[#1E293B]/40 hover:text-slate-200 border border-transparent"
-                  }
-                `}
-              >
-                <div className="flex items-start gap-2 min-w-0 flex-1">
-                  <MessageSquare
-                    className={`w-4 h-4 mt-0.5 shrink-0 ${isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-400"}`}
-                  />
-                  <div className="flex-1 min-w-0">
-                    {isEditing ? (
-                      <form onSubmit={confirmRename} className="flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          autoFocus
-                          className="w-full bg-slate-900 text-xs text-white px-1.5 py-0.5 rounded border border-blue-500 outline-none"
-                        />
-                        <button type="submit" className="p-0.5 text-emerald-400 hover:text-emerald-300">
-                          <Check className="w-3 h-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingId(null);
-                          }}
-                          className="p-0.5 text-slate-400 hover:text-slate-300"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </form>
-                    ) : (
-                      <>
-                        <p className="text-xs font-medium truncate">
-                          {session.title || "New Chat"}
-                        </p>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
-                          {formatSessionDate(session.updated_at || session.created_at)}
-                          {session.message_count > 0 && (
-                            <span className="ml-1.5">· {session.message_count} msgs</span>
-                          )}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {!isEditing && (
-                  <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0 transition-opacity">
-                    <button
-                      type="button"
-                      onClick={(e) => startRename(e, session)}
-                      title="Rename thread"
-                      className="p-1 text-slate-400 hover:text-blue-400 rounded hover:bg-slate-800"
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(session.id);
-                      }}
-                      title="Delete thread"
-                      className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
 
 // =============================================================================
 // EmptyState — shown when no session is selected
@@ -390,6 +176,13 @@ interface InputBarProps {
    * presses Send themselves.
    */
   seed?: { text: string; nonce: number } | null;
+  /**
+   * FE Feature 22 Task 22.6: `/ask?attach=1` (a Today input request) arrives
+   * wanting a document. Focus the attach control once it is usable.
+   */
+  autoFocusAttach?: boolean;
+  /** FE Feature 22 Task 22.13: say in the placeholder that `teach:` works. */
+  teachEnabled?: boolean;
 }
 
 function InputBar({
@@ -403,10 +196,14 @@ function InputBar({
   onAttachmentIntent,
   attachmentCount = 0,
   seed = null,
+  autoFocusAttach = false,
+  teachEnabled = false,
 }: InputBarProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachButtonRef = useRef<HTMLButtonElement>(null);
+  const attachFocused = useRef(false);
   // Client-side rejection copy (size/type/count). Kept local for the same
   // reason `value` is: it matters until the next pick and nowhere else.
   const [attachError, setAttachError] = useState<string | null>(null);
@@ -419,6 +216,14 @@ function InputBar({
   // first means a user is not made to wait through a doomed upload. The caps
   // are the backend's own constants, mirrored in lib/chatAttachments.ts — a
   // client cap that disagrees with the server is worse than no client cap.
+  // FE Feature 22 Task 22.6: arriving for a document, the attach control takes focus
+  // once — as soon as it is usable (a session is open and the cap is not reached).
+  useEffect(() => {
+    if (!autoFocusAttach || attachFocused.current || attachDisabled || !onAttach) return;
+    attachFocused.current = true;
+    attachButtonRef.current?.focus();
+  }, [autoFocusAttach, attachDisabled, onAttach]);
+
   const handleFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     // Reset immediately so picking the SAME file again still fires `change`.
@@ -518,6 +323,7 @@ function InputBar({
               data-testid="chat-attach-input"
             />
             <button
+              ref={attachButtonRef}
               id="chat-attach-btn" // e2e target, matching chat-input-textarea / chat-send-btn
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -550,6 +356,8 @@ function InputBar({
           placeholder={
             disabled
               ? "Select a chat to start…"
+              : teachEnabled
+              ? "Ask, attach, or say 'teach:' to add a rule… (Enter to send, Shift+Enter for newline)"
               : "Ask about your invoices… (Enter to send, Shift+Enter for newline)"
           }
           disabled={disabled || isSending}
@@ -663,6 +471,22 @@ interface ChatWindowProps {
    * `useChatSession`, which is what listens to the stream.
    */
   updatedInsightMessageIds?: string[];
+  /** FE Feature 22 Task 22.6: text to pre-fill the composer with on arrival (`/ask?seed=`). Never sent. */
+  initialSeed?: string | null;
+  /** FE Feature 22 Task 22.6: focus the attach control on arrival (`/ask?attach=1`). */
+  focusAttach?: boolean;
+  /**
+   * FE Feature 22 Task 22.12: a card pinned above the conversation (the review
+   * card on `/ask?invoice=`). Receives the composer seed so the card's
+   * `Tell me why` can pre-fill the question — never send it.
+   */
+  renderTopCard?: (seedComposer: (text: string) => void) => ReactNode;
+  /**
+   * FE Feature 22 Task 22.13: a composer message starting `teach:` goes here
+   * (with the text after the prefix) instead of to the chat. Absent -> every
+   * message is sent as before.
+   */
+  onTeach?: (ruleText: string) => void;
 }
 
 export default function ChatWindow({
@@ -686,8 +510,25 @@ export default function ChatWindow({
   attachmentCount = 0,
   attachmentHandlers,
   updatedInsightMessageIds,
+  initialSeed = null,
+  focusAttach = false,
+  renderTopCard,
+  onTeach,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
+
+  // FE Feature 22 Task 22.13: `teach: …` is a mode, not a chat message.
+  const handleComposerSend = useCallback(
+    (text: string) => {
+      const rule = onTeach ? parseTeachCommand(text) : null;
+      if (rule !== null && onTeach) {
+        onTeach(rule);
+        return;
+      }
+      onSendMessage(text);
+    },
+    [onTeach, onSendMessage]
+  );
 
   /**
    * FE Feature 21 task 21.8. The composer's text is InputBar's own state (it is
@@ -701,6 +542,16 @@ export default function ChatWindow({
   const seedComposer = useCallback((text: string) => {
     setComposerSeed((previous) => ({ text, nonce: (previous?.nonce ?? 0) + 1 }));
   }, []);
+
+  // FE Feature 22 Task 22.6: a Today line arrives with its question (`/ask?seed=`).
+  // Applied once the conversation is open — InputBar ignores seeds while disabled
+  // would lose it — and only once, so a later session switch keeps the composer clear.
+  const initialSeedApplied = useRef(false);
+  useEffect(() => {
+    if (!initialSeed || initialSeedApplied.current || !hasActiveSession) return;
+    initialSeedApplied.current = true;
+    seedComposer(initialSeed);
+  }, [initialSeed, hasActiveSession, seedComposer]);
 
   // FE Gap 274: the thread list can be hidden entirely (unlike the main
   // app Sidebar's icon-only collapse, per Gap 273 -- the chat window is
@@ -718,12 +569,12 @@ export default function ChatWindow({
 
   return (
     // h-full: fills the container set by page.tsx (100vh minus header height)
-    // overflow-hidden: the scroll is managed inside MessageStream and ThreadSidebar,
+    // overflow-hidden: the scroll is managed inside MessageStream and SessionRail,
     //   not on this container — prevents double scrollbars.
     <div className="flex h-full overflow-hidden">
       {/* Left: Thread Sidebar (FE Gap 274: omitted entirely when hidden) */}
       {!sidebarHidden && (
-        <ThreadSidebar
+        <SessionRail
           sessions={sessions}
           activeSessionId={activeSessionId}
           isLoading={isLoadingSessions}
@@ -784,6 +635,14 @@ export default function ChatWindow({
           </div>
         )}
 
+        {/* FE Feature 22 Task 22.12: pinned card, once a conversation is open
+            (the composer ignores seeds while disabled). */}
+        {hasActiveSession && renderTopCard && (
+          <div data-testid="chat-top-card" className="max-h-[45%] shrink-0 overflow-y-auto border-b border-[#1E293B] p-4">
+            {renderTopCard(seedComposer)}
+          </div>
+        )}
+
         {/* Message Area — three states: no session, loading, messages */}
         <div className="flex-1 overflow-y-auto">
           {!hasActiveSession ? (
@@ -812,7 +671,7 @@ export default function ChatWindow({
 
         {/* Input Bar — always rendered but disabled when no session is active */}
         <InputBar
-          onSend={onSendMessage}
+          onSend={handleComposerSend}
           isSending={isSending}
           disabled={!hasActiveSession}
           onAttach={onAttach}
@@ -822,6 +681,8 @@ export default function ChatWindow({
           onAttachmentIntent={onAttachmentIntent}
           attachmentCount={attachmentCount}
           seed={composerSeed}
+          autoFocusAttach={focusAttach}
+          teachEnabled={Boolean(onTeach)}
         />
       </div>
     </div>

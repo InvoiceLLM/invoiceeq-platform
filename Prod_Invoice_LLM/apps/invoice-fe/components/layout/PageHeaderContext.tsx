@@ -97,13 +97,33 @@ export function usePageHeaderActionsRef(): (el: HTMLElement | null) => void {
 const NOOP_REF = (_el: HTMLElement | null) => undefined;
 
 /**
+ * FE Feature 22 Task 22.3 — a whole page mounted as a SECTION of another page.
+ *
+ * The single scrolling Settings page mounts the existing sub-pages (Admin
+ * Console, Email, Workflows, Webhooks, Subscriptions, Security) as they are.
+ * Each of them names itself through `usePageHeader`, and Webhooks also portals
+ * its controls into the shared header -- so seven mounted pages would fight
+ * over one title, the last effect winning. Inside `<EmbeddedPage>`, a page's
+ * `usePageHeader` is a no-op (the host page keeps the header) and its
+ * `<PageHeaderActions>` render in place, at the top of the section.
+ *
+ * Outside it, nothing changes -- the default is `false`.
+ */
+const EmbeddedPageContext = createContext(false);
+
+export function EmbeddedPage({ children }: { children: React.ReactNode }) {
+  return <EmbeddedPageContext.Provider value={true}>{children}</EmbeddedPageContext.Provider>;
+}
+
+/**
  * Declares this screen's header content. Call it unconditionally at the top of
  * the page component -- above any early return for loading/error states, so a
  * screen that is still fetching still names itself.
  */
 export function usePageHeader(meta: PageHeaderMeta): void {
   const ctx = useContext(PageHeaderContext);
-  const setMeta = ctx?.setMeta;
+  const embedded = useContext(EmbeddedPageContext);
+  const setMeta = embedded ? undefined : ctx?.setMeta;
   const { title, agentIcon, agentName, agentRole, subtitle, backHref } = meta;
 
   useEffect(() => {
@@ -123,6 +143,10 @@ export function usePageHeader(meta: PageHeaderMeta): void {
  */
 export function PageHeaderActions({ children }: { children: React.ReactNode }) {
   const slot = useContext(PageHeaderContext)?.actionsSlot ?? null;
+  const embedded = useContext(EmbeddedPageContext);
+  if (embedded) {
+    return <div className="flex flex-wrap items-center justify-end gap-2 px-6 pt-4">{children}</div>;
+  }
   if (!slot) return null;
   return createPortal(children, slot);
 }

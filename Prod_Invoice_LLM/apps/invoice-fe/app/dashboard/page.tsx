@@ -10,7 +10,6 @@ import OutboundMetricsGrid, {
 import ClientPerformanceChart from "../../components/dashboard/ClientPerformanceChart";
 import NeedsAttentionWidget from "../../components/dashboard/NeedsAttentionWidget";
 import TrainerImpactPanel from "../../components/dashboard/TrainerImpactPanel";
-import ActionableInsightsPanel from "../../components/dashboard/ActionableInsightsPanel";
 import { usePageHeader } from "../../components/layout/PageHeaderContext";
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
@@ -268,10 +267,14 @@ export default function DashboardPage() {
   const dynamicTabs = [
     ...(receiveEnabled ? [{ id: "vendors", label: "Top Vendors & Clients" } as const] : []),
     ...(sendEnabled ? [{ id: "customers", label: "Top Customers" } as const] : []),
-    { id: "insights", label: "Insights" } as const,
     { id: "trainer", label: "Trainer Impact" } as const,
   ];
-  const [activeTab, setActiveTab] = useState<string>("insights");
+  // FE Feature 22 Task 22.9: the LLM-authored "Insights" tab (ActionableInsightsPanel)
+  // is gone -- ATLAS's deterministic Today list replaces it (BE 33.18). The tab row
+  // now opens on its first tab, and a tab that Service Flow later hides falls back
+  // to the first one rather than rendering an empty panel.
+  const [selectedTab, setActiveTab] = useState<string>(dynamicTabs[0].id);
+  const activeTab = dynamicTabs.some((tab) => tab.id === selectedTab) ? selectedTab : dynamicTabs[0].id;
 
   // Task 2.1.4: ClientPerformanceChart already renders any {name, amount}
   // ranking, so top_customers is mapped onto its existing prop shape rather
@@ -410,7 +413,6 @@ export default function DashboardPage() {
               subtitle="Ranking by aggregated invoiced-out value."
             />
           )}
-          {activeTab === "insights" && <ActionableInsightsPanel />}
           {activeTab === "trainer" && <TrainerImpactPanel />}
         </div>
       </div>

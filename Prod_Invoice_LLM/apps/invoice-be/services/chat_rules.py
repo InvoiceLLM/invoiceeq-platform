@@ -130,7 +130,7 @@ def render_chat_rule(category: str, pattern: str = "", context_text: str = "") -
     """
     spec = CHAT_RULE_CATEGORIES.get(category)
     if not spec:
-        return ""
+        return pattern or context_text or ""
     clean = (pattern or "").strip()
     if spec.requires_pattern and not clean:
         return ""

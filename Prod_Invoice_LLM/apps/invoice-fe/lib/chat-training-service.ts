@@ -144,6 +144,13 @@ export interface ChatRule {
   enabled: boolean;
   createdBy?: string;
   createdAt?: string | null;
+  /**
+   * FE Feature 22 Task 22.27: `"atlas"` for a rule ATLAS wrote from an accepted
+   * convention, `"user"` for a hand-taught one. The column exists
+   * (`TenantChatRule.source`) but `GET /chat/rules` does not return it yet (plan
+   * open item #24) — optional, and the badge appears once it does.
+   */
+  source?: string;
 }
 
 /** Thumbs-down response envelope from `PUT /chat/messages/{id}/feedback`. */

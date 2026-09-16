@@ -54,7 +54,26 @@ def test_auditor_denied_setup_action_raises(test_db):
         )
 
 
-def test_admin_executes_action_and_logs(test_db):
+def test_action_disabled_by_flag_raises(test_db):
+    tenant_id = uuid4()
+    # By default ENABLE_ANALYST_ACTIONS is False
+    with pytest.raises(ActionPermissionError, match="disabled"):
+        execute_action(
+            tenant_id=tenant_id,
+            user_id="admin_user",
+            capability_name="setup_inbound_email",
+            args={},
+            role="Admin",
+            db_session=test_db,
+        )
+
+
+def test_admin_executes_action_and_logs(test_db, monkeypatch):
+    from config import Settings
+    monkeypatch.setattr(
+        "services.action_log.get_settings",
+        lambda: Settings(ENABLE_ANALYST_ACTIONS=True),
+    )
     tenant_id = uuid4()
     res = execute_action(
         tenant_id=tenant_id,

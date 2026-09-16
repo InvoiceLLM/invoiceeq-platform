@@ -115,11 +115,16 @@ def accept_convention(
     target = p_data.get("rule_target", "tenant_chat_rule")
 
     now = datetime.utcnow()
+    category = (p_data.get("kind") or p_data.get("category") or "convention")[:64]
+    title = (p_data.get("title") or "")[:2000]
+
     rule = TenantChatRule(
         tenant_id=t_uuid,
-        rule_text=rule_text,
-        rule_type="convention",
+        category=category,
+        pattern=rule_text[:500],
+        context_text=title,
         source="atlas",
+        created_by=user_id,
         created_at=now,
         updated_at=now,
     )

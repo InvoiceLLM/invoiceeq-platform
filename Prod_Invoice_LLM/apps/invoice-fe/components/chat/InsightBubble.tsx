@@ -36,8 +36,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Info, Sparkles } from "lucide-react";
 import InsightActions from "./InsightActions";
+import ChecksDisclosure from "./cards/ChecksDisclosure";
 import InsightCorrectionDialog from "./InsightCorrectionDialog";
 import {
+  checkSummaries,
   checksNotRunLine,
   confidenceLabel,
   confidenceTone,
@@ -150,6 +152,8 @@ export default function InsightBubble({
 
   const { shown, hidden } = useMemo(() => splitFindings(block), [block]);
   const notChecked = useMemo(() => checksNotRunLine(block), [block]);
+  // FE Feature 22 Task 22.11: what each card that ran actually checked.
+  const checks = useMemo(() => checkSummaries(block), [block]);
 
   // The finding the row acts on: the top-ranked one, which is the finding the
   // verdict line is written from (`verdict_template()` takes the top finding).
@@ -284,6 +288,8 @@ export default function InsightBubble({
           {notChecked}
         </p>
       )}
+
+      <ChecksDisclosure summaries={checks} />
 
       <InsightActions
         actions={block.actions || []}

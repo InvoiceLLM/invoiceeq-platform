@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Sun,
   LayoutDashboard,
   UploadCloud,
   History,
@@ -19,11 +20,16 @@ import {
   ChevronsRight,
 } from "lucide-react";
 import { useAuth } from "../../hooks/useAuth";
+import { activeNavHref } from "@/lib/navigation";
 
 // FE Gap 273: persisted so the collapsed/expanded choice survives a reload.
 const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
 
-export default function Sidebar() {
+/**
+ * FE Feature 22 Task 22.21: `showToday` adds the Today surface to this ten-item
+ * nav for the classic layout. Off by default, so every other render is unchanged.
+ */
+export default function Sidebar({ showToday = false }: { showToday?: boolean } = {}) {
   const pathname = usePathname();
   // FE Gap 99 / Feature 1.1 Task 1.1.5: real permissions, from GET /auth/me.
   // Until this landed, useAuth() was a localStorage mock that made everyone an
@@ -62,6 +68,7 @@ export default function Sidebar() {
   // /admin is intentionally absent -- it has never been in the sidebar and
   // adding it was explicitly out of scope for this change.
   const menuItems = [
+    ...(showToday ? [{ name: "Today", href: "/today", icon: Sun, visible: true }] : []),
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, visible: true },
     { name: "Ingest", href: "/ingestion", icon: UploadCloud, visible: canLoad },
     // Re-added 2026-07-29 (Task 4.9, Dashboard/Audit split): previously
@@ -110,7 +117,9 @@ export default function Sidebar() {
   // Rendering the full list optimistically would flash Trainer/Audit/Settings
   // at users who are not allowed to see them.
   const visibleItems = menuItems.filter((item) =>
-    loading ? item.href === "/dashboard" || item.href === "/chat" || item.href === "/help" : item.visible
+    loading
+      ? item.href === "/today" || item.href === "/dashboard" || item.href === "/chat" || item.href === "/help"
+      : item.visible
   );
 
   // FE Gap 143: the most specific matching item wins. "Settings" (/settings)
@@ -118,10 +127,9 @@ export default function Sidebar() {
   // subscriptions page is open, which would light up two nav items at once --
   // the longer href is the one the user is actually on. FE Gap 478's
   // "Chat Rules" (/settings/chat-rules) is the same shape and needs no new
-  // logic here.
-  const activeHref = visibleItems
-    .filter((item) => pathname === item.href || pathname.startsWith(item.href + "/"))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+  // logic here. FE Feature 22 Task 22.1 moved the rule into lib/navigation.ts,
+  // unchanged, so PrimaryNav shares it instead of re-deriving it.
+  const activeHref = activeNavHref(visibleItems, pathname);
 
   return (
     // data-auth-loading exposes whether identity has resolved yet. The nav is

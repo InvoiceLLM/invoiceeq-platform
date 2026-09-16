@@ -225,6 +225,43 @@ export function checksNotRunLine(block: InsightBlock): string | null {
   return `Not checked: ${parts.join("; ")}`;
 }
 
+/** One group of `CheckLog.unchecked_detail()`: the subjects a card could not evaluate, for one reason. */
+export interface UncheckedGroup {
+  reason: string;
+  subjects: string[];
+}
+
+export interface CheckSummary {
+  card: string;
+  /** The backend's own sentence, e.g. "3 invoices checked, 1 not checked" (`CheckLog.title()`). */
+  title: string;
+  notChecked: UncheckedGroup[];
+}
+
+/**
+ * FE Feature 22 Task 22.11: the checks each card ran, as the backend worded them.
+ * Only cards that ran (`status === "ok"`) and carry a title; cards that never ran
+ * are already named by `checksNotRunLine()`. No count is computed here — the
+ * title states both numbers, and `NOT_CHECKED` is never folded into "passed".
+ */
+export function checkSummaries(block: InsightBlock): CheckSummary[] {
+  return (block.cards || [])
+    .filter((card) => card.status === "ok" && typeof card.title === "string" && card.title.trim() !== "")
+    .map((card) => {
+      const raw = (card.evidence as Record<string, unknown> | undefined)?.not_checked;
+      const notChecked: UncheckedGroup[] = Array.isArray(raw)
+        ? raw
+            .filter((group): group is { reason?: unknown; subjects?: unknown } => Boolean(group) && typeof group === "object")
+            .map((group) => ({
+              reason: String(group.reason ?? ""),
+              subjects: Array.isArray(group.subjects) ? group.subjects.map(String) : [],
+            }))
+            .filter((group) => group.subjects.length > 0)
+        : [];
+      return { card: card.card, title: String(card.title), notChecked };
+    });
+}
+
 /**
  * Invoice numbers a finding compared against, for the evidence links. The
  * backend's evidence dicts key these as `invoice_number` (singular, most cards),

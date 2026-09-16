@@ -173,6 +173,15 @@ export default function ChatRulesPanel({
                         by {rule.createdBy}
                       </span>
                     ) : null}
+                    {/* FE Feature 22 Task 22.27: rules ATLAS wrote from an accepted convention. */}
+                    {rule.source === "atlas" && (
+                      <span
+                        data-testid="chat-rule-source-atlas"
+                        className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md border border-violet-500/20 bg-violet-500/10 text-violet-300"
+                      >
+                        Written by ATLAS
+                      </span>
+                    )}
                     {!rule.enabled && (
                       <span
                         data-testid="chat-rule-disabled"

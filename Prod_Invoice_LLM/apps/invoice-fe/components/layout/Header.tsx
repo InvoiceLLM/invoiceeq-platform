@@ -7,6 +7,7 @@ import { Bell, ChevronDown, User, LogOut, Settings, Palette, Moon } from "lucide
 import { useClerk, useUser } from "@clerk/nextjs";
 import { useAuth, clearAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
+import LayoutPreference from "@/components/settings/LayoutPreference";
 import PageHeader from "./PageHeader";
 import { usePageHeaderActionsRef, usePageHeaderMeta } from "./PageHeaderContext";
 
@@ -284,6 +285,10 @@ export default function Header() {
             )}
           </Link>
         )}
+
+        {/* FE Feature 22 Task 22.21: classic-layout switch. Renders nothing unless
+            the four surfaces are on; the theme toggle below is independent. */}
+        <LayoutPreference variant="header" />
 
         {/* Dual-Theme Toggle Switch — FE Gap 478 */}
         <button

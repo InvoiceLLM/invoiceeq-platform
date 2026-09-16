@@ -103,6 +103,7 @@ def charge_sandbox_chat_or_402(db_session: Session, tenant_id: UUID) -> dict | N
 # Request/Response schemas
 class SessionCreate(BaseModel):
     title: str | None = Field(default=None, max_length=255)
+    clearance: str | None = Field(default=None, max_length=8)
 
 class SessionRename(BaseModel):
     """Gap 216: rename-only payload. Deliberately carries just `title` -- the
@@ -114,6 +115,7 @@ class SessionResponse(BaseModel):
     tenant_id: UUID
     title: str
     created_at: datetime
+    clearance: str = "ops"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -314,12 +316,16 @@ def list_sessions(
     db_session: Session = Depends(get_db_session),
     tenant_context: TenantContext = Depends(get_tenant_or_api_key_context)
 ):
-    """List all previous chat sessions belonging to the requesting tenant."""
+    """List all previous chat sessions belonging to the requesting tenant, filtered by user clearance."""
+    user_clearance = tenant_context.clearance or "ops"
     statement = (
         select(ChatSession)
         .where(ChatSession.tenant_id == tenant_context.tenant_id)
         .order_by(ChatSession.created_at.desc())
     )
+    if user_clearance != "exec":
+        statement = statement.where(ChatSession.clearance == "ops")
+
     results = db_session.exec(statement).all()
     return results
 
@@ -333,10 +339,19 @@ def create_session(
     title = payload.title or f"Chat Session - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
     session_id = uuid4()
     
+    user_clearance = tenant_context.clearance or "ops"
+    desired_clearance = payload.clearance or "ops"
+    if desired_clearance == "exec" and user_clearance != "exec":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create executive session without executive clearance."
+        )
+
     db_session_obj = ChatSession(
         id=session_id,
         tenant_id=tenant_context.tenant_id,
-        title=title
+        title=title,
+        clearance=desired_clearance,
     )
     db_session.add(db_session_obj)
     db_session.commit()
@@ -374,6 +389,13 @@ def rename_session(
             detail="Access forbidden to this chat session."
         )
 
+    user_clearance = tenant_context.clearance or "ops"
+    if chat_session.clearance == "exec" and user_clearance != "exec":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: executive clearance required."
+        )
+
     # `min_length=1` only rejects an empty string -- "   " passes it and would
     # persist a blank sidebar label, so the stripped value is checked too.
     title = payload.title.strip()
@@ -409,6 +431,13 @@ def delete_session(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
+        )
+
+    user_clearance = tenant_context.clearance or "ops"
+    if chat_session.clearance == "exec" and user_clearance != "exec":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: executive clearance required."
         )
         
     # Delete associated messages
@@ -485,6 +514,13 @@ def get_session_messages(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
         )
+
+    user_clearance = tenant_context.clearance or "ops"
+    if chat_session.clearance == "exec" and user_clearance != "exec":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: executive clearance required."
+        )
         
     # 2. Fetch messages ordered by creation date
     message_statement = (
@@ -545,6 +581,13 @@ def post_chat_message(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
+        )
+
+    user_clearance = tenant_context.clearance or "ops"
+    if chat_session.clearance == "exec" and user_clearance != "exec":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: executive clearance required."
         )
 
     # Feature 25 (Gap 340): meter the turn if this is an unclaimed sandbox
@@ -1573,6 +1616,7 @@ def list_chat_rules(
             "enabled": r.enabled,
             "createdBy": r.created_by,
             "createdAt": r.created_at.isoformat() if r.created_at else None,
+            "source": getattr(r, "source", "user"),
         }
         for r in rows
     ]
