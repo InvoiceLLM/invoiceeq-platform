@@ -20,6 +20,7 @@ wrong answer for real invoices).
 import copy
 from typing import Any
 
+from utils.alert_ids import with_alert_ids
 from utils.rule_schema import apply_alert_overrides, tolerance_overrides
 from utils.verification_tools import verify_line_items_math, verify_totals_math
 
@@ -46,7 +47,8 @@ def alerts_raised_by_correction(
         if alert["type"] not in failing_before
     ]
     open_keys = {_key(alert) for alert in open_alerts}
-    return [alert for alert in apply_alert_overrides(raised, rules) if _key(alert) not in open_keys]
+    # BE Gap 566: stored alerts carry an id, so each raised alert gets one.
+    return with_alert_ids([alert for alert in apply_alert_overrides(raised, rules) if _key(alert) not in open_keys])
 
 
 def _math_alerts(values: dict, tolerances: dict, doc_type: str | None) -> list[dict]:

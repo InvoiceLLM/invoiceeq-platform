@@ -2079,6 +2079,49 @@ def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name:
         )
 
 
+#: BE Gap 569: the only table the chat SQL route may read. Every SQL prompt describes exactly this
+#: table (`_HAND_TYPED_SCHEMA_BLOCK`, `agents/sage_prompts.py::IDENTIFY_SCHEMA_BLOCK`). The tenant
+#: guard above binds a query to the asking tenant's rows but not to a table, so before this a
+#: generated query could read any tenant-scoped table — webhook signing secrets, users, widget
+#: tokens, audit history, chat sessions (reproduced 2026-09-15). A table is a fact about the schema,
+#: so it is enforced here in code, not left to the prompt line that says other tables do not exist.
+_CHAT_SQL_READABLE_TABLES = frozenset({"invoice"})
+
+
+def assert_reads_only_allowed_tables(sql_clean: str, dialect_name: str) -> None:
+    """Reject any statement that reads a table outside `_CHAT_SQL_READABLE_TABLES`.
+
+    Every named table anywhere in the statement counts — FROM, JOIN, subqueries and CTE bodies. A
+    reference to a CTE defined in the same statement is not a table, and a table-valued function
+    such as `json_each(...)` has no table name; neither is checked. A schema qualifier other than
+    `public` (`information_schema.tables`, `pg_catalog.pg_class`, `other.invoice`) is refused.
+    Raises `ValueError` with the "Access Denied" prefix the other safety checks use.
+    """
+    import sqlglot
+    import sqlglot.expressions as sg_exp
+
+    refused = "Access Denied: SQL query reads a table the chat is not allowed to read."
+    try:
+        statements = [stmt for stmt in sqlglot.parse(sql_clean, read=_sqlglot_dialect_for(dialect_name)) if stmt is not None]
+    except Exception as exc:  # noqa: BLE001 -- any parse failure fails closed
+        logger.warning("Chat SQL table guard: statement did not parse (%s); rejecting.", type(exc).__name__)
+        raise ValueError(refused) from None
+    if not statements:
+        raise ValueError(refused)
+
+    for statement in statements:
+        cte_names = {cte.alias.lower() for cte in statement.find_all(sg_exp.CTE) if cte.alias}
+        for table in statement.find_all(sg_exp.Table):
+            name = (table.name or "").lower()
+            if not name:
+                continue  # a table-valued function, e.g. json_each(...)
+            schema = (table.db or "").lower()
+            if not schema and not table.catalog and name in cte_names:
+                continue
+            if name not in _CHAT_SQL_READABLE_TABLES or schema not in ("", "public") or table.catalog:
+                raise ValueError(refused)
+
+
 @tracked_dependency("sql.execute", "PostgreSQL")
 def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list | None = None) -> str:
     """Safely execute generated SQL statement on the database session.
@@ -2118,7 +2161,11 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     # The regex above is deliberately kept: it is the cheap pass, and two
     # independent checks is the point.
     assert_tenant_isolation_on_ast(sql_clean, tenant_id, _sql_dialect_name(db_session))
-        
+
+    # Safety Check 5 (BE Gap 569): the statement may read only the tables the chat prompts
+    # describe. Check 4 binds rows to this tenant; this binds the query to the invoice table.
+    assert_reads_only_allowed_tables(sql_clean, _sql_dialect_name(db_session))
+
     result = db_session.execute(text(sql_clean))
     rows = result.fetchall()
 

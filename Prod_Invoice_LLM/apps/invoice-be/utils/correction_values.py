@@ -115,8 +115,9 @@ def parse_entries(raw_value: Any, entry_model: Type[BaseModel], entry_name: str)
 def list_entry_model(schema: Type[BaseModel], field: str) -> Type[BaseModel]:
     """BE Gap 531: the entry model a schema's `List[...]` field really uses, read from the field itself.
 
-    Not imported by class name: `agents/extraction_agent.py` defines `DeductionItem` twice (the invoice one,
-    then a remittance-advice one that replaces it at module level), so a by-name import gets the wrong model.
+    Read from the field rather than imported by class name, so the correction always validates against the
+    model the schema really uses: `agents/extraction_agent.py` once defined `DeductionItem` twice and a
+    by-name import got the remittance-advice model (fixed by BE Gap 567; this stays the robust way).
     """
     return get_args(schema.model_fields[field].annotation)[0]
 

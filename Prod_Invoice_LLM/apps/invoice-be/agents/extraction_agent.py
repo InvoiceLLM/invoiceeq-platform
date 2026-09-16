@@ -461,8 +461,13 @@ class GenericLineItem(BaseModel):
 
 
 
-class DeductionItem(BaseModel):
+class RemittanceDeductionItem(BaseModel):
     """One amount withheld from a payment (A7).
+
+    BE Gap 567: named `DeductionItem` until 2026-09-15, the same name as the invoice
+    deduction model above, so this definition replaced that one at module level and a
+    by-name import returned the wrong model. The invoice class keeps its name, so the
+    invoice extraction schema is unchanged.
 
     This is what makes "what did they short-pay?" answerable. A remittance advice
     that settles 92,000 against a 100,000 invoice is not a discrepancy to
@@ -558,7 +563,7 @@ class GenericDocumentSchema(BaseModel):
     # label. These are genuinely different things (an invoice's deduction lines
     # vs amounts withheld from a payment), so the distinct name is also the more
     # honest one.
-    payment_deductions: List[DeductionItem] = Field(default=[], description="For a REMITTANCE ADVICE: one entry per amount withheld from the payment (TDS, GST-TDS, chargeback, Skonto, retention). Empty for every other document type. Report each separately and NEVER net them into a single figure.")
+    payment_deductions: List[RemittanceDeductionItem] = Field(default=[], description="For a REMITTANCE ADVICE: one entry per amount withheld from the payment (TDS, GST-TDS, chargeback, Skonto, retention). Empty for every other document type. Report each separately and NEVER net them into a single figure.")
 
 
 # 2. State definition

@@ -462,8 +462,16 @@ def _run_ocr_split(file_path: str) -> tuple[str, dict, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_template(db_session: Session, tenant_id: UUID, vendor_name: str | None) -> ExtractionTemplate | None:
-    """Fetch a template row. vendor_name=None resolves the tenant's Global template."""
-    stmt = select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == tenant_id)
+    """Fetch an INBOUND template row. vendor_name=None resolves the tenant's inbound Global template.
+
+    Every caller is on an inbound path; outbound uses `_get_outbound_global_template()`.
+    """
+    # BE Gap 568: filter by direction. A tenant can hold one Global row per direction, and without
+    # this an outbound-only tenant's OUTBOUND Global template was returned here as its inbound one.
+    stmt = select(ExtractionTemplate).where(
+        ExtractionTemplate.tenant_id == tenant_id,
+        ExtractionTemplate.flow_direction == "INBOUND",
+    )
     if vendor_name is None:
         stmt = stmt.where(ExtractionTemplate.vendor_name.is_(None))
     else:

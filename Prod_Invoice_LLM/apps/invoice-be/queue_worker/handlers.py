@@ -18,6 +18,7 @@ from agents.extraction_agent import run_extraction_agent
 # would imply a cycle that does not exist.
 from services.document_type_classifier import DOC_TYPE_FAMILY, MONEY_FAMILY
 from utils.rule_schema import merge_constraints
+from utils.alert_ids import with_alert_ids
 
 
 logger = logging.getLogger(__name__)
@@ -536,7 +537,7 @@ def _persist_non_invoice_document(
         # EXTRACTED / EXTRACT_FAILED, straight from the GENERIC profile — the
         # same pair the table's `status` column is documented against.
         status=status,
-        sa_alerts=alerts,
+        sa_alerts=with_alert_ids(alerts),  # BE Gap 566
         source_document_json=source_document_json,
         completed_at=datetime.utcnow(),
     )
@@ -574,7 +575,13 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
     only the prompt-relevant ones. Rendering here would have silently stripped
     every non-prompt rule before it ever reached verification.
     """
-    stmt = select(ExtractionTemplate).where(ExtractionTemplate.tenant_id == UUID(tenant_id))
+    # BE Gap 568: inbound extraction reads INBOUND templates only. Since Feature 7.1 a tenant can
+    # hold one Global row per direction; without this filter a tenant whose only Global template
+    # was OUTBOUND had those rules applied to its inbound invoices.
+    stmt = select(ExtractionTemplate).where(
+        ExtractionTemplate.tenant_id == UUID(tenant_id),
+        ExtractionTemplate.flow_direction == "INBOUND",
+    )
     if vendor_name is None:
         stmt = stmt.where(ExtractionTemplate.vendor_name.is_(None))
     else:
@@ -1164,7 +1171,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.compliance_metadata = extracted_data.get("compliance_metadata", [])
                 invoice.status = status
                 invoice.completed_at = datetime.utcnow()
-                invoice.sa_alerts = alerts
+                invoice.sa_alerts = with_alert_ids(alerts)  # BE Gap 566
                 # Gap 190: this used to be a plain overwrite, which discarded
                 # every user-applied tag the moment extraction completed --
                 # merge (order-preserving, deduped) instead of replace.
