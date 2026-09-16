@@ -43,6 +43,24 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
     resolution), which is a rules concern, not a graph-shape one."""
     settings = get_settings()
 
+    # Gap 540: skip extraction if outbound invoice was already decided
+    OUTBOUND_DECIDED_STATUSES = frozenset({"SENT", "PAID", "CANCELLED"})
+    with Session(engine) as session:
+        statement = select(Invoice).where(Invoice.file_path == file_path)
+        existing_invoice = session.exec(statement).first()
+        if existing_invoice and existing_invoice.status in OUTBOUND_DECIDED_STATUSES:
+            logger.warning(
+                "Outbound invoice %s already in decided status '%s'; skipping worker overwrite (Gap 540).",
+                existing_invoice.id,
+                existing_invoice.status,
+            )
+            return {
+                "invoice_id": str(existing_invoice.id),
+                "status": existing_invoice.status,
+                "skipped": True,
+                "reason": f"Outbound invoice already in decided status '{existing_invoice.status}'",
+            }
+
     _publish_sse_events(batch_id, {"status": "PROCESSING_OCR", "message": "Extracting text from outbound invoice PDF..."})
 
     try:
@@ -75,6 +93,20 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
             statement = select(Invoice).where(Invoice.file_path == file_path)
             invoice = session.exec(statement).first()
             if invoice:
+                # Gap 540: defensive check before DB write in case status changed mid-extraction
+                if invoice.status in OUTBOUND_DECIDED_STATUSES:
+                    logger.warning(
+                        "Outbound invoice %s reached persistence block in decided status '%s'; skipping overwrite (Gap 540).",
+                        invoice.id,
+                        invoice.status,
+                    )
+                    return {
+                        "invoice_id": str(invoice.id),
+                        "status": invoice.status,
+                        "skipped": True,
+                        "reason": f"Outbound invoice already in decided status '{invoice.status}'",
+                    }
+
                 customer_name = extracted_data.get("customer_name")
                 invoice_number = extracted_data.get("invoice_number")
 

@@ -521,3 +521,16 @@ def test_ai_score_metrics(db_session):
     # Escape rate = 33.3%
     assert data["ai_alerts_missed"] == 33.3
 
+
+def test_get_extraction_quality_rollup_endpoint_gap526(db_session):
+    """Gap 526: verify GET /dashboard/quality-rollup endpoint returns rollups."""
+    response = client.get("/api/v1/dashboard/quality-rollup?days=30")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["days"] == 30
+    assert "field_correction_rollup" in data
+    assert "alert_precision_rollup" in data
+    assert "total_resolves" in data["field_correction_rollup"]
+    assert "total_dismissals" in data["alert_precision_rollup"]
+
+

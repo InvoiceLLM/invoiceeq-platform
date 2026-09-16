@@ -1,4 +1,5 @@
 import logging
+import os
 from uuid import UUID, uuid4
 from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -35,14 +36,24 @@ from utils.alert_dismissal import dismiss_alerts
 from utils.correction_recheck import MONEY_FIELDS, alerts_raised_by_correction, snapshot_money_fields
 from utils.rule_schema import (
     build_audit_correction_rule,
+    canonical_values_match,
+    is_standing_rule_allowed,
     merge_constraints,
     normalize_constraints,
     ORIGIN_AUDIT_CORRECTION,
     SCOPE_VENDOR,
+    VARIABLE_FIELDS,
 )
+from utils.rate_limiter import SlidingWindowRateLimiter, rate_limit_key
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+# Gap 561: 60 resolve operations per minute per (tenant, principal) sliding-window rate limiter --
+# see utils/rate_limiter.py::rate_limit_key for why the window is per principal, not per tenant.
+_resolve_rate_limiter = SlidingWindowRateLimiter(
+    key_prefix="ratelimit:inbound_resolve:", max_requests=60, window_seconds=60
+)
 
 # Feature 1.1 (Task 1.1.2): the Audit Queue's actions (Mark Paid, Reject,
 # corrections) are real financial actions, so the whole router requires
@@ -235,16 +246,26 @@ def _apply_corrections(invoice: Invoice, corrections: Dict[str, Any]) -> Dict[st
 
 
 def _detect_correction_pattern(
-    db_session: Session, tenant_id: UUID, vendor_name: str | None, corrected_fields: List[str]
+    db_session: Session,
+    tenant_id: UUID,
+    vendor_name: str | None,
+    corrected_fields: List[str],
+    threshold: int = _RULE_SUGGESTION_THRESHOLD,
+    lookback_days: int = _RULE_SUGGESTION_LOOKBACK_DAYS,
 ) -> dict | None:
     """Task 7.4: check whether any just-corrected field has recurred often enough
     (across this invoice's own resolve plus past ones) to be worth promoting to a
     Trainer rule instead of correcting by hand every time. Returns the first
-    qualifying field's suggestion, or None."""
+    qualifying field's suggestion, or None.
+
+    Gap 547: the threshold and lookback are parameters (tests and a future tenant
+    setting can tune them), and variable transaction scalars (`VARIABLE_FIELDS`:
+    totals, dates, invoice numbers) are never suggested -- a value that changes on
+    every invoice is not a layout rule, however often it gets corrected."""
     if not corrected_fields:
         return None
 
-    cutoff = datetime.utcnow() - timedelta(days=_RULE_SUGGESTION_LOOKBACK_DAYS)
+    cutoff = datetime.utcnow() - timedelta(days=lookback_days)
     stmt = (
         select(AuditLog.details, Invoice.vendor_name)
         .join(Invoice, AuditLog.invoice_id == Invoice.id)
@@ -263,6 +284,9 @@ def _detect_correction_pattern(
         return None
 
     for field in corrected_fields:
+        # Gap 547: variable transaction scalars are never rule candidates.
+        if field in VARIABLE_FIELDS or not is_standing_rule_allowed(field, flow_direction="INBOUND"):
+            continue
         vendor_hit_count = 0
         distinct_vendors: set[str] = set()
         sample_found = False
@@ -282,14 +306,14 @@ def _detect_correction_pattern(
                     vendor_hit_count += 1
 
         sample_correction = f"Field '{field}' should be read as {sample_value!r}."
-        if vendor_name and vendor_hit_count >= _RULE_SUGGESTION_THRESHOLD:
+        if vendor_name and vendor_hit_count >= threshold:
             return {
                 "scope": "existing_vendor",
                 "field": field,
                 "vendor_name": vendor_name,
                 "sample_correction": sample_correction,
             }
-        if len(distinct_vendors) >= _RULE_SUGGESTION_THRESHOLD:
+        if len(distinct_vendors) >= threshold:
             return {
                 "scope": "global",
                 "field": field,
@@ -353,6 +377,29 @@ def _apply_standing_rule(
     if not vendor_name:
         return {"applied": False, "reason": "No vendor name on this invoice -- standing rules are vendor-scoped."}
 
+    # Gap 542: a standing rule pins a value for every future invoice of this vendor, so variable
+    # transactional fields (totals, dates, invoice/PO numbers -- utils/rule_schema.py::VARIABLE_FIELDS)
+    # are never promoted. The correction itself still applies to this invoice.
+    allowed_diff = {
+        field: diff
+        for field, diff in correction_diff.items()
+        if is_standing_rule_allowed(field, flow_direction="INBOUND")
+    }
+    if not allowed_diff:
+        disallowed_names = ", ".join(sorted(correction_diff.keys()))
+        logger.info(
+            "Invoice %s: standing rule skipped for variable transactional fields: %s (Gap 542)",
+            invoice.id,
+            disallowed_names,
+        )
+        return {
+            "applied": False,
+            "reason": (
+                f"Standing rules cannot be created for variable transactional fields ({disallowed_names}). "
+                "The correction was applied to this invoice only."
+            ),
+        }
+
     # Feature 18: this was the second free-text rule producer in the codebase --
     # it synthesised a sentence and dropped it into the same undifferentiated
     # `constraints` bag the Trainer wrote to, so nothing downstream could tell an
@@ -369,7 +416,7 @@ def _apply_standing_rule(
             scope=SCOPE_VENDOR,
             origin=ORIGIN_AUDIT_CORRECTION,
         )
-        for field, diff in correction_diff.items()
+        for field, diff in allowed_diff.items()
     ]
 
     existing_template = _get_vendor_template(db_session, tenant_context.tenant_id, vendor_name)
@@ -380,28 +427,53 @@ def _apply_standing_rule(
     )
     merged_constraints = merge_constraints(existing_constraints, candidate_rules)
 
+    # Gap 543: re-extracting the very document the correction came from is close to a tautology.
+    # When the vendor has another processed invoice on disk, the candidate rule is checked against
+    # that holdout document instead, so the check says something about the layout, not this file.
+    target_invoice = invoice
+    if invoice.file_path:
+        prior_vendor_name = correction_diff.get("vendor_name", {}).get("old") if isinstance(correction_diff, dict) else None
+        candidate_vendor_names = {name for name in (vendor_name, invoice.vendor_name, prior_vendor_name) if name}
+        holdout_candidate = db_session.exec(
+            select(Invoice).where(
+                Invoice.tenant_id == tenant_context.tenant_id,
+                Invoice.id != invoice.id,
+                Invoice.status.in_(["COMPLETED", "PAID", "AUDIT_REQUIRED"]),
+                Invoice.file_path.is_not(None),
+                Invoice.vendor_name.in_(candidate_vendor_names),
+            ).limit(1)
+        ).first()
+        if holdout_candidate and holdout_candidate.file_path and os.path.exists(holdout_candidate.file_path):
+            target_invoice = holdout_candidate
+            logger.info(
+                "Invoice %s: validating standing rule on holdout invoice %s from vendor '%s' (Gap 543)",
+                invoice.id,
+                holdout_candidate.id,
+                vendor_name,
+            )
+
     try:
-        ocr_text = _run_ocr_split(invoice.file_path)
+        ocr_text = _run_ocr_split(target_invoice.file_path)
         result = run_extraction_agent(
-            invoice.file_path, ocr_text, str(tenant_context.tenant_id),
+            target_invoice.file_path, ocr_text, str(tenant_context.tenant_id),
             rules={"constraints": merged_constraints},
         )
     except Exception as e:
-        logger.warning("Standing-rule safety re-extraction failed for invoice %s: %s", invoice.id, e)
+        logger.warning("Standing-rule safety re-extraction failed for invoice %s: %s", target_invoice.id, e)
         return {"applied": False, "reason": "Safety re-extraction failed -- rule not applied."}
 
     re_extracted = result.get("extracted_data") or {}
-    for field, diff in correction_diff.items():
-        old_comparable = diff["new"]
-        new_comparable = re_extracted.get(field)
-        if hasattr(new_comparable, "isoformat"):
-            new_comparable = new_comparable.isoformat()
-        if str(new_comparable) != str(old_comparable):
+    for field, diff in allowed_diff.items():
+        expected_val = diff["new"]
+        actual_val = re_extracted.get(field)
+        # Gap 543: canonical comparison -- reordered dict keys, float tolerance, lists and dates all
+        # compare by value instead of by `str()` (utils/rule_schema.py::canonical_values_match).
+        if not canonical_values_match(actual_val, expected_val):
             return {
                 "applied": False,
                 "reason": (
                     f"Safety check failed: re-extraction with the candidate rule still didn't "
-                    f"produce '{field}' = {diff['new']!r} (got {new_comparable!r}). Rule not applied."
+                    f"produce '{field}' = {diff['new']!r} (got {actual_val!r}). Rule not applied."
                 ),
             }
 
@@ -435,11 +507,16 @@ def _apply_standing_rule(
     # Feature 18: `rules_added` stays a list of plain sentences so the existing FE
     # contract is unchanged; the structured objects that were actually persisted
     # are exposed alongside it under a new key rather than replacing it.
-    return {
+    skipped = [f for f in correction_diff if f not in allowed_diff]
+    res = {
         "applied": True,
         "rules_added": normalize_constraints(candidate_rules, for_prompt=False),
         "rules_added_structured": candidate_rules,
     }
+    if skipped:
+        # Gap 542: the caller can tell which corrected fields were applied to this invoice only.
+        res["skipped_variable_fields"] = skipped
+    return res
 
 
 def _verification_rules(db_session: Session, tenant_id: UUID, vendor_name: str | None) -> dict | None:
@@ -498,6 +575,13 @@ async def resolve_audit_invoice(
     (`routers/outbound_invoices.py`) have their own separate status machine
     (`NEEDS_REVIEW`/`VERIFIED`/`SENT`/`PAID`) and are not touched here.
     """
+    # Gap 561: resolve calls are rate limited per tenant + principal (utils/rate_limiter.py::rate_limit_key)
+    if not _resolve_rate_limiter.check(rate_limit_key(context)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded: maximum 60 resolve operations per minute per tenant.",
+        )
+
     # 1. Validate status, if one was actually provided
     target_status = None
     if payload.status is not None:
@@ -578,6 +662,14 @@ async def resolve_audit_invoice(
     # BE Gap 554: finalization side effects fire only when the status really changes.
     status_changed = target_status is not None and target_status != current_status
 
+    # Gap 544: creating a standing rule writes an extraction template, which needs the Trainer
+    # (`can_train`) permission -- the same gate the Trainer's own endpoints use.
+    if payload.apply_as_standing_rule and not context.can_train:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to create standing rules (AI Trainer permission required). Ask an Admin to grant it.",
+        )
+
     # 3. Dismiss specified warnings.
     # BE Gap 537: each dismissal removes exactly one alert — by id, else by type + field + message — so two
     # alerts that share a message (subtotal and grand total both "not verified in source") stay separate.
@@ -636,7 +728,12 @@ async def resolve_audit_invoice(
     # correction always succeeds regardless of this check's outcome.
     standing_rule_result = None
     if payload.apply_as_standing_rule and correction_diff:
-        standing_rule_result = _apply_standing_rule(db_session, invoice, correction_diff, context)
+        # Gap 546: the safety check runs OCR + an LLM extraction (24-53s measured); on a thread so the
+        # event loop keeps serving other requests. The LLM call itself is bounded by
+        # config.LLM_REQUEST_TIMEOUT_SECONDS / LLM_MAX_RETRIES, so a hung upstream cannot pin the thread.
+        standing_rule_result = await run_in_threadpool(
+            _apply_standing_rule, db_session, invoice, correction_diff, context
+        )
 
     # 4. Save audit log record — corrections included so Task 7.4 can detect
     # recurring patterns across resolves, and so there's a durable record of
@@ -671,6 +768,24 @@ async def resolve_audit_invoice(
 
     # 5. Commit transaction
     db_session.commit()
+
+    # Gap 562: one structured INFO line per decision, so the resolve rate and its actors can be
+    # read off the log stream (and App Insights) without joining audit_logs.
+    logger.info(
+        "Invoice resolved",
+        extra={
+            "invoice_id": str(invoice.id),
+            "actor_user_id": str(context.db_user_id) if context.db_user_id else None,
+            "actor_role": context.role,
+            "auth_method": context.auth_method,
+            "old_status": current_status,
+            "new_status": target_status,
+            "status_changed": status_changed,
+            "corrections_count": len(correction_diff),
+            "dismissed_count": len(dismissed_alerts),
+            "raised_count": len(raised_alerts),
+        },
+    )
 
     # Gap 317: a finalize action (Mark Paid/Reject/Reopen) moves
     # audit_rate_percent, the aggregate Actionable Insights grounds its
@@ -713,21 +828,34 @@ async def resolve_audit_invoice(
     # Feature 15 (Task 15.4): only fires on an actual PAID/REJECTED
     # finalization -- a plain alert-dismiss/correction (target_status=None)
     # doesn't change the invoice's terminal outcome and isn't one of this
-    # feature's subscribable event types. Gap 193's AUDIT_REQUIRED reopen is
-    # deliberately excluded too -- it undoes a finalization, it isn't one.
-    if status_changed and target_status in ("PAID", "REJECTED"):
+    # feature's subscribable event types. Gap 558: an Admin reopen (PAID/REJECTED ->
+    # AUDIT_REQUIRED, Gap 193) now fires `invoice.reopened` so subscribers learn the
+    # earlier approved/rejected event was undone; a plain AUDIT_REQUIRED -> AUDIT_REQUIRED
+    # dismiss is not a reopen and still fires nothing.
+    is_reopen = target_status == "AUDIT_REQUIRED" and current_status in ("PAID", "REJECTED")
+    if status_changed and (target_status in ("PAID", "REJECTED") or is_reopen):
         try:
             from services.webhooks import dispatch_webhook_event
-            event_type = "invoice.approved" if target_status == "PAID" else "invoice.rejected"
-            dispatch_webhook_event(db_session, invoice.tenant_id, event_type, {
+            if target_status == "PAID":
+                event_type = "invoice.approved"
+            elif target_status == "REJECTED":
+                event_type = "invoice.rejected"
+            else:
+                event_type = "invoice.reopened"
+            webhook_payload = {
                 "invoice_id": str(invoice.id),
                 "status": target_status,
                 "vendor_name": invoice.vendor_name,
                 "grand_total": invoice.grand_total,
                 # Gap 215: without this, a subscriber can't tell 40000 apart
                 # from ₹40000 vs $40000 on a blended multi-currency tenant.
-                "currency": invoice.currency or "USD",
-            })
+                # Gap 557: an unknown currency is sent as null, never guessed as "USD".
+                "currency": invoice.currency,
+            }
+            # Gap 558: the rejection reason travels with the rejection.
+            if target_status == "REJECTED":
+                webhook_payload["reject_reason"] = payload.reject_reason
+            dispatch_webhook_event(db_session, invoice.tenant_id, event_type, webhook_payload)
         except Exception as we:
             logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
 
@@ -783,9 +911,11 @@ async def resolve_audit_invoice(
                 action_label="Mark Paid" if target_status == "PAID" else "Rejected",
                 notify_emails=payload.notify_emails,
             )
-        except ValueError as ve:
-            # Already validated above; defensive only.
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve)) from ve
+        except Exception as ne:
+            # Gap 556: the invoice is already committed above, so a notification failure is reported
+            # in the response, never turned into an HTTP 400 that claims the decision did not save.
+            logger.error("Staff notification failed for resolved invoice %s: %s", invoice.id, ne)
+            email_notify = {"sent": False, "reason": str(ne)}
 
     # 6. Task 7.4: suggest a Trainer rule if a correction just made recurred often
     # enough to be worth automating instead of fixing by hand every time.

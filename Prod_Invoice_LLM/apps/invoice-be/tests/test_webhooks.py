@@ -278,8 +278,86 @@ def test_deliver_signs_payload_with_subscription_secret(db_session):
     mock_client.post.assert_called_once()
     _, kwargs = mock_client.post.call_args
     raw_body = kwargs["content"]
+    timestamp = kwargs["headers"]["X-Webhook-Timestamp"]
+    assert kwargs["headers"]["X-InvoiceEQ-Timestamp"] == timestamp
+    # Gap 564: the original header is unchanged for existing subscribers; V2 binds the timestamp.
     assert kwargs["headers"]["X-Webhook-Signature"] == _sign_payload("s3cr3t", raw_body)
-    assert json.loads(raw_body)["event"] == "invoice.completed"
+    assert kwargs["headers"]["X-Webhook-Signature-V2"] == _sign_payload("s3cr3t", raw_body, timestamp=timestamp)
+    assert "X-InvoiceEQ-Event-Id" in kwargs["headers"]
+    body_json = json.loads(raw_body)
+    assert body_json["event"] == "invoice.completed"
+    assert "event_id" in body_json
+    assert "occurred_at" in body_json
+    assert body_json["data"] == {"invoice_id": "abc", "status": "COMPLETED"}
+
+
+def test_create_webhook_encrypts_secret_at_rest_and_decrypts_on_delivery_gap564(db_session):
+    from uuid import UUID
+    from utils.encryption import decrypt_token
+    _seed_tenant(db_session)
+    with patch("services.webhooks.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 0))]):
+        response = client.post(
+            "/api/v1/webhooks",
+            json={"target_url": "https://example.com/hook", "subscribed_events": ["invoice.reopened"]},
+        )
+    assert response.status_code == 201
+    data = response.json()
+    plaintext_secret = data["secret"]
+
+    # Verify secret is stored encrypted in database
+    sub = db_session.exec(select(WebhookSubscription).where(WebhookSubscription.id == UUID(data["id"]))).first()
+    assert sub.secret != plaintext_secret
+    assert decrypt_token(sub.secret) == plaintext_secret
+
+    # Verify delivery succeeds and signs with the decrypted plaintext secret
+    with patch("services.webhooks.httpx.Client") as mock_client_cls:
+        mock_client = mock_client_cls.return_value.__enter__.return_value
+        mock_client.post.return_value = MagicMock(status_code=200)
+        result = deliver_webhook_now(
+            db_session, sub.id, "invoice.reopened", {"invoice_id": "inv-123", "status": "AUDIT_REQUIRED"}
+        )
+    assert result.success is True
+    _, kwargs = mock_client.post.call_args
+    raw_body = kwargs["content"]
+    timestamp = kwargs["headers"]["X-Webhook-Timestamp"]
+    assert kwargs["headers"]["X-Webhook-Signature"] == _sign_payload(plaintext_secret, raw_body)
+    assert kwargs["headers"]["X-Webhook-Signature-V2"] == _sign_payload(plaintext_secret, raw_body, timestamp=timestamp)
+
+
+def test_legacy_plaintext_secret_still_signs_without_a_decrypt_error_gap564(db_session, caplog):
+    """Gap 564: subscriptions created before secrets were encrypted hold the plaintext secret.
+    They are signed with it as-is (no backfill in dev), and no decrypt error is logged."""
+    import logging
+    from utils.encryption import is_encrypted_token, reveal_webhook_secret
+    _seed_tenant(db_session)
+    sub = _seed_subscription(db_session)  # secret="s3cr3t", stored in plaintext by the helper
+    assert not is_encrypted_token(sub.secret)
+    assert reveal_webhook_secret(sub.secret) == "s3cr3t"
+
+    with caplog.at_level(logging.ERROR, logger="utils.encryption"):
+        with patch("services.webhooks.httpx.Client") as mock_client_cls:
+            mock_client = mock_client_cls.return_value.__enter__.return_value
+            mock_client.post.return_value = MagicMock(status_code=200)
+            result = deliver_webhook_now(
+                db_session, sub.id, "invoice.completed", {"invoice_id": "abc", "status": "COMPLETED"}
+            )
+    assert result.success is True
+    assert "Failed to decrypt token" not in caplog.text
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["headers"]["X-Webhook-Signature"] == _sign_payload("s3cr3t", kwargs["content"])
+
+
+def test_create_webhook_refuses_instead_of_storing_plaintext_when_encryption_fails_gap564(db_session):
+    """Gap 564: if the secret cannot be encrypted the subscription is refused (503), not saved in plaintext."""
+    _seed_tenant(db_session)
+    with patch("services.webhooks.socket.getaddrinfo", return_value=[(None, None, None, None, ("93.184.216.34", 0))]), \
+         patch("utils.encryption.encrypt_token", side_effect=RuntimeError("no key")):
+        response = client.post(
+            "/api/v1/webhooks",
+            json={"target_url": "https://example.com/hook", "subscribed_events": ["invoice.completed"]},
+        )
+    assert response.status_code == 503
+    assert db_session.exec(select(WebhookSubscription)).all() == []
 
 
 def test_deliver_retries_then_succeeds_and_records_one_log_row(db_session):

@@ -77,16 +77,40 @@ def validate_webhook_target_url(target_url: str) -> None:
             )
 
 
-def _sign_payload(secret: str, raw_body: bytes) -> str:
-    return hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+def _sign_payload(secret: str, raw_body: bytes, timestamp: Optional[str] = None) -> str:
+    """Computes HMAC-SHA256 signature. If timestamp is provided (Gap 564),
+    signs f'{timestamp}.{body}' to prevent replay attacks."""
+    if timestamp is not None:
+        sign_bytes = f"{timestamp}.".encode("utf-8") + raw_body
+    else:
+        sign_bytes = raw_body
+    return hmac.new(secret.encode("utf-8"), sign_bytes, hashlib.sha256).hexdigest()
 
 
-def build_delivery_body(event_type: str, payload: dict) -> bytes:
+def build_delivery_body(
+    event_type: str,
+    payload: dict,
+    event_id: Optional[str] = None,
+    occurred_at: Optional[str] = None,
+) -> bytes:
     """The exact bytes POSTed to the subscriber, and the exact bytes the
     X-Webhook-Signature HMAC is computed over. Built in one place so the
     dispatcher (which enqueues) and the worker (which delivers) can never
-    disagree about the wire format."""
-    return json.dumps({"event": event_type, "data": payload}, default=str).encode("utf-8")
+    disagree about the wire format.
+    
+    Gap 555: includes event_id (UUIDv4) and occurred_at ISO timestamp in envelope."""
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    eid = event_id or str(uuid4())
+    ts = occurred_at or datetime.now(timezone.utc).isoformat()
+    envelope = {
+        "event_id": eid,
+        "occurred_at": ts,
+        "event": event_type,
+        "data": payload,
+    }
+    return json.dumps(envelope, default=str).encode("utf-8")
 
 
 def _deliver_with_retry(target_url: str, headers: dict, raw_body: bytes) -> DeliveryResult:
@@ -277,10 +301,37 @@ def deliver_webhook_now(
         )
         return None
 
-    raw_body = build_delivery_body(event_type, payload)
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    now_utc = datetime.now(timezone.utc)
+    timestamp_sec = str(int(now_utc.timestamp()))
+    event_id = str(uuid4())
+
+    raw_body = build_delivery_body(
+        event_type, payload, event_id=event_id, occurred_at=now_utc.isoformat()
+    )
+
+    # Gap 564: secrets created after this change are stored encrypted; rows from before it are
+    # plaintext and stay valid (no backfill in dev -- add-only rule). `reveal_webhook_secret`
+    # tells the two apart by the Fernet prefix, so a legacy row never hits a decrypt error.
+    from utils.encryption import reveal_webhook_secret
+    signing_secret = reveal_webhook_secret(sub.secret)
+
+    # Gap 564: two signatures, so subscribers built against the original contract keep working.
+    #   X-Webhook-Signature     = HMAC-SHA256(secret, body)                   -- unchanged, replayable
+    #   X-Webhook-Signature-V2  = HMAC-SHA256(secret, timestamp + "." + body) -- verify this one and
+    #                             reject stale X-Webhook-Timestamp values to defeat replay.
+    signature = _sign_payload(signing_secret, raw_body)
+    signature_v2 = _sign_payload(signing_secret, raw_body, timestamp=timestamp_sec)
     headers = {
         "Content-Type": "application/json",
-        "X-Webhook-Signature": _sign_payload(sub.secret, raw_body),
+        "X-Webhook-Signature": signature,
+        "X-Webhook-Signature-V2": signature_v2,
+        "X-Webhook-Timestamp": timestamp_sec,
+        "X-InvoiceEQ-Timestamp": timestamp_sec,
+        "X-InvoiceEQ-Event-Id": event_id,
+        "X-Webhook-Event": event_type,
     }
 
     try:

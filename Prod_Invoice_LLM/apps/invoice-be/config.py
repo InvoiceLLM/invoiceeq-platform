@@ -13,6 +13,11 @@ class Settings(BaseSettings):
     CHROMA_USE_SSL: bool = False
     CLERK_SECRET_KEY: str
     TOKEN_ENCRYPTION_KEY: str
+    # Gap 546: every Azure OpenAI call gets a request timeout and a bounded retry count so a hung
+    # upstream cannot hold a backend or worker thread forever. 120s sits above the measured
+    # 24-53s extraction path with margin; one retry keeps the worst case at ~4 min, not infinite.
+    LLM_REQUEST_TIMEOUT_SECONDS: float = 120.0
+    LLM_MAX_RETRIES: int = 1
     CLERK_JWT_ISSUER: str = ""
     CLERK_JWKS_URL: str = ""
     # Gap 4: gates the mock/test tenant fallback in dependencies.py.

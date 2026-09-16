@@ -26,6 +26,7 @@ ALLOWED_EVENT_TYPES = {
     "invoice.duplicate",
     "invoice.approved",
     "invoice.rejected",
+    "invoice.reopened",
     "outbound_invoice.sent",
     "outbound_invoice.overdue",
     "outbound_invoice.approved",
@@ -97,10 +98,22 @@ async def create_webhook(
     # only response that will ever include it.
     secret = secrets.token_hex(32)
 
+    # Gap 564: the secret is stored encrypted at rest (utils/encryption.py). If encryption is not
+    # working the subscription is refused rather than quietly saved in plaintext.
+    from utils.encryption import encrypt_token
+    try:
+        encrypted_secret = encrypt_token(secret)
+    except Exception as e:
+        logger.error("Webhook secret could not be encrypted at rest; subscription refused: %s", type(e).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook subscriptions are temporarily unavailable (secret encryption failed).",
+        ) from e
+
     sub = WebhookSubscription(
         tenant_id=context.tenant_id,
         target_url=payload.target_url,
-        secret=secret,
+        secret=encrypted_secret,
         subscribed_events=payload.subscribed_events,
     )
     db_session.add(sub)

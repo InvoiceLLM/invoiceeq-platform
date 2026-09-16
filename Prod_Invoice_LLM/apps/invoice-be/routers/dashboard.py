@@ -1,8 +1,8 @@
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import List, Literal, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, case
 from sqlmodel import Session, select
@@ -535,7 +535,7 @@ def get_dashboard_insights(
     flagged_counts: dict[str, int] = {}
     for inv in invoices:
         curr = _currency_of(inv)
-        amount = inv.grand_total or 0.0
+        amount = float(inv.grand_total or 0.0)
         bucket = totals_per_currency.setdefault(curr, {"total_invoiced": 0.0, "at_risk_amount": 0.0})
         bucket["total_invoiced"] += amount
         if (inv.status or "").upper() == "AUDIT_REQUIRED":
@@ -656,3 +656,39 @@ def dismiss_dashboard_insight(
     except Exception as e:
         logger.warning("Dashboard insight dismiss failed for tenant %s: %s", context.tenant_id, e)
     return {"dismissed": payload.kind}
+
+
+@router.get("/quality-rollup")
+def get_extraction_quality_rollup(
+    days: int = 30,
+    context: TenantContext = Depends(get_tenant_context),
+    db_session: Session = Depends(get_db_session),
+):
+    """Gap 526: extraction quality rollups — field correction rates and alert precisions."""
+    if context.role != "Admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required for quality rollups."
+        )
+    from services.extraction_quality_rollup import field_correction_rollup, alert_precision_rollup
+
+    since = datetime.utcnow() - timedelta(days=days) if days > 0 else None
+    field_rollups = field_correction_rollup(db_session, context.tenant_id, since=since)
+    alert_rollups = alert_precision_rollup(db_session, context.tenant_id, since=since)
+    total_resolves = field_rollups[0]["total_resolves"] if field_rollups else 0
+    total_dismissals = sum(r.get("total_dismissed", 0) for r in alert_rollups)
+    return {
+        "days": days,
+        "since": since.isoformat() if since else None,
+        "field_corrections": field_rollups,
+        "alert_precision": alert_rollups,
+        "field_correction_rollup": {
+            "total_resolves": total_resolves,
+            "fields": field_rollups,
+        },
+        "alert_precision_rollup": {
+            "total_dismissals": total_dismissals,
+            "alerts": alert_rollups,
+        },
+    }
+

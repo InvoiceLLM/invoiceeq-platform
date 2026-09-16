@@ -47,6 +47,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
+import re
 from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,37 @@ SCOPE_OUTBOUND_GLOBAL = "outbound_global"
 RULE_KEYS = ("field", "condition", "scope", "source_alert_type", "origin", "text", "kind", "params")
 
 _WILDCARD_FIELDS = (None, "", "*", "any")
+
+# ── Disallowed Standing Rule Fields (Gap 542) ───────────────────────────────────
+#: Variable transactional fields that must NEVER become standing value rules across
+#: future invoices. A single invoice's grand total or invoice number is specific to
+#: that transaction; turning it into an extraction rule corrupts every future invoice.
+DISALLOWED_STANDING_RULE_FIELDS = frozenset({
+    "invoice_number",
+    "invoice_date",
+    "due_date",
+    "po_number",
+    "subtotal",
+    "grand_total",
+    "tax_amount",
+    "items",
+})
+VARIABLE_FIELDS = DISALLOWED_STANDING_RULE_FIELDS
+
+
+
+def is_standing_rule_allowed(field: str, flow_direction: str = "INBOUND") -> bool:
+    """Gap 542: Return True if the field is allowed to form a standing extraction rule.
+
+    Variable transactional fields (totals, dates, line items, document numbers)
+    must never become persistent extraction rules across future invoices.
+    For outbound invoices (which are Global-scoped), counterparty (customer_name)
+    and transaction numbers/amounts must not form tenant-wide global value rules.
+    """
+    if flow_direction.upper() == "OUTBOUND":
+        return False
+    return field not in DISALLOWED_STANDING_RULE_FIELDS
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -200,25 +233,63 @@ def constraints_of(rules: Any, for_prompt: bool = True) -> list[str]:
     return normalize_constraints(rules, for_prompt=for_prompt)
 
 
+def _rule_conflict_key(rule: Any) -> str | None:
+    """Return a deduplication/conflict key for a rule if it targets a specific field or alert.
+    Rules sharing the same conflict key cannot coexist; the newer rule supersedes the older one (Gap 548).
+    """
+    if isinstance(rule, dict):
+        kind = rule.get("kind") or KIND_EXTRACTION
+        field = rule.get("field")
+        source_alert = rule.get("source_alert_type")
+
+        # 1. Audit correction rule or field-specific rule
+        if field and str(field).lower() not in _WILDCARD_FIELDS:
+            return f"field:{str(field).lower()}:{kind}"
+
+        # 2. Alert override or tolerance without a field
+        if kind in (KIND_TOLERANCE, KIND_CONFIDENCE, KIND_ALERT_OVERRIDE) and source_alert:
+            return f"alert:{source_alert}:{kind}"
+
+        return None
+
+    if isinstance(rule, str):
+        # Legacy audit correction string: "For <field>, extract the value as <new>, not <old>."
+        m = re.match(r"^For ([a-z0-9_ ]+), extract the value as ", rule.strip(), re.IGNORECASE)
+        if m:
+            field = m.group(1).strip().replace(" ", "_").lower()
+            return f"field:{field}:{KIND_EXTRACTION}"
+        return None
+
+    return None
+
+
 def merge_constraints(base: Any, overlay: Any) -> list[Any]:
     """Merge two raw constraint lists, overlay last (it wins on conflict), dropping
-    exact duplicates. Works on mixed legacy/structured lists — de-duplication is by
-    rendered text, so a structured rule that renders identically to an existing
-    legacy string doesn't get applied twice.
+    exact duplicates and replacing older contradictory rules on the same field (Gap 548).
+
+    Works on mixed legacy/structured lists — de-duplication is by rendered text or
+    field conflict key. When an overlay rule targets the same field or alert as an
+    existing base rule, the newer rule supersedes the old one.
 
     Returns the RAW rules (not rendered strings), because callers persist this.
     """
-    merged: list[Any] = []
-    seen: set[str] = set()
+    rules_by_key: dict[str, Any] = {}
+    key_order: list[str] = []
+
     for source in (base or [], overlay or []):
         for rule in source:
-            text = render_constraint(rule)
-            key = text if text else json.dumps(rule, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(rule)
-    return merged
+            conflict_key = _rule_conflict_key(rule)
+            if conflict_key:
+                key = conflict_key
+            else:
+                text = render_constraint(rule)
+                key = f"text:{text}" if text else f"json:{json.dumps(rule, sort_keys=True, default=str)}"
+
+            if key not in rules_by_key:
+                key_order.append(key)
+            rules_by_key[key] = rule
+
+    return [rules_by_key[k] for k in key_order]
 
 
 def rules_fingerprint(constraints: Any) -> str:
@@ -372,6 +443,17 @@ def build_alert_override_rule(
     )
 
 
+def sanitize_rule_value(value: Any, max_length: int = 500) -> Any:
+    """Gap 545: prompt injection defense for standing rules.
+    Strips newlines and control characters, and caps maximum length."""
+    if isinstance(value, str):
+        sanitized = re.sub(r"[\r\n\x00-\x1f]+", " ", value).strip()
+        if len(sanitized) > max_length:
+            sanitized = sanitized[:max_length]
+        return sanitized
+    return value
+
+
 def build_audit_correction_rule(
     *,
     field: str,
@@ -386,16 +468,19 @@ def build_audit_correction_rule(
     produced, so existing prompts and any operator eyeballing a template row see
     exactly what they saw before — only now the field/old/new are also available
     structurally instead of only inside the prose.
-    """
-    text = f"For {field.replace('_', ' ')}, extract the value as {new_value!r}, not {old_value!r}."
+    
+    Gap 545: sanitizes newlines and control characters to prevent prompt injection."""
+    sanitized_new = sanitize_rule_value(new_value)
+    sanitized_old = sanitize_rule_value(old_value)
+    text = f"For {field.replace('_', ' ')}, extract the value as {sanitized_new!r}, not {sanitized_old!r}."
     return _build(
         field=field,
-        condition=f"value={new_value!r}",
+        condition=f"value={sanitized_new!r}",
         scope=scope,
         origin=origin,
         text=text,
         kind=KIND_EXTRACTION,
-        params={"new_value": _jsonable(new_value), "old_value": _jsonable(old_value)},
+        params={"new_value": _jsonable(sanitized_new), "old_value": _jsonable(sanitized_old)},
     )
 
 
@@ -527,3 +612,71 @@ def apply_alert_overrides(alerts: list, rules: Any) -> list:
             updated["overridden_by_rule"] = True
         result.append(updated)
     return result
+
+
+def canonical_values_match(actual: Any, expected: Any, float_tol: float = 1e-4) -> bool:
+    """Compare two extraction field values canonically (Gap 543).
+
+    Handles:
+    1. Reordered dictionary keys (e.g. line items or structured metadata dicts).
+    2. Numeric tolerances and int/float/numeric-string equivalence (via math.isclose).
+    3. Datetime / Date objects with isoformat.
+    4. Lists of elements (matching ordered or reordered elements).
+    5. Stripped string matching.
+    """
+    if actual is expected:
+        return True
+    if actual is None or expected is None:
+        return actual == expected
+
+    # Convert date/datetime objects to isoformat strings
+    if hasattr(actual, "isoformat"):
+        actual = actual.isoformat()
+    if hasattr(expected, "isoformat"):
+        expected = expected.isoformat()
+
+    # Numeric comparison if both are numeric types
+    if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
+        return math.isclose(float(actual), float(expected), rel_tol=float_tol, abs_tol=float_tol)
+
+    # If one or both are numeric strings/numbers
+    if isinstance(actual, (int, float, str)) and isinstance(expected, (int, float, str)):
+        try:
+            a_num = float(actual)
+            e_num = float(expected)
+            return math.isclose(a_num, e_num, rel_tol=float_tol, abs_tol=float_tol)
+        except (ValueError, TypeError):
+            pass
+
+    # Dictionary comparison (independent of key insertion order)
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        if set(actual.keys()) != set(expected.keys()):
+            return False
+        return all(canonical_values_match(actual[k], expected[k], float_tol) for k in actual)
+
+    # List comparison
+    if isinstance(actual, list) and isinstance(expected, list):
+        if len(actual) != len(expected):
+            return False
+        # First check element-by-element
+        if all(canonical_values_match(a, e, float_tol) for a, e in zip(actual, expected)):
+            return True
+        # If element-by-element didn't match (e.g. items reordered), check multiset matching
+        unmatched_expected = list(expected)
+        for act in actual:
+            matched_idx = None
+            for idx, exp in enumerate(unmatched_expected):
+                if canonical_values_match(act, exp, float_tol):
+                    matched_idx = idx
+                    break
+            if matched_idx is None:
+                return False
+            unmatched_expected.pop(matched_idx)
+        return True
+
+    # String comparison with whitespace stripping
+    if isinstance(actual, str) and isinstance(expected, str):
+        return actual.strip() == expected.strip()
+
+    return actual == expected
+
