@@ -163,24 +163,26 @@ interface CreateUserModalProps {
   onCreated: (user: OrgUser) => void;
 }
 
-/* ─── Inline styles matching project design system ─── */
+/* ─── Inline styles matching project design system with dynamic InfiNevo theme support ─── */
 const T = {
-  bg: "#0B0F19",
-  panel: "rgba(21, 27, 38, 0.75)",
-  border: "#222D3D",
-  textPrimary: "#E2E8F0",
-  textMuted: "#94A3B8",
-  textDim: "#64748B",
-  green: "#10B981",
-  blue: "#3B82F6",
-  red: "#EF4444",
-  yellow: "#F59E0B",
+  bg: "var(--admin-bg, #0B0F19)",
+  panel: "var(--admin-panel, rgba(21, 27, 38, 0.75))",
+  border: "var(--admin-border, #222D3D)",
+  textPrimary: "var(--admin-text-primary, #E2E8F0)",
+  textMuted: "var(--admin-text-muted, #94A3B8)",
+  textDim: "var(--admin-text-dim, #64748B)",
+  green: "var(--admin-green, #10B981)",
+  blue: "var(--admin-blue, #3B82F6)",
+  red: "var(--admin-red, #EF4444)",
+  yellow: "var(--admin-yellow, #F59E0B)",
 };
 
 /* ─── Stat card ─── */
 function StatCard({ icon, label, value, color = T.green, subtitle }: StatCardProps) {
   return (
     <div
+      data-testid="admin-stat-card"
+      className="admin-stat-card"
       style={{
         background: T.panel,
         border: `1px solid ${T.border}`,
@@ -194,12 +196,15 @@ function StatCard({ icon, label, value, color = T.green, subtitle }: StatCardPro
     >
       <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "4px" }}>
         <span style={{ fontSize: "20px" }}>{icon}</span>
-        <span style={{ fontSize: "12px", fontWeight: "600", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim }}>
+        <span
+          className="admin-stat-label"
+          style={{ fontSize: "12px", fontWeight: "600", letterSpacing: "0.8px", textTransform: "uppercase", color: "var(--admin-stat-label, #64748B)" }}
+        >
           {label}
         </span>
       </div>
-      <div style={{ fontSize: "32px", fontWeight: "800", color, letterSpacing: "-1px" }}>{value}</div>
-      {subtitle && <div style={{ fontSize: "12px", color: T.textDim }}>{subtitle}</div>}
+      <div className="admin-stat-val" style={{ fontSize: "32px", fontWeight: "800", color, letterSpacing: "-1px" }}>{value}</div>
+      {subtitle && <div className="admin-stat-sub" style={{ fontSize: "12px", color: T.textDim }}>{subtitle}</div>}
     </div>
   );
 }
@@ -266,7 +271,7 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
   const inputStyle: React.CSSProperties = {
     width: "100%",
     boxSizing: "border-box",
-    background: "rgba(15,20,30,0.6)",
+    background: "var(--admin-input-bg, rgba(15,20,30,0.6))",
     border: `1px solid ${T.border}`,
     borderRadius: "10px",
     padding: "11px 14px",
@@ -278,7 +283,18 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ width: "100%", maxWidth: "440px", background: "#141926", border: `1px solid ${T.border}`, borderRadius: "20px", padding: "36px", boxShadow: "0 24px 64px rgba(0,0,0,0.5)" }}>
+      <div
+        className="admin-modal-box"
+        style={{
+          width: "100%",
+          maxWidth: "440px",
+          background: "var(--admin-modal-bg, #141926)",
+          border: `1px solid ${T.border}`,
+          borderRadius: "20px",
+          padding: "36px",
+          boxShadow: "var(--admin-modal-shadow, 0 24px 64px rgba(0,0,0,0.5))",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "24px" }}>
           <h3 style={{ fontSize: "18px", fontWeight: "700", color: T.textPrimary, margin: 0 }}>👤 Create New User</h3>
           <button onClick={onClose} style={{ background: "none", border: "none", color: T.textDim, cursor: "pointer", fontSize: "20px" }}>✕</button>
@@ -294,27 +310,27 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
               <div>
-                <div style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>First Name</div>
+                <div className="admin-form-label" style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>First Name</div>
                 <input style={inputStyle} type="text" placeholder="John" value={firstName} onChange={(e) => setFirstName(e.target.value)} required />
               </div>
               <div>
-                <div style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Last Name</div>
+                <div className="admin-form-label" style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Last Name</div>
                 <input style={inputStyle} type="text" placeholder="Doe" value={lastName} onChange={(e) => setLastName(e.target.value)} required />
               </div>
             </div>
             <div>
-              <div style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Work Email</div>
+              <div className="admin-form-label" style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Work Email</div>
               <input style={inputStyle} type="email" placeholder="john@company.com" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
             <div>
-              <div style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Temporary Password</div>
+              <div className="admin-form-label" style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Temporary Password</div>
               <input style={inputStyle} type="password" placeholder="Min. 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
             </div>
 
             {/* Feature 1.1 Task 1.1.6 — permission checkboxes at create time */}
             <div>
-              <div style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Permissions</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", background: "rgba(15,20,30,0.6)", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 14px" }}>
+              <div className="admin-form-label" style={{ fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim, marginBottom: "6px" }}>Permissions</div>
+              <div className="admin-perm-box" style={{ display: "flex", flexDirection: "column", gap: "8px", background: "var(--admin-input-bg, rgba(15,20,30,0.6))", border: `1px solid ${T.border}`, borderRadius: "10px", padding: "12px 14px" }}>
                 {PERMISSIONS.map(({ key, label }) => (
                   <label key={key} style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: T.textMuted, cursor: "pointer" }}>
                     <input
@@ -587,7 +603,7 @@ export default function AdminDashboardPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+    <div data-testid="admin-console-page" className="admin-console-page" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
       {/* Page header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div>
@@ -608,16 +624,26 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Org info card */}
-      <div style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.07) 0%, rgba(59,130,246,0.07) 100%)", border: `1px solid ${T.border}`, borderRadius: "14px", padding: "24px 28px" }}>
+      <div
+        data-testid="admin-org-card"
+        className="admin-org-card"
+        style={{
+          background: "var(--admin-org-bg, linear-gradient(135deg, rgba(16,185,129,0.07) 0%, rgba(59,130,246,0.07) 100%))",
+          border: `1px solid ${T.border}`,
+          borderRadius: "14px",
+          padding: "24px 28px",
+          boxShadow: "var(--admin-card-shadow, none)",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px" }}>
           <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "linear-gradient(135deg, #10B981 0%, #3B82F6 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px", fontWeight: "700", color: "#fff" }}>
             {orgName.charAt(0).toUpperCase()}
           </div>
           <div>
-            <div style={{ fontSize: "18px", fontWeight: "700", color: T.textPrimary }}>{orgName}</div>
-            <div style={{ fontSize: "13px", color: T.textDim }}>{orgType} · {country}</div>
+            <div className="admin-org-name" style={{ fontSize: "18px", fontWeight: "700", color: T.textPrimary }}>{orgName}</div>
+            <div className="admin-org-type" style={{ fontSize: "13px", color: T.textDim }}>{orgType} · {country}</div>
           </div>
-          <div style={{ marginLeft: "auto", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "20px", padding: "4px 12px", fontSize: "12px", color: T.green, fontWeight: "600" }}>
+          <div className="admin-active-pill" style={{ marginLeft: "auto", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "20px", padding: "4px 12px", fontSize: "12px", color: T.green, fontWeight: "600" }}>
             ● Active
           </div>
         </div>
@@ -628,8 +654,8 @@ export default function AdminDashboardPage() {
             { label: "Joined", value: user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "Today" },
           ].map(({ label, value }) => (
             <div key={label}>
-              <div style={{ fontSize: "11px", color: T.textDim, fontWeight: "600", letterSpacing: "0.6px", textTransform: "uppercase", marginBottom: "2px" }}>{label}</div>
-              <div style={{ fontSize: "14px", color: T.textPrimary, fontWeight: "500" }}>{value}</div>
+              <div className="admin-meta-label" style={{ fontSize: "11px", color: T.textDim, fontWeight: "600", letterSpacing: "0.6px", textTransform: "uppercase", marginBottom: "2px" }}>{label}</div>
+              <div className="admin-meta-val" style={{ fontSize: "14px", color: T.textPrimary, fontWeight: "500" }}>{value}</div>
             </div>
           ))}
         </div>
@@ -643,17 +669,41 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Users table */}
-      <div style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: "14px", overflow: "hidden" }}>
+      <div
+        data-testid="admin-users-table"
+        className="admin-table-card"
+        style={{
+          background: T.panel,
+          border: `1px solid ${T.border}`,
+          borderRadius: "14px",
+          overflow: "hidden",
+          boxShadow: "var(--admin-card-shadow, none)",
+        }}
+      >
         {/* Table header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: `1px solid ${T.border}` }}>
           <div>
-            <div style={{ fontSize: "15px", fontWeight: "700", color: T.textPrimary }}>Users</div>
-            <div style={{ fontSize: "12px", color: T.textDim, marginTop: "2px" }}>Users created here sync to Clerk and can log in to the dashboard</div>
+            <div className="admin-table-title" style={{ fontSize: "15px", fontWeight: "700", color: T.textPrimary }}>Users</div>
+            <div className="admin-table-sub" style={{ fontSize: "12px", color: T.textDim, marginTop: "2px" }}>Users created here sync to Clerk and can log in to the dashboard</div>
           </div>
         </div>
 
         {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto", padding: "10px 24px", borderBottom: `1px solid ${T.border}`, fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim }}>
+        <div
+          className="admin-table-header-row"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto",
+            padding: "10px 24px",
+            borderBottom: `1px solid ${T.border}`,
+            background: "var(--admin-th-bg, transparent)",
+            fontSize: "11px",
+            fontWeight: "700",
+            letterSpacing: "0.8px",
+            textTransform: "uppercase",
+            color: "var(--admin-th-color, #64748B)",
+          }}
+        >
           <span>Name</span>
           <span>Email</span>
           <span>Role</span>
@@ -662,31 +712,23 @@ export default function AdminDashboardPage() {
           <span>Action</span>
         </div>
 
-        {/* The signed-in viewer's own row.
-            FE Gap 167: every label here was hardcoded ("Organisation Owner",
-            "Admin", "All (Admin)") and was shown to whoever loaded the page,
-            so a permission-less user who reached /admin was told they were the
-            org's Admin.
-            The role badge, the subtitle and the permissions cell now all come
-            from GET /auth/me. Only an Admin gets this far now, but the values
-            are read rather than asserted so this row can never drift from the
-            backend's answer again. */}
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
+        {/* The signed-in viewer's own row. */}
+        <div className="admin-table-row" style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px" }}>
               {(user?.firstName || adminEmail).charAt(0).toUpperCase()}
             </div>
             <div>
-              <div style={{ fontSize: "14px", fontWeight: "600", color: T.textPrimary }}>{user?.firstName ? `${user.firstName} ${user.lastName || ""}` : "You"}</div>
-              <div style={{ fontSize: "12px", color: T.textDim }}>{selfSubtitle}</div>
+              <div className="admin-user-name" style={{ fontSize: "14px", fontWeight: "600", color: T.textPrimary }}>{user?.firstName ? `${user.firstName} ${user.lastName || ""}` : "You"}</div>
+              <div className="admin-user-sub" style={{ fontSize: "12px", color: T.textDim }}>{selfSubtitle}</div>
             </div>
           </div>
-          <div style={{ fontSize: "14px", color: T.textMuted }}>{adminEmail}</div>
+          <div className="admin-user-email" style={{ fontSize: "14px", color: T.textMuted }}>{adminEmail}</div>
           <div>
-            <span style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.blue, fontWeight: "600" }}>{role || "Unknown"}</span>
+            <span className="admin-role-badge" style={{ background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.blue, fontWeight: "600" }}>{role || "Unknown"}</span>
           </div>
           <div>
-            <span style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>● Active</span>
+            <span className="admin-status-active" style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>● Active</span>
           </div>
           {/* Admin is a role, not a 4th permission -- it implies all three
               (dependencies.resolve_permissions), so there is nothing to tick. */}
@@ -702,31 +744,26 @@ export default function AdminDashboardPage() {
           </div>
         ) : (
           users.map((u) => (
-            <div key={u.id} style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
+            <div key={u.id} className="admin-table-row" style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1.6fr auto", padding: "14px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px" }}>
                   {u.name.charAt(0).toUpperCase()}
                 </div>
-                <div style={{ fontSize: "14px", fontWeight: "600", color: T.textPrimary }}>{u.name}</div>
+                <div className="admin-user-name" style={{ fontSize: "14px", fontWeight: "600", color: T.textPrimary }}>{u.name}</div>
               </div>
-              <div style={{ fontSize: "14px", color: T.textMuted }}>{u.email}</div>
+              <div className="admin-user-email" style={{ fontSize: "14px", color: T.textMuted }}>{u.email}</div>
               <div>
-                {/* Gap 167: the stored role, not a literal "User" -- this cell
-                    claimed "User" even for a row the backend returned as, say,
-                    Auditor. */}
-                <span style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>{u.role || "User"}</span>
+                <span className="admin-role-badge" style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: T.green, fontWeight: "600" }}>{u.role || "User"}</span>
               </div>
               <div>
-                <span style={{ background: u.status === "active" ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.1)", border: `1px solid ${u.status === "active" ? "rgba(16,185,129,0.2)" : "rgba(245,158,11,0.2)"}`, borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: u.status === "active" ? T.green : T.yellow, fontWeight: "600" }}>
+                <span className={u.status === "active" ? "admin-status-active" : "admin-status-invited"} style={{ background: u.status === "active" ? "rgba(16,185,129,0.1)" : "rgba(245,158,11,0.1)", border: `1px solid ${u.status === "active" ? "rgba(16,185,129,0.2)" : "rgba(245,158,11,0.2)"}`, borderRadius: "6px", padding: "3px 10px", fontSize: "12px", color: u.status === "active" ? T.green : T.yellow, fontWeight: "600" }}>
                   {u.status === "active" ? "● Active" : "⏳ Invited"}
                 </span>
               </div>
-              {/* Feature 1.1 Task 1.1.6 — edit-time permission checkboxes.
-                  Each toggle PUTs immediately; the backend reads the flags off
-                  this row on the user's next request, so no re-login. */}
+              {/* Feature 1.1 Task 1.1.6 — edit-time permission checkboxes. */}
               <div style={{ display: "flex", gap: "12px", alignItems: "center", opacity: savingId === u.id ? 0.5 : 1 }}>
                 {PERMISSIONS.map(({ key, label }) => (
-                  <label key={key} title={label} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: T.textDim, cursor: "pointer" }}>
+                  <label key={key} title={label} className="admin-perm-label" style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: T.textDim, cursor: "pointer" }}>
                     <input
                       id={`perm-${key}-${u.id}`}
                       aria-label={`${label} permission for ${u.email}`}
@@ -759,17 +796,22 @@ export default function AdminDashboardPage() {
         )}
       </div>
 
-      {/* Dropped inbound emails — BE Gap 124 item 6.
-          Same panel/table shape as the Users table above. Deliberately placed
-          in the Admin console rather than under Settings → Email Setup: the
-          rows that matter most are the ones nobody's email settings explain
-          (failed authentication, oversized payloads), and the Admin is the
-          only role that can act on them. */}
-      <div style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: "14px", overflow: "hidden" }}>
+      {/* Dropped inbound emails — BE Gap 124 item 6. */}
+      <div
+        data-testid="admin-dropped-table"
+        className="admin-table-card"
+        style={{
+          background: T.panel,
+          border: `1px solid ${T.border}`,
+          borderRadius: "14px",
+          overflow: "hidden",
+          boxShadow: "var(--admin-card-shadow, none)",
+        }}
+      >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 24px", borderBottom: `1px solid ${T.border}` }}>
           <div>
-            <div style={{ fontSize: "15px", fontWeight: "700", color: T.textPrimary }}>📥 Dropped inbound emails</div>
-            <div style={{ fontSize: "12px", color: T.textDim, marginTop: "2px" }}>
+            <div className="admin-table-title" style={{ fontSize: "15px", fontWeight: "700", color: T.textPrimary }}>📥 Dropped inbound emails</div>
+            <div className="admin-table-sub" style={{ fontSize: "12px", color: T.textDim, marginTop: "2px" }}>
               Mail sent to your workspace mailbox that did not become an invoice, and why.
             </div>
           </div>
@@ -782,7 +824,21 @@ export default function AdminDashboardPage() {
           </button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 2fr 2.6fr 1.2fr", padding: "10px 24px", borderBottom: `1px solid ${T.border}`, fontSize: "11px", fontWeight: "700", letterSpacing: "0.8px", textTransform: "uppercase", color: T.textDim }}>
+        <div
+          className="admin-table-header-row"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.4fr 2fr 2.6fr 1.2fr",
+            padding: "10px 24px",
+            borderBottom: `1px solid ${T.border}`,
+            background: "var(--admin-th-bg, transparent)",
+            fontSize: "11px",
+            fontWeight: "700",
+            letterSpacing: "0.8px",
+            textTransform: "uppercase",
+            color: "var(--admin-th-color, #64748B)",
+          }}
+        >
           <span>Reason</span>
           <span>From</span>
           <span>Detail</span>
@@ -796,18 +852,14 @@ export default function AdminDashboardPage() {
           </div>
         ) : (
           droppedEmails.map((d) => (
-            <div key={d.id} style={{ display: "grid", gridTemplateColumns: "1.4fr 2fr 2.6fr 1.2fr", padding: "12px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center", gap: "8px" }}>
+            <div key={d.id} className="admin-table-row" style={{ display: "grid", gridTemplateColumns: "1.4fr 2fr 2.6fr 1.2fr", padding: "12px 24px", borderBottom: `1px solid ${T.border}`, alignItems: "center", gap: "8px" }}>
               <div>
-                <span style={{ background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "6px", padding: "3px 8px", fontSize: "11px", color: T.yellow, fontWeight: "600" }}>
+                <span className="admin-drop-reason-badge" style={{ background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: "6px", padding: "3px 8px", fontSize: "11px", color: T.yellow, fontWeight: "600" }}>
                   {DROP_REASON_LABELS[d.reason] || d.reason}
                 </span>
               </div>
               <div style={{ fontSize: "13px", color: T.textMuted, overflowWrap: "anywhere" }}>
                 {d.from_email || "—"}
-                {/* An unattributed row is shown because the sender's DOMAIN
-                    matches this workspace, not because the address is
-                    registered to it. Saying so keeps the Admin from reading a
-                    domain match as proof the mail was meant for them. */}
                 {!d.attributed && (
                   <span style={{ marginLeft: "6px", fontSize: "11px", color: T.textDim }} title="Sender is not in this workspace's authorized email set; matched on domain only.">
                     (unregistered)
@@ -833,13 +885,22 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Info banner */}
-      <div style={{ background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)", borderRadius: "12px", padding: "14px 20px", display: "flex", gap: "12px", alignItems: "flex-start", fontSize: "13px", color: T.textMuted }}>
+      <div
+        data-testid="admin-info-banner"
+        className="admin-info-banner"
+        style={{
+          background: "var(--admin-banner-bg, rgba(59,130,246,0.06))",
+          border: `1px solid var(--admin-banner-border, rgba(59,130,246,0.15))`,
+          borderRadius: "12px",
+          padding: "14px 20px",
+          display: "flex",
+          gap: "12px",
+          alignItems: "flex-start",
+          fontSize: "13px",
+          color: "var(--admin-banner-text, #94A3B8)",
+        }}
+      >
         <span style={{ fontSize: "18px", flexShrink: 0 }}>💡</span>
-        {/* FE Gap 169: this used to point new users at
-            `localhost:3000/admin/login`, a route that has never existed in this
-            app (Gap 66) -- and a hardcoded localhost host, so it was wrong in
-            every deployed environment too. Sign-in happens on the marketing
-            site's /login page, which then lands them on this dashboard. */}
         <span>
           Users created here are synced to <strong style={{ color: T.textPrimary }}>Clerk</strong> and assigned the <strong style={{ color: T.green }}>user</strong> role.
           They sign in at{" "}

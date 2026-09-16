@@ -274,7 +274,7 @@ export default function Header() {
                 ? `${needsAttention} invoice${needsAttention === 1 ? "" : "s"} need review`
                 : "Nothing needs review right now"
             }
-            className="p-1.5 rounded-lg hover:bg-[#1E293B]/50 hover:text-white transition-all text-slate-400 relative"
+            className="p-1.5 rounded-lg hover:bg-[#1E293B]/50 hover:text-white transition-colors text-slate-400 relative"
           >
             <Bell className="h-5 w-5" />
             {needsAttention !== null && needsAttention > 0 && (
@@ -325,7 +325,7 @@ export default function Header() {
           <button
             type="button"
             onClick={() => setShowProfileMenu(!showProfileMenu)}
-            className="flex items-center gap-3.5 pl-2 py-1.5 pr-3 rounded-lg hover:bg-[#1E293B]/40 transition-all duration-200 group"
+            className="flex items-center gap-3.5 pl-2 py-1.5 pr-3 rounded-lg hover:bg-[#1E293B]/40 transition-colors duration-200 group"
           >
             {/* Gap 116: while Clerk is still resolving, this shows a skeleton.
                 It used to show "AR"/"Alex R." -- a specific, plausible, wrong

@@ -134,7 +134,7 @@ export default function Sidebar() {
       data-collapsed={collapsed ? "true" : "false"}
       className={`${
         collapsed ? "w-[76px]" : "w-64"
-      } border-r border-[#222D3D] bg-[#0F172A]/40 backdrop-blur-md flex flex-col h-full text-slate-300 transition-all duration-200`}
+      } border-r border-[#222D3D] bg-[#0F172A]/40 backdrop-blur-md flex flex-col h-full text-slate-300 transition-[width] duration-200`}
     >
       {/* Brand Header */}
       <div className="h-16 flex items-center px-6 border-b border-[#222D3D] gap-3">
@@ -155,7 +155,7 @@ export default function Sidebar() {
               key={item.name}
               href={item.href}
               title={collapsed ? item.name : undefined}
-              className={`flex items-center gap-3.5 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 hover:text-white hover:bg-[#1E293B]/50 ${
+              className={`flex items-center gap-3.5 px-4 py-3 rounded-lg text-sm font-medium transition-colors duration-200 hover:text-white hover:bg-[#1E293B]/50 ${
                 collapsed ? "justify-center px-0" : ""
               } ${
                 isActive
