@@ -2541,6 +2541,22 @@ CARDS_BY_DOC_TYPE: dict = {
         card_what_this_is,
         card_compliance, card_suggested_questions, card_confidence_gaps,
     ),
+    "GST_RETURN": (
+        card_what_this_is,
+        card_compliance, card_suggested_questions, card_confidence_gaps,
+    ),
+    "LOAN_SCHEDULE": (
+        card_what_this_is,
+        card_compliance, card_suggested_questions, card_confidence_gaps,
+    ),
+    "BUDGET": (
+        card_what_this_is,
+        card_compliance, card_suggested_questions, card_confidence_gaps,
+    ),
+    "PERIOD_ACCOUNTS": (
+        card_what_this_is,
+        card_compliance, card_suggested_questions, card_confidence_gaps,
+    ),
 }
 
 #: Ruling R4's five actions, as data. The FE renders these; the BE endpoint that

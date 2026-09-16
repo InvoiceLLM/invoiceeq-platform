@@ -84,27 +84,42 @@ def _to_float(value: Any) -> Optional[float]:
 def parse_statement_lines(extracted_json: Optional[dict]) -> list:
     """Normalised rows from an extraction, in printed order.
 
-    Reads `statement_lines` (the field Feature 30 added to the REFERENCE schema)
-    and falls back to `referenced_documents` for a statement that was extracted
-    BEFORE that field existed — an old row still has a list of references, and a
-    reference with an amount is a usable, if poorer, ledger line. The fallback is
-    marked so the confidence of anything computed from it can say where it came
-    from.
+    Reads `statement_lines`, `transactions`, or `bank_lines` and falls back to
+    `referenced_documents` for older extractions.
     """
     data = extracted_json or {}
     out: list = []
 
-    for raw in data.get("statement_lines") or []:
+    raw_lines = (
+        data.get("statement_lines")
+        or data.get("transactions")
+        or data.get("bank_lines")
+        or []
+    )
+
+    for raw in raw_lines:
         if not isinstance(raw, dict):
             continue
+        line_date = _to_date(raw.get("line_date") or raw.get("date") or raw.get("tx_date") or raw.get("value_date"))
+        narration = raw.get("narration") or raw.get("description") or raw.get("particulars") or None
+        debit = _to_float(raw.get("debit") or raw.get("withdrawal"))
+        credit = _to_float(raw.get("credit") or raw.get("deposit"))
+        amt = _to_float(raw.get("amount"))
+        if debit is None and credit is None and amt is not None:
+            if amt < 0:
+                debit = abs(amt)
+            else:
+                credit = amt
+        balance = _to_float(raw.get("balance") or raw.get("closing_balance"))
+        utr_ref = raw.get("utr_ref") or raw.get("ref") or raw.get("utr") or raw.get("reference") or None
         out.append(
             {
-                "line_date": _to_date(raw.get("line_date")),
-                "narration": (raw.get("narration") or None),
-                "debit": _to_float(raw.get("debit")),
-                "credit": _to_float(raw.get("credit")),
-                "balance": _to_float(raw.get("balance")),
-                "utr_ref": (raw.get("utr_ref") or None),
+                "line_date": line_date,
+                "narration": narration,
+                "debit": debit,
+                "credit": credit,
+                "balance": balance,
+                "utr_ref": utr_ref,
                 "source": "statement_lines",
             }
         )

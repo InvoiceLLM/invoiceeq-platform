@@ -246,3 +246,20 @@ def test_metric_definitions_are_available_without_the_sql():
 )
 def test_preferred_metric_is_deterministic(question, expected):
     assert sv.preferred_metric_for(question) == expected
+
+
+def test_fact_metrics_registered_and_clearance_filtering():
+    """Verify that all new fact metrics are registered and support clearance filtering."""
+    expected_fact_metrics = {
+        "commitments",
+        "delivery_events",
+        "payment_events",
+        "recurrence",
+        "period_accounts",
+        "budgets",
+    }
+    for m in expected_fact_metrics:
+        assert m in sv.METRICS
+        assert ":tenant_id" in sv.METRICS[m].sql
+        assert "clearance" in sv.METRICS[m].filters
+

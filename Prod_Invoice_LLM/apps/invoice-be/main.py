@@ -20,6 +20,7 @@ from routers import chat_attachments
 from routers import documents
 from routers import config_features  # Feature 27 R5(a)
 from routers import ingestion_history  # Gap 464: ingestion History screen
+from routers import today  # Feature 33: ATLAS Today router
 from utils.logging_config import TracingAndLoggingMiddleware, setup_structured_logging
 
 logger = logging.getLogger(__name__)
@@ -205,6 +206,8 @@ app.include_router(sandbox.router, prefix="/api/v1")
 # only by an `inv_widget_` token, which resolves to WidgetContext and not to
 # TenantContext -- see routers/widget.py.
 app.include_router(widget.router, prefix="/api/v1")
+app.include_router(today.router, prefix="/api/v1")
+app.include_router(today.router)
 
 # Gap 184: documentation-only. `app.webhooks` contributes an OpenAPI 3.1
 # "webhooks" section describing the events this platform SENDS -- nothing is

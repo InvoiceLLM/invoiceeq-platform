@@ -86,13 +86,16 @@ def threshold(name: str, tenant_id: Any = None, db_session: Optional[Any] = None
         return default
 
     try:
+        from uuid import UUID
         from sqlmodel import select
 
         from models import TenantInsightSetting
 
+        tid = tenant_id if isinstance(tenant_id, UUID) else UUID(str(tenant_id))
+
         row = db_session.exec(
             select(TenantInsightSetting).where(
-                TenantInsightSetting.tenant_id == tenant_id,
+                TenantInsightSetting.tenant_id == tid,
                 TenantInsightSetting.name == name,
             )
         ).first()

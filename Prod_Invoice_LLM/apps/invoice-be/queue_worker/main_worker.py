@@ -17,6 +17,7 @@ from queue_worker.handlers import (
     handle_process_chat_job,
 )
 from queue_worker.outbound_handlers import handle_process_outbound_invoice
+from queue_worker.analyst_handlers import handle_analyst_job  # Feature 33 33.15
 
 # Feature 19 (Task 19.3): Structured JSON logging for background worker
 setup_structured_logging(service_name="queue-worker")
@@ -248,6 +249,14 @@ def _process_message(queue_client: QueueClient, msg) -> None:
                 # single id so a message enqueued before this deploy is fine.
                 attachment_ids=kwargs.get("attachment_ids"),
             )
+        elif task_name == "analyst":
+            # Feature 33 Task 33.15: ATLAS tenant-scope analyst job
+            handle_analyst_job(
+                job_id=kwargs.get("job_id"),
+                tenant_id=tenant_id,
+                clearance=kwargs.get("clearance", "ops"),
+                since=kwargs.get("since"),
+            )
         else:
             logger.warning(f"Unknown task {task_name}")
 
@@ -303,6 +312,16 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
                     job_id=data.get("job_id"),
                     attachment_id=data.get("attachment_id"),
                     tenant_id=data.get("tenant_id"),
+                )
+                return
+            if data.get("task") == "analyst":
+                # Feature 33 Task 33.15: ATLAS tenant-scope analyst run
+                executor.submit(
+                    handle_analyst_job,
+                    job_id=data.get("job_id"),
+                    tenant_id=data.get("tenant_id"),
+                    clearance=data.get("clearance", "ops"),
+                    since=data.get("since"),
                 )
                 return
             executor.submit(

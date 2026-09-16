@@ -1711,6 +1711,7 @@ def list_open_insights(
         status=status,
         attachment_id=attachment_id,
         limit=min(max(int(limit or 100), 1), 500),
+        clearance=tenant_context.clearance,
     )
     return [_insight_out(r) for r in rows]
 
@@ -1769,7 +1770,11 @@ def insight_discuss_seed(
     from services.insights import list_insights
 
     rows = list_insights(
-        tenant_context.tenant_id, db_session, status=None, limit=500
+        tenant_context.tenant_id,
+        db_session,
+        status=None,
+        limit=500,
+        clearance=tenant_context.clearance,
     )
     row = next((r for r in rows if r.id == insight_id), None)
     if row is None:

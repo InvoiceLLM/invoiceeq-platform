@@ -217,12 +217,14 @@ def _to_out(
 def _require_owned_session(
     session_id: UUID, db_session: Session, tenant_context: TenantContext
 ) -> ChatSession:
-    chat_session = db_session.exec(
-        select(ChatSession).where(
-            ChatSession.id == session_id,
-            ChatSession.tenant_id == tenant_context.tenant_id,
-        )
-    ).first()
+    from services.clearance import clearance_filter
+
+    stmt = select(ChatSession).where(
+        ChatSession.id == session_id,
+        ChatSession.tenant_id == tenant_context.tenant_id,
+    )
+    stmt = clearance_filter(stmt, ChatSession, tenant_context.clearance)
+    chat_session = db_session.exec(stmt).first()
     if chat_session is None:
         # 404 rather than 403 on a cross-tenant id: confirming that someone
         # else's session exists is itself a disclosure.
@@ -233,12 +235,14 @@ def _require_owned_session(
 def _require_owned_attachment(
     attachment_id: UUID, db_session: Session, tenant_context: TenantContext
 ) -> ChatAttachment:
-    row = db_session.exec(
-        select(ChatAttachment).where(
-            ChatAttachment.id == attachment_id,
-            ChatAttachment.tenant_id == tenant_context.tenant_id,
-        )
-    ).first()
+    from services.clearance import clearance_filter
+
+    stmt = select(ChatAttachment).where(
+        ChatAttachment.id == attachment_id,
+        ChatAttachment.tenant_id == tenant_context.tenant_id,
+    )
+    stmt = clearance_filter(stmt, ChatAttachment, tenant_context.clearance)
+    row = db_session.exec(stmt).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Attachment not found.")
     return row
@@ -334,6 +338,7 @@ async def upload_chat_attachment(
         blob_path=blob_path,
         file_size_bytes=len(data),
         extraction_status="PENDING",
+        clearance=getattr(chat_session, "clearance", "ops"),
         created_at=created_at,
         expires_at=created_at
         + timedelta(days=_get_settings().CHAT_ATTACHMENT_TTL_DAYS),

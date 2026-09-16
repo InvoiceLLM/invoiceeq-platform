@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Compare — InvoiceEQ vs. Legacy OCR vs. General AI</title>
+  <meta name="description" content="A direct, honest comparison of InvoiceEQ against template OCR and general-purpose LLM extraction on the dimensions that matter for accounts payable." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="catalog.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo"><span class="logo-mark"><svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="nav-link">Overview</a></li>
+        <li><a href="modules.html" class="nav-link">Modules</a></li>
+        <li><a href="how-it-works.html" class="nav-link">How It Works</a></li>
+        <li><a href="compare.html" class="nav-link active">Compare</a></li>
+        <li><a href="security.html" class="nav-link">Security</a></li>
+        <li><a href="scenarios.html" class="nav-link">Scenarios</a></li>
+      </ul>
+      <a href="how-it-works.html#deployment" class="btn-primary nav-cta">Start 14-Day Pilot</a>
+    </div>
+  </nav>
+
+  <div class="container page-hero">
+    <div class="page-hero-eyebrow">Competitive comparison</div>
+    <h1 class="page-hero-title">The comparison table<br/>with the honest rows left in.</h1>
+    <p class="page-hero-sub">Most comparison tables omit the dimensions where the incumbent wins or the new entrant is weaker. The five dimensions below are the ones that actually determine AP automation outcomes. Every row applies to your operation, not a reference account.</p>
+  </div>
+
+  <section class="section">
+    <div class="container">
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th style="width:200px">Dimension</th>
+              <th>Legacy Template OCR<br/><span style="font-weight:400; font-size:12px; text-transform:none; letter-spacing:0">ABBYY, Kofax, and equivalents</span></th>
+              <th>General-purpose LLM Extraction<br/><span style="font-weight:400; font-size:12px; text-transform:none; letter-spacing:0">GPT / Claude / Gemini parsing to JSON</span></th>
+              <th class="col-invoiceeq">InvoiceEQ<br/><span style="font-weight:400; font-size:12px; text-transform:none; letter-spacing:0">Deterministic AP platform</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="row-dim-label">Arithmetic verification</td>
+              <td>Regex rules against extracted strings; breaks on layout shifts or character confusion (O vs. 0). No independent rebuild of totals.</td>
+              <td>Model generates the most probable total. When line items and tax don't reconcile, it produces a figure that makes the arithmetic look right — and never signals uncertainty.</td>
+              <td class="col-invoiceeq">Exact decimal engine in deterministic code. No model in the arithmetic path. A total that cannot be rebuilt from line items stops the invoice — always.</td>
+            </tr>
+            <tr>
+              <td class="row-dim-label">Three-way reconciliation</td>
+              <td>Priced add-on in most systems. Matching is rigid exact-string — part number spelling variations and partial deliveries create manual exceptions at scale.</td>
+              <td>Unreliable across multi-table line items. Model context windows struggle with long PO line lists; partial delivery logic is inconsistent across invocations.</td>
+              <td class="col-invoiceeq">Three-tier cascade: exact match, fuzzy string, vector similarity on part descriptions. Partial deliveries and price variance bands handled natively within ±0.01 tolerance.</td>
+            </tr>
+            <tr>
+              <td class="row-dim-label">Rule learning &amp; adaptation</td>
+              <td>Consultant engagement required per template change. A supplier who redesigns their PDF triggers a project, not a correction.</td>
+              <td>Prompt drift — a tuning change for one supplier pattern silently degrades accuracy for another. No replay corpus, no regression gate.</td>
+              <td class="col-invoiceeq">Every candidate rule replayed against 500 historical invoices before promotion. Zero regressions on record. Operators define rules through the UI — no developer required.</td>
+            </tr>
+            <tr>
+              <td class="row-dim-label">Data isolation &amp; retention</td>
+              <td>Typically on-premise or private-cloud deployments with large footprints. Data isolation is physical, but the operational cost is high.</td>
+              <td>Training and retention exposure. General-purpose API providers may use inputs to improve base models unless enterprise agreements explicitly prevent it — and those agreements are not universal.</td>
+              <td class="col-invoiceeq">Zero retention for training. Per-tenant cryptographic isolation at the storage layer — partitioned vector indices, row-level database predicates, ephemeral signed URLs. Not configurable out of this state.</td>
+            </tr>
+            <tr>
+              <td class="row-dim-label">Time to production</td>
+              <td>4–9 month consulting cycle typical. Template creation, integration, UAT, and rollout per supplier cluster are sequential.</td>
+              <td>Bespoke internal engineering project. Prompt engineering, validation tooling, and exception handling are not packaged — each deployment is built.</td>
+              <td class="col-invoiceeq">14 days to production cutover on a standard ERP with credentials available. Caveat: custom connectors and multi-entity rollouts extend this — see the deployment page.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:24px; padding:20px 24px; background:var(--panel); border:1px solid var(--border); border-radius:10px;">
+        <p style="font-size:13px; color:var(--text-dim); line-height:1.65; font-style:italic;">
+          The rows above favour InvoiceEQ — this is a product catalogue. The maturity ladder on the <a href="index.html#maturity" style="color:var(--blue); text-decoration:none;">overview page</a>
+          and the limits section show where InvoiceEQ is not the right choice. If you are already live on Coupa or Ariba,
+          or you process fewer than ~500 invoices per month, read those sections before requesting a pilot.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCORECARD -->
+  <section class="section section-dark" id="scorecard">
+    <div class="container">
+      <div style="max-width:720px">
+        <div class="section-label">Evaluation scorecard</div>
+        <h2 class="section-title">12 criteria. Score us and<br/>anyone else on the same sheet.</h2>
+        <p class="section-sub">Use these criteria to evaluate InvoiceEQ and any competitor. The criteria are designed so that a system that scores well on all 12 actually works in production — not one that passed a demo on a clean sample.</p>
+
+        <div style="display:flex; flex-direction:column; gap:2px; margin-top:16px;">
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;" id="sc1">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">1</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Arithmetic reconstruction rate on your worst documents</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Run the same 500 documents through every system. What percentage of totals does each system reconstruct correctly from line items — independently, not by reading the stated total?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">2</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Duplicate detection rate on same-vendor, same-total, different-number invoices</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Layer-3 near-duplicates — the ones where the fraud or error is a changed invoice number, not a changed amount — are the most expensive class to miss.</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">3</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">STP rate on partial-delivery invoices</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Take 50 invoices where the billed quantity is less than the PO quantity. What fraction process straight through without a false exception?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">4</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Regression rate on rule changes</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">After tuning a rule for one supplier, what fraction of other suppliers' invoices extract worse than before? The number should be zero.</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">5</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Time to process a layout-changed invoice without a manual rule update</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">A supplier moves their total to a different position on the page. How long does it take the system to handle the change — minutes, days, or a consulting engagement?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">6</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Cross-tenant data read test</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Authenticate as Tenant A. Attempt a direct database query or API call referencing a known Tenant B invoice ID. What is returned?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">7</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Audit trail completeness for a randomly chosen processed invoice</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Pick any processed invoice at random. Can you reconstruct: what was extracted, which rule applied, which PO it matched, who reviewed it, and when?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">8</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Time-to-baseline on a new entity onboard</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Adding a new legal entity: is it a configuration (hours) or a migration project (weeks)?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">9</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Total coverage at any invoice volume</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Does the system check every invoice at every value — including the $42 freight invoice that nobody reads — or does it sample?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">10</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Natural-language query fidelity on your own invoice history</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Ask: "How much did we pay [top supplier] in the last 90 days, broken down by month?" Is the answer sourced and verifiable, or does it read as a confident estimate?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px; margin-bottom:2px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">11</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">Outbound invoice error rate before customer delivery</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Run your last 200 outbound customer invoices through pre-flight checks. How many carry a line item or tax error that would trigger a customer dispute?</p></div>
+          </div>
+          <div style="display:grid; grid-template-columns:32px 1fr; gap:16px; align-items:start; padding:18px 20px; background:var(--card); border:1px solid var(--border); border-radius:8px;">
+            <span style="font-family:var(--font-serif); font-size:22px; color:var(--blue); line-height:1;">12</span>
+            <div><strong style="color:var(--text-h); font-size:14px;">What the vendor says when you ask where it doesn't apply</strong><p style="font-size:13px; margin-top:6px; line-height:1.6;">Ask every vendor: "When is your product the wrong choice?" A vendor who can answer this clearly is a vendor who understands their own product's limits.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand"><span class="logo-mark"><svg width="22" height="22" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></div>
+      <nav class="footer-nav"><a href="index.html">Overview</a><a href="modules.html">Modules</a><a href="how-it-works.html">How It Works</a><a href="security.html">Security</a><a href="scenarios.html">Scenarios</a></nav>
+      <div class="footer-legal">Product catalogue · September 2026</div>
+    </div>
+  </footer>
+
+  <script src="catalog.js"></script>
+</body>
+</html>

@@ -273,6 +273,7 @@ def list_insights(
     status: str | None = STATUS_OPEN,
     attachment_id: Any = None,
     limit: int = 100,
+    clearance: str = "ops",
 ) -> list:
     """`GET /chat/insights` behind one function, so the router does no filtering.
 
@@ -284,10 +285,12 @@ def list_insights(
     from sqlmodel import select
 
     from models import Insight
+    from services.clearance import clearance_filter
 
     stmt = select(Insight).where(Insight.tenant_id == tenant_id)
     if attachment_id is not None:
         stmt = stmt.where(Insight.attachment_id == attachment_id)
+    stmt = clearance_filter(stmt, Insight, clearance)
     rows = db_session.exec(stmt).all()
 
     if status:
@@ -312,9 +315,9 @@ def _rank_key(row: Any) -> float:
     return abs(row.impact_amount or 0.0) * weight
 
 
-def rank_open_insights(tenant_id: Any, db_session: Any, limit: int = 20) -> list:
+def rank_open_insights(tenant_id: Any, db_session: Any, limit: int = 20, clearance: str = "ops") -> list:
     """The nightly dashboard ranking: open findings by impact x confidence."""
-    return list_insights(tenant_id, db_session, status=STATUS_OPEN, limit=limit)
+    return list_insights(tenant_id, db_session, status=STATUS_OPEN, limit=limit, clearance=clearance)
 
 
 def _sync_retained(tenant_id: Any, attachment_id: Any, db_session: Any) -> None:

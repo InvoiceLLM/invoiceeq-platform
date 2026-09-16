@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>InvoiceEQ — Autonomous Accounts Payable | Product Catalog</title>
+  <meta name="description" content="InvoiceEQ — the only AP platform that rebuilds every invoice total deterministically. No language model decides your numbers."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <style>
+    /* ══════════════════════════════════════════════
+       FUTURISTIC DARK COMMAND CENTER — Design System
+       ══════════════════════════════════════════════ */
+    :root{
+      --bg:#060B18;--panel:#0D1425;--card:#111C2E;--card2:#162035;
+      --border:#1E2D45;--border2:#263650;
+      --blue:#4C8DFF;--blue2:#2563EB;--teal:#22D3EE;
+      --green:#34D399;--red:#F87171;--amber:#FBBF24;--purple:#A78BFA;
+      --text-h:#F0F4FF;--text-b:#8A9EC0;--text-dim:#4A5E7A;
+      --serif:'DM Serif Display',Georgia,serif;
+      --sans:'Inter',system-ui,sans-serif;
+      --mono:'JetBrains Mono',monospace;
+      --r:14px;--rs:10px;--rx:7px;
+      --glow-blue:0 0 40px rgba(76,141,255,.18);
+      --glow-teal:0 0 40px rgba(34,211,238,.15);
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{background:var(--bg);color:var(--text-b);font-family:var(--sans);font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+
+    /* ── Global Background Noise/Grain ── */
+    body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+      background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      opacity:.5}
+
+    .page-wrap{position:relative;z-index:1}
+    .con{max-width:1140px;margin:0 auto;padding:0 36px}
+
+    /* ── Typography ── */
+    .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--blue);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+    .eyebrow::before{content:'';width:24px;height:1px;background:var(--blue);opacity:.6}
+    .h2{font-family:var(--serif);font-size:clamp(30px,4.2vw,50px);font-weight:400;line-height:1.12;letter-spacing:-.015em;color:var(--text-h)}
+    .lead{font-size:16.5px;line-height:1.72;color:var(--text-b);max-width:600px}
+    .mono{font-family:var(--mono);font-size:12px}
+
+    /* ── Buttons ── */
+    .btn{display:inline-flex;align-items:center;gap:9px;font-family:var(--sans);font-size:14px;font-weight:600;padding:12px 26px;border-radius:var(--rx);cursor:pointer;border:none;transition:all .2s;text-decoration:none;position:relative;overflow:hidden}
+    .btn::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.08),transparent);opacity:0;transition:opacity .2s}
+    .btn:hover::after{opacity:1}
+    .btn-primary{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;box-shadow:0 0 24px rgba(76,141,255,.35)}
+    .btn-primary:hover{box-shadow:0 0 40px rgba(76,141,255,.5);transform:translateY(-1px)}
+    .btn-ghost{background:transparent;color:var(--text-b);border:1px solid var(--border2)}
+    .btn-ghost:hover{border-color:var(--blue);color:var(--text-h)}
+    .btn-lg{font-size:15px;padding:14px 30px}
+
+    /* ── Tags ── */
+    .tag{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;padding:3px 10px 3px 9px;border-radius:20px}
+    .tag::before{content:'';width:5px;height:5px;border-radius:50%;flex-shrink:0}
+    .tag-blue{background:rgba(76,141,255,.1);color:var(--blue);border:1px solid rgba(76,141,255,.2)}.tag-blue::before{background:var(--blue)}
+    .tag-green{background:rgba(52,211,153,.1);color:var(--green);border:1px solid rgba(52,211,153,.2)}.tag-green::before{background:var(--green)}
+    .tag-amber{background:rgba(251,191,36,.1);color:var(--amber);border:1px solid rgba(251,191,36,.2)}.tag-amber::before{background:var(--amber)}
+    .tag-red{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.2)}.tag-red::before{background:var(--red)}
+    .tag-teal{background:rgba(34,211,238,.1);color:var(--teal);border:1px solid rgba(34,211,238,.2)}.tag-teal::before{background:var(--teal)}
+    .tag-purple{background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.2)}.tag-purple::before{background:var(--purple)}
+
+    /* ══════════════ NAV ══════════════ */
+    .nav{position:fixed;top:0;left:0;right:0;z-index:200;height:62px;
+      background:rgba(6,11,24,.85);backdrop-filter:blur(20px) saturate(180%);
+      border-bottom:1px solid rgba(30,45,69,.8);
+      transition:border-color .3s,background .3s}
+    .nav.scrolled{background:rgba(6,11,24,.96)}
+    .nav-in{max-width:1140px;margin:0 auto;padding:0 36px;height:100%;display:flex;align-items:center;gap:36px}
+    .logo{display:flex;align-items:center;gap:10px;flex-shrink:0;text-decoration:none}
+    .logo-icon{position:relative;width:30px;height:30px}
+    .logo-icon svg{position:absolute;top:0;left:0}
+    .logo-pulse{position:absolute;top:-3px;left:-3px;width:36px;height:36px;border-radius:8px;border:1px solid var(--blue);opacity:.4;animation:logoPulse 3s ease-in-out infinite}
+    @keyframes logoPulse{0%,100%{transform:scale(1);opacity:.4}50%{transform:scale(1.08);opacity:.15}}
+    .logo-name{font-family:var(--serif);font-size:19px;color:var(--text-h);letter-spacing:-.01em}
+    .nav-links{display:flex;list-style:none;gap:0;flex:1}
+    .nav-links a{display:block;padding:6px 13px;font-size:13px;font-weight:500;color:var(--text-dim);border-radius:var(--rx);transition:all .15s;text-decoration:none}
+    .nav-links a:hover{color:var(--text-b)}
+    .nav-links a.active{color:var(--blue)}
+
+    /* ══════════════ HERO ══════════════ */
+    #hero{min-height:100vh;display:flex;align-items:center;padding-top:62px;position:relative;overflow:hidden}
+    
+    /* Animated grid */
+    .hero-grid{position:absolute;inset:0;z-index:0;overflow:hidden}
+    .hero-grid::before{content:'';position:absolute;inset:0;
+      background-image:linear-gradient(rgba(76,141,255,.06)1px,transparent 1px),
+                       linear-gradient(90deg,rgba(76,141,255,.06)1px,transparent 1px);
+      background-size:60px 60px;
+      mask-image:radial-gradient(ellipse 70% 80% at 50% 50%,black 30%,transparent 100%);
+      animation:gridShift 20s linear infinite}
+    @keyframes gridShift{0%{transform:translateY(0)}100%{transform:translateY(60px)}}
+
+    /* Ambient glows */
+    .hero-glow1{position:absolute;top:-10%;left:-10%;width:70%;height:80%;
+      background:radial-gradient(ellipse,rgba(76,141,255,.08) 0%,transparent 65%);
+      animation:glowPulse1 8s ease-in-out infinite;pointer-events:none}
+    .hero-glow2{position:absolute;bottom:-20%;right:-5%;width:60%;height:70%;
+      background:radial-gradient(ellipse,rgba(34,211,238,.05) 0%,transparent 65%);
+      animation:glowPulse2 10s ease-in-out infinite 2s;pointer-events:none}
+    @keyframes glowPulse1{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(1.05)}}
+    @keyframes glowPulse2{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.08)}}
+
+    /* Floating orbs */
+    .orb{position:absolute;border-radius:50%;filter:blur(60px);animation:orbFloat linear infinite;pointer-events:none}
+    .orb1{width:180px;height:180px;background:rgba(76,141,255,.12);top:20%;left:15%;animation-duration:15s}
+    .orb2{width:120px;height:120px;background:rgba(34,211,238,.1);top:60%;right:20%;animation-duration:18s;animation-delay:3s}
+    .orb3{width:90px;height:90px;background:rgba(167,139,250,.08);top:35%;right:35%;animation-duration:12s;animation-delay:6s}
+    @keyframes orbFloat{0%,100%{transform:translateY(0) translateX(0)}25%{transform:translateY(-20px) translateX(10px)}50%{transform:translateY(10px) translateX(-15px)}75%{transform:translateY(-15px) translateX(8px)}}
+
+    .hero-cnt{position:relative;z-index:1;padding:80px 36px;max-width:880px}
+    .hero-badge{display:inline-flex;align-items:center;gap:8px;
+      font-size:11.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+      color:var(--blue);background:rgba(76,141,255,.08);
+      border:1px solid rgba(76,141,255,.2);padding:5px 14px;border-radius:20px;
+      margin-bottom:30px;animation:fadeDown .8s ease both}
+    .hero-badge-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:blink 2s ease-in-out infinite}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+    @keyframes fadeDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+
+    .hero-hl{font-family:var(--serif);font-size:clamp(44px,6.5vw,80px);font-weight:400;line-height:1.07;letter-spacing:-.025em;color:var(--text-h);margin-bottom:24px;animation:fadeUp .9s ease .1s both}
+    .hero-hl em{font-style:italic;
+      background:linear-gradient(135deg,var(--blue) 0%,var(--teal) 60%);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .hero-sub{font-size:18px;line-height:1.72;color:var(--text-b);max-width:660px;margin-bottom:40px;animation:fadeUp .9s ease .2s both}
+    .hero-sub strong{color:var(--text-h)}
+    .hero-cta{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:36px;animation:fadeUp .9s ease .3s both}
+    .hero-caveat{font-size:13px;color:var(--text-dim);font-style:italic;animation:fadeUp .9s ease .4s both}
+
+    /* Hero stat pills */
+    .hero-stats{display:flex;gap:24px;flex-wrap:wrap;margin-top:60px;animation:fadeUp .9s ease .5s both}
+    .hero-stat{display:flex;align-items:center;gap:12px;padding:12px 20px;
+      background:rgba(13,20,37,.8);border:1px solid var(--border);border-radius:var(--r);
+      backdrop-filter:blur(8px)}
+    .hero-stat-val{font-family:var(--serif);font-size:24px;color:var(--text-h);line-height:1}
+    .hero-stat-lbl{font-size:12px;color:var(--text-dim);line-height:1.4}
+
+    @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+
+    /* ══════════════ INVARIANT BANNER ══════════════ */
+    .invariant-banner{background:linear-gradient(90deg,rgba(76,141,255,.06),rgba(34,211,238,.04));
+      border-top:1px solid rgba(76,141,255,.15);border-bottom:1px solid rgba(76,141,255,.1);
+      padding:20px 0;overflow:hidden;position:relative}
+    .invariant-banner::before{content:'';position:absolute;top:0;left:-100%;right:-100%;height:1px;
+      background:linear-gradient(90deg,transparent,rgba(76,141,255,.5),transparent);
+      animation:scanLine 4s linear infinite}
+    @keyframes scanLine{from{left:-100%}to{left:100%}}
+    .invariant-in{display:flex;align-items:flex-start;gap:16px}
+    .invariant-in p{font-size:14.5px;line-height:1.65;color:var(--text-b)}
+    .invariant-in strong{color:var(--text-h)}
+
+    /* ══════════════ SECTIONS ══════════════ */
+    .sec{padding:100px 0}
+    .sec-dark{background:var(--panel)}
+    .sec-hdr{margin-bottom:56px}
+    
+    /* ══════════════ SCREENSHOT SHOWCASE ══════════════ */
+    .ss-detail{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start;margin-bottom:80px}
+    .ss-detail.flip{direction:rtl}
+    .ss-detail.flip > *{direction:ltr}
+    
+    /* Screenshot frame with futuristic chrome */
+    .ss-frame{position:relative;border-radius:var(--r);overflow:visible}
+    .ss-frame-inner{border-radius:var(--r);overflow:hidden;border:1px solid var(--border2);
+      box-shadow:0 24px 80px rgba(0,0,0,.6),0 0 0 1px rgba(76,141,255,.08);
+      position:relative;background:var(--card)}
+    .ss-frame-inner::before{content:'';position:absolute;top:0;left:0;right:0;height:32px;
+      background:linear-gradient(180deg,rgba(13,20,37,.95),transparent);z-index:2;pointer-events:none}
+    .ss-frame-glow{position:absolute;inset:-1px;border-radius:var(--r);
+      background:linear-gradient(135deg,rgba(76,141,255,.12),rgba(34,211,238,.06));
+      z-index:-1;filter:blur(16px);opacity:0;transition:opacity .4s}
+    .ss-frame:hover .ss-frame-glow{opacity:1}
+    /* Browser chrome bar */
+    .browser-bar{height:32px;background:var(--card2);border-bottom:1px solid var(--border);
+      display:flex;align-items:center;padding:0 14px;gap:8px;border-radius:var(--r) var(--r) 0 0}
+    .browser-dot{width:8px;height:8px;border-radius:50%}
+    .browser-url{flex:1;background:rgba(255,255,255,.05);border-radius:4px;
+      font-family:var(--mono);font-size:11px;color:var(--text-dim);
+      padding:3px 10px;margin:0 12px}
+    .ss-frame-inner img{width:100%;display:block;border-radius:0 0 var(--r) var(--r)}
+    
+    /* Floating label */
+    .ss-badge{position:absolute;top:-14px;right:20px;z-index:10;
+      backdrop-filter:blur(12px);background:rgba(6,11,24,.9);
+      border:1px solid var(--border2);border-radius:20px;
+      padding:4px 12px;display:flex;align-items:center;gap:6px;
+      font-size:11px;font-weight:600;color:var(--text-b)}
+
+    /* Screen text side */
+    .ss-detail-text h3{font-family:var(--serif);font-size:30px;font-weight:400;color:var(--text-h);
+      margin-bottom:12px;margin-top:12px;line-height:1.2}
+    .ss-detail-text > p{font-size:14.5px;line-height:1.72;margin-bottom:16px}
+    .feature-list{list-style:none;display:flex;flex-direction:column;gap:10px;margin-top:16px}
+    .feature-list li{display:flex;gap:12px;align-items:flex-start;font-size:13.5px;line-height:1.55}
+    .fl-icon{flex-shrink:0;width:18px;height:18px;border-radius:4px;
+      display:flex;align-items:center;justify-content:center;margin-top:1px}
+
+    /* ── Futuristic Screen Jump Pills ── */
+    .screen-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:24px;padding:6px 10px;background:rgba(13,20,37,.8);border:1px solid var(--border);border-radius:30px;backdrop-filter:blur(12px);width:fit-content}
+    .stab{display:inline-flex;align-items:center;gap:7px;padding:6px 14px;border-radius:20px;font-size:12.5px;font-weight:600;color:var(--text-dim);text-decoration:none;transition:all .2s;border:1px solid transparent}
+    .stab:hover{color:var(--text-h);background:rgba(76,141,255,.12);border-color:rgba(76,141,255,.2)}
+    .stab.active{color:#fff;background:linear-gradient(135deg,var(--blue),var(--blue2));box-shadow:0 0 16px rgba(76,141,255,.45);border-color:transparent}
+    .stab-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+
+    /* ── High-Res Expand & Zoom Hint ── */
+    .ss-frame{cursor:zoom-in;position:relative}
+    .ss-expand-hint{position:absolute;bottom:14px;right:14px;z-index:10;
+      background:rgba(6,11,24,.88);backdrop-filter:blur(8px);border:1px solid var(--border2);
+      border-radius:20px;padding:5px 12px;font-size:11px;font-weight:600;color:var(--text-b);
+      display:flex;align-items:center;gap:6px;opacity:0;transform:translateY(6px);transition:all .25s;pointer-events:none}
+    .ss-frame:hover .ss-expand-hint{opacity:1;transform:translateY(0)}
+    .ss-frame:hover img{transform:scale(1.015);transition:transform .4s cubic-bezier(.16,1,.3,1)}
+    .ss-frame img{transition:transform .4s cubic-bezier(.16,1,.3,1)}
+
+    /* ── Interactive Lightbox Modal ── */
+    .lightbox-modal{position:fixed;inset:0;z-index:9999;background:rgba(3,6,15,.93);backdrop-filter:blur(18px);
+      display:none;align-items:center;justify-content:center;padding:24px;opacity:0;transition:opacity .25s ease}
+    .lightbox-modal.open{display:flex;opacity:1}
+    .lightbox-box{max-width:1360px;width:100%;background:var(--card);border:1px solid var(--border2);
+      border-radius:var(--r);overflow:hidden;box-shadow:0 40px 120px rgba(0,0,0,.85),0 0 60px rgba(76,141,255,.22);
+      animation:modalZoom .3s cubic-bezier(.16,1,.3,1)}
+    @keyframes modalZoom{from{transform:scale(.95);opacity:0}to{transform:scale(1);opacity:1}}
+    .lightbox-header{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;
+      background:var(--card2);border-bottom:1px solid var(--border)}
+    .lightbox-title{font-size:14px;font-weight:600;color:var(--text-h);display:flex;align-items:center;gap:10px}
+    .lightbox-close{background:rgba(255,255,255,.05);border:1px solid var(--border2);color:var(--text-b);border-radius:6px;
+      width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;transition:all .15s}
+    .lightbox-close:hover{background:rgba(248,113,113,.2);border-color:var(--red);color:var(--red)}
+    .lightbox-body{max-height:82vh;overflow:auto;display:flex;align-items:center;justify-content:center;background:#030712;padding:10px}
+    .lightbox-body img{width:100%;height:auto;max-height:80vh;object-fit:contain;display:block;border-radius:0 0 var(--r) var(--r)}
+
+    /* ══════════════ WEBSITE SCREENSHOTS ══════════════ */
+    .web-showcase{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:20px}
+    .web-showcase-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px}
+    .ws-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;
+      transition:transform .25s,border-color .25s,box-shadow .25s}
+    .ws-card:hover{transform:translateY(-3px);border-color:var(--border2);box-shadow:var(--glow-blue)}
+    .ws-card img{width:100%;display:block;border-bottom:1px solid var(--border)}
+    .ws-card-body{padding:16px 20px}
+    .ws-card-body p{font-size:13px;line-height:1.6;color:var(--text-dim);margin-top:8px}
+
+    /* ══════════════ METRICS ══════════════ */
+    .metrics-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:20px}
+    .mc{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+      padding:28px;position:relative;overflow:hidden;
+      transition:transform .2s,border-color .25s,box-shadow .25s}
+    .mc:hover{transform:translateY(-3px);border-color:var(--border2);box-shadow:var(--glow-blue)}
+    .mc::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;
+      background:linear-gradient(90deg,transparent,rgba(76,141,255,.4),transparent)}
+    /* Counter animation for metric values */
+    .mc-val{font-family:var(--serif);font-size:40px;font-weight:400;line-height:1;margin-bottom:8px}
+    .mc-lbl{font-size:13px;font-weight:600;color:var(--text-h);margin-bottom:12px}
+    .mc-cav{font-size:12px;color:var(--text-dim);line-height:1.6;border-top:1px solid var(--border);padding-top:12px}
+    .mc-icon{width:36px;height:36px;border-radius:var(--rx);display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+
+    /* ══════════════ PIPELINE ══════════════ */
+    .pipe{border:1px solid var(--border);border-radius:var(--r);overflow:hidden;position:relative}
+    .pipe::before{content:'';position:absolute;top:0;bottom:0;left:67px;width:1px;
+      background:linear-gradient(180deg,transparent,var(--blue) 20%,var(--blue) 80%,transparent);
+      opacity:.15;z-index:0}
+    .pipe-step{display:flex;align-items:stretch;border-bottom:1px solid var(--border);
+      background:var(--card);transition:background .2s;position:relative}
+    .pipe-step:last-child{border-bottom:none}
+    .pipe-step:hover{background:var(--card2)}
+    .pipe-num{flex-shrink:0;width:68px;display:flex;align-items:center;justify-content:center;
+      font-family:var(--serif);font-size:28px;color:var(--blue);
+      border-right:1px solid var(--border);opacity:.6;position:relative;z-index:1}
+    .pipe-body{padding:26px 30px;flex:1}
+    .pipe-name{font-size:15px;font-weight:600;color:var(--text-h);margin-bottom:8px;display:flex;align-items:center;gap:10px}
+    .pipe-desc{font-size:14px;line-height:1.68;margin-bottom:12px}
+    .pipe-rule{display:inline-block;font-size:12.5px;color:var(--amber);
+      background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.18);
+      border-radius:var(--rx);padding:8px 14px;font-family:var(--mono)}
+
+    /* ══════════════ MODULE CARDS ══════════════ */
+    .mod-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:20px}
+    .mod{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+      padding:28px;position:relative;overflow:hidden;
+      transition:transform .22s,border-color .22s,box-shadow .22s}
+    .mod:hover{transform:translateY(-4px);border-color:var(--border2);box-shadow:0 20px 60px rgba(0,0,0,.4)}
+    .mod::after{content:'';position:absolute;inset:0;border-radius:var(--r);
+      background:linear-gradient(135deg,rgba(76,141,255,.04),transparent);
+      opacity:0;transition:opacity .3s}
+    .mod:hover::after{opacity:1}
+    .mod-icon{width:42px;height:42px;border-radius:var(--rs);display:flex;align-items:center;justify-content:center;margin-bottom:18px}
+    .mod-name{font-size:17px;font-weight:700;color:var(--text-h);margin-bottom:3px}
+    .mod-role{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);margin-bottom:14px}
+    .mod-desc{font-size:13.5px;line-height:1.62;margin-bottom:16px}
+    .mod-kpi{font-size:12px;font-weight:600;color:var(--green);border-top:1px solid var(--border);padding-top:12px;font-family:var(--mono)}
+
+    /* ══════════════ COMPARE TABLE ══════════════ */
+    .cmp-wrap{border:1px solid var(--border);border-radius:var(--r);overflow:auto}
+    .cmp{width:100%;border-collapse:collapse;min-width:700px}
+    .cmp thead tr{background:var(--card2);border-bottom:1px solid var(--border)}
+    .cmp th{padding:16px 20px;font-size:12.5px;font-weight:700;color:var(--text-dim);text-align:left;letter-spacing:.05em}
+    .cmp th.good{color:var(--green);background:rgba(52,211,153,.05)}
+    .cmp td{padding:16px 20px;font-size:13.5px;border-bottom:1px solid var(--border);vertical-align:top;line-height:1.56}
+    .cmp td.good{background:rgba(52,211,153,.04);color:var(--text-h);font-weight:500}
+    .cmp tr:last-child td{border-bottom:none}
+    .cmp .dlbl{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim)}
+
+    /* ══════════════ SCENARIOS ══════════════ */
+    .scen-list{display:flex;flex-direction:column;gap:20px}
+    .scen{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:32px;
+      display:grid;grid-template-columns:220px 1fr;gap:40px;align-items:start;
+      transition:border-color .2s}
+    .scen:hover{border-color:var(--border2)}
+    .scen-type{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue);margin-bottom:6px}
+    .scen-title{font-size:16px;font-weight:700;color:var(--text-h);line-height:1.3;margin-bottom:10px}
+    .scen-stat{font-size:12px;color:var(--text-dim);line-height:1.55;font-family:var(--mono)}
+    .scen-break{margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+    .scen-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;margin-bottom:5px}
+    .lbl-red{color:var(--red)}.lbl-green{color:var(--green)}
+
+    /* ══════════════ SECURITY ══════════════ */
+    .sec-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:20px}
+    .sec-c{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:28px;
+      transition:border-color .2s,box-shadow .2s}
+    .sec-c:hover{border-color:var(--border2);box-shadow:0 8px 30px rgba(0,0,0,.3)}
+    .sec-c-title{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:12px;
+      display:flex;align-items:center;gap:10px}
+    .cert-row{display:flex;gap:16px;flex-wrap:wrap;margin-top:40px}
+    .cert{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+      padding:20px 28px;text-align:center;min-width:155px}
+    .cert-name{font-family:var(--serif);font-size:24px;color:var(--text-h);margin-bottom:4px}
+    .cert-sub{font-size:11.5px;color:var(--text-dim)}
+
+    /* ══════════════ MATURITY TABLE ══════════════ */
+    .mat-wrap{border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+    .mat{width:100%;border-collapse:collapse}
+    .mat thead tr{background:var(--card2);border-bottom:1px solid var(--border)}
+    .mat th{padding:14px 20px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-dim);text-align:left}
+    .mat td{padding:16px 20px;font-size:14px;border-bottom:1px solid var(--border)}
+    .mat-dim{opacity:.5}.mat-dim:hover{opacity:.8;transition:opacity .2s}
+    .mat-active{background:rgba(52,211,153,.04);border-left:3px solid var(--green)}
+    .mat-active td{color:var(--text-h)}
+    .lbadge{display:inline-block;background:var(--panel);border:1px solid var(--border);border-radius:5px;font-size:11px;font-weight:700;padding:2px 9px;color:var(--text-b);font-family:var(--mono)}
+    .lbadge-g{background:rgba(52,211,153,.12);border-color:var(--green);color:var(--green)}
+
+    /* ══════════════ ROLE GRID ══════════════ */
+    .role-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:20px}
+    .role{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:28px;
+      transition:border-color .2s}
+    .role:hover{border-color:var(--border2)}
+    .role-title{font-size:15.5px;font-weight:700;color:var(--text-h);margin-bottom:6px}
+    .role-owns{font-size:12px;color:var(--blue);font-weight:600;font-family:var(--mono);margin-bottom:14px}
+
+    /* ══════════════ LIMITS ══════════════ */
+    .limits-g{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .limit{display:flex;gap:20px;align-items:flex-start;padding:24px;
+      background:var(--card);border:1px solid var(--border);border-radius:var(--r)}
+    .limit-n{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--blue);
+      flex-shrink:0;padding-top:2px;letter-spacing:.06em}
+    .limit-t{font-size:13.5px;line-height:1.65}
+    .limit-t strong{color:var(--text-h)}
+
+    /* ══════════════ DEPLOY ══════════════ */
+    .deploy-g{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:18px}
+    .dc{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:24px;
+      position:relative;overflow:hidden}
+    .dc::after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+      background:linear-gradient(90deg,transparent,var(--blue),transparent);opacity:.3}
+    .dp-phase{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;color:var(--blue);margin-bottom:4px;font-family:var(--mono)}
+    .dp-days{font-family:var(--serif);font-size:28px;color:var(--text-h);margin-bottom:10px}
+    .dp-title{font-size:14px;font-weight:700;color:var(--text-h);margin-bottom:8px}
+    .dp-what{font-size:13px;color:var(--text-b);margin-bottom:12px;line-height:1.55}
+    .dp-end{font-size:12px;color:var(--green);border-top:1px solid var(--border);padding-top:10px;font-family:var(--mono)}
+
+    /* ══════════════ FAQ ══════════════ */
+    .faq-list{display:flex;flex-direction:column;gap:2px}
+    .faq-item{border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;transition:border-color .2s}
+    .faq-item.open-item{border-color:var(--border2)}
+    .faq-q{width:100%;background:var(--card);border:none;padding:20px 24px;
+      text-align:left;cursor:pointer;font-size:14.5px;font-weight:600;color:var(--text-h);
+      display:flex;justify-content:space-between;align-items:center;gap:16px;
+      font-family:var(--sans);transition:background .15s}
+    .faq-q:hover{background:var(--card2)}
+    .faq-icon{width:22px;height:22px;border-radius:50%;border:1px solid var(--border);
+      display:flex;align-items:center;justify-content:center;
+      color:var(--text-dim);flex-shrink:0;transition:all .2s;font-size:16px}
+    .faq-q.open .faq-icon{transform:rotate(45deg);border-color:var(--blue);color:var(--blue)}
+    .faq-a{display:none;padding:0 24px 20px;font-size:14px;line-height:1.72;
+      background:var(--card);border-top:1px solid var(--border)}
+    .faq-a.open{display:block}
+
+    /* ══════════════ CTA ══════════════ */
+    .cta-sec{background:linear-gradient(135deg,rgba(76,141,255,.06),rgba(34,211,238,.04));
+      border-top:1px solid rgba(76,141,255,.12);position:relative;overflow:hidden}
+    .cta-sec::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+      width:600px;height:300px;background:radial-gradient(ellipse,rgba(76,141,255,.08),transparent 70%);
+      pointer-events:none}
+    .cta-in{max-width:680px;margin:0 auto;text-align:center;padding:96px 36px;position:relative;z-index:1}
+    .cta-hl{font-family:var(--serif);font-size:clamp(32px,4.5vw,52px);font-weight:400;color:var(--text-h);line-height:1.12;margin-bottom:20px}
+    .cta-sub{font-size:16px;line-height:1.72;margin-bottom:42px}
+    .cta-row{display:flex;align-items:center;justify-content:center;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+
+    /* ══════════════ FOOTER ══════════════ */
+    .footer{background:var(--panel);border-top:1px solid var(--border);padding:40px 0}
+    .footer-in{display:flex;align-items:center;gap:40px;flex-wrap:wrap}
+    .footer-nav{display:flex;gap:24px}
+    .footer-nav a{font-size:13px;color:var(--text-dim);text-decoration:none;transition:color .15s}
+    .footer-nav a:hover{color:var(--text-h)}
+    .footer-legal{font-size:12px;color:var(--text-dim);flex:1;text-align:right;line-height:1.5}
+
+    /* ══════════════ ANIMATIONS ══════════════ */
+    @keyframes slideUp{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+    .anim{opacity:0;transform:translateY(24px)}
+    .anim.in{opacity:1;transform:none;transition:opacity .55s cubic-bezier(.22,1,.36,1),transform .55s cubic-bezier(.22,1,.36,1)}
+
+    /* Glowing line that sweeps through cards on hover */
+    .mc,.mod,.role,.sec-c{isolation:isolate}
+
+    /* Scan bar animation for section headers */
+    .scan-bar{height:1px;background:linear-gradient(90deg,transparent,var(--blue),var(--teal),transparent);
+      margin-bottom:40px;position:relative;overflow:hidden;opacity:.4}
+
+    /* Placeholder (shown when real screenshot hasn't loaded) */
+    .ss-placeholder{
+      width:100%;aspect-ratio:16/9;background:linear-gradient(135deg,var(--card),var(--card2));
+      display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
+      border-radius:0 0 var(--r) var(--r)}
+    .ss-placeholder-icon{font-size:32px;opacity:.3}
+    .ss-placeholder-text{font-size:13px;color:var(--text-dim);font-family:var(--mono)}
+
+    /* ══════════════ RESPONSIVE ══════════════ */
+    @media(max-width:960px){
+      .nav-links{display:none}
+      .ss-detail{grid-template-columns:1fr}
+      .ss-detail.flip{direction:ltr}
+      .scen{grid-template-columns:1fr;gap:20px}
+      .limits-g{grid-template-columns:1fr}
+      .web-showcase{grid-template-columns:1fr}
+      .web-showcase-3{grid-template-columns:1fr 1fr}
+    }
+    @media(max-width:600px){
+      .con{padding:0 20px}
+      .web-showcase-3{grid-template-columns:1fr}
+      .metrics-g,.mod-g,.role-g,.sec-g,.deploy-g{grid-template-columns:1fr}
+      .hero-stats{flex-direction:column}
+    }
+    [id]{scroll-margin-top:76px}
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+
+<!-- ══ NAV ══════════════════════════════════════════ -->
+<nav class="nav" id="nav">
+  <div class="nav-in">
+    <a href="#hero" class="logo">
+      <div class="logo-icon">
+        <div class="logo-pulse"></div>
+        <svg width="30" height="30" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="6" fill="#111C2E"/>
+          <path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/>
+          <path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/>
+        </svg>
+      </div>
+      <span class="logo-name">InvoiceEQ</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#hero" class="active">Overview</a></li>
+      <li><a href="#website-screens">Website</a></li>
+      <li><a href="#product-screens">Product</a></li>
+      <li><a href="#modules">Modules</a></li>
+      <li><a href="#pipeline">How It Works</a></li>
+      <li><a href="#compare">Compare</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#scenarios">Scenarios</a></li>
+    </ul>
+    <a href="#deployment" class="btn btn-primary" style="flex-shrink:0;font-size:13px;padding:9px 20px">Start 14-Day Pilot</a>
+  </div>
+</nav>
+
+<!-- ══ HERO ══════════════════════════════════════════ -->
+<section id="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-glow1"></div><div class="hero-glow2"></div>
+  <div class="orb orb1"></div><div class="orb orb2"></div><div class="orb orb3"></div>
+  <div class="hero-cnt con">
+    <div class="hero-badge"><div class="hero-badge-dot"></div>Live in Production · September 2026 · invoicellm.admsofttech.com</div>
+    <h1 class="hero-hl">Accounts payable that<br/><em>proves its own arithmetic.</em></h1>
+    <p class="hero-sub">InvoiceEQ reads your supplier invoices, <strong>rebuilds every total from scratch in deterministic code</strong> — not an AI estimate — reconciles them against purchase orders and goods receipts, and posts a clean voucher to your ERP. No language model decides a number.</p>
+    <div class="hero-cta">
+      <a href="#deployment" class="btn btn-primary btn-lg">Begin 14-Day Pilot →</a>
+      <a href="#pipeline" class="btn btn-ghost btn-lg">See how it works</a>
+    </div>
+    <p style="font-size:13px;color:var(--text-dim);font-style:italic">Bring your worst 500 invoices — not your cleanest — and measure the straight-through rate yourself.</p>
+    <div class="hero-stats">
+      <div class="hero-stat"><div><div class="hero-stat-val" style="color:var(--blue)">0.00%</div><div class="hero-stat-lbl">Arithmetic<br/>hallucination</div></div></div>
+      <div class="hero-stat"><div><div class="hero-stat-val" style="color:var(--green)">88–96%</div><div class="hero-stat-lbl">Straight-through<br/>processing</div></div></div>
+      <div class="hero-stat"><div><div class="hero-stat-val" style="color:var(--teal)">&lt; 3.8s</div><div class="hero-stat-lbl">Median document<br/>latency</div></div></div>
+      <div class="hero-stat"><div><div class="hero-stat-val" style="color:var(--amber)">14 days</div><div class="hero-stat-lbl">To production<br/>cutover</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ INVARIANT ══════════════════════════════════════ -->
+<div class="invariant-banner">
+  <div class="con"><div class="invariant-in">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;margin-top:2px"><path d="M10 2L12.5 7H18L13.5 10.5L15.5 16L10 12.5L4.5 16L6.5 10.5L2 7H7.5L10 2Z" fill="#4C8DFF"/></svg>
+    <p><strong>The core rule:</strong> If line items plus tax do not equal the invoice total, nothing posts to the ledger. There is no confidence threshold that overrides this and no exception path around it.</p>
+  </div></div>
+</div>
+
+<!-- ══ WEBSITE SCREENSHOTS ══════════════════════════ -->
+<section id="website-screens" class="sec">
+  <div class="con">
+    <div class="sec-hdr">
+      <div class="eyebrow">Marketing website · invoicellm.admsofttech.com</div>
+      <h2 class="h2">Built to earn trust before<br/>anyone signs anything.</h2>
+      <p class="lead" style="margin-top:14px">The public website mirrors the product's philosophy — honest mechanics, no hype, transparent limits. Every visitor sees the same logic the product uses before they ever create an account.</p>
+    </div>
+    <div class="web-showcase anim">
+      <div class="ws-card" style="cursor:zoom-in" onclick="openLightbox('live_web_hero.png', 'Marketing Website — Hero & Value Proposition')">
+        <div class="browser-bar"><div class="browser-dot" style="background:#F87171"></div><div class="browser-dot" style="background:#FBBF24"></div><div class="browser-dot" style="background:#34D399"></div><div class="browser-url">invoicellm.admsofttech.com</div></div>
+        <img src="live_web_hero.png" alt="InvoiceEQ.com homepage hero — live screenshot" onerror="this.outerHTML='<div class=ss-placeholder><div class=ss-placeholder-icon>🌐</div><div class=ss-placeholder-text>live_web_hero.png</div></div>'"/>
+        <div class="ws-card-body"><span class="tag tag-blue">Live — Homepage Hero</span><p>"Invoices, understood automatically" — the product's opening statement on the live marketing site. Highlights the complete web application vs. plug-and-play engine modes.</p></div>
+      </div>
+      <div class="ws-card" style="cursor:zoom-in" onclick="openLightbox('live_web_s1.png', 'Marketing Website — Architecture Flow & Live Verification')">
+        <div class="browser-bar"><div class="browser-dot" style="background:#F87171"></div><div class="browser-dot" style="background:#FBBF24"></div><div class="browser-dot" style="background:#34D399"></div><div class="browser-url">invoicellm.admsofttech.com/#engine</div></div>
+        <img src="live_web_s1.png" alt="InvoiceEQ.com interactive engine — live screenshot" onerror="this.outerHTML='<div class=ss-placeholder><div class=ss-placeholder-icon>⚙️</div><div class=ss-placeholder-text>live_web_s1.png</div></div>'"/>
+        <div class="ws-card-body"><span class="tag tag-teal">Live — Active Sample Engine</span><p>Visitors see the 4-step pipeline: Secure Upload → NOVA Extraction → SENTINEL Review → Verified Result with LangGraph active consensus.</p></div>
+      </div>
+    </div>
+    <div class="web-showcase-3 anim" style="margin-top:18px">
+      <div class="ws-card" style="cursor:zoom-in" onclick="openLightbox('live_web_s2.png', 'Marketing Website — Line-Item Breakdown')">
+        <img src="live_web_s2.png" alt="InvoiceEQ.com line-item verification" onerror="this.outerHTML='<div class=ss-placeholder style=height:200px><div class=ss-placeholder-text>live_web_s2.png</div></div>'"/>
+        <div class="ws-card-body"><span class="tag tag-green">Live — Line-Item Verification</span><p>Reconstructed total vs. stated total shown side-by-side — the deterministic check visualised interactively.</p></div>
+      </div>
+      <div class="ws-card" style="cursor:zoom-in" onclick="openLightbox('live_web_s3.png', 'Marketing Website — SAGE + Multi-Agent Architecture')">
+        <img src="live_web_s3.png" alt="InvoiceEQ.com SAGE + agent architecture" onerror="this.outerHTML='<div class=ss-placeholder style=height:200px><div class=ss-placeholder-text>live_web_s3.png</div></div>'"/>
+        <div class="ws-card-body"><span class="tag tag-amber">Live — SAGE + Agents</span><p>Natural-language spend queries and the four-agent system (NOVA · SENTINEL · SAGE · EVOLVE) explained visually.</p></div>
+      </div>
+      <div class="ws-card" style="cursor:zoom-in" onclick="openLightbox('live_web_s4.png', 'Marketing Website — System Flow Simulator')">
+        <img src="live_web_s4.png" alt="InvoiceEQ.com pipeline flow" onerror="this.outerHTML='<div class=ss-placeholder style=height:200px><div class=ss-placeholder-text>live_web_s4.png</div></div>'"/>
+        <div class="ws-card-body"><span class="tag tag-red">Live — System Flow Simulator</span><p>Animated invoice pipeline — Intake → NOVA → SENTINEL → Match → Ledger — shown as a live interactive flow.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ PRODUCT SCREENS ════════════════════════════════ -->
+<section id="product-screens" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr">
+      <div class="eyebrow">Inside the product · Live at invoicellm.admsofttech.com/dashboard</div>
+      <h2 class="h2">Invoice AI — Every page,<br/>live in production.</h2>
+      <p class="lead" style="margin-top:14px">Every screenshot below is taken directly from the live application at <strong style="color:var(--blue)">invoicellm.admsofttech.com</strong>. The sidebar — <strong style="color:var(--text-h)">Dashboard · Ingest · Audit Queue · History · AI Trainer · Chat · Settings</strong> — is always visible.</p>
+      
+      <!-- Screen Quick Jump Selector -->
+      <div class="screen-tabs">
+        <a href="#screen-dashboard" class="stab active"><span class="stab-dot"></span>Dashboard</a>
+        <a href="#screen-attention" class="stab"><span class="stab-dot"></span>Alerts & Insights</a>
+        <a href="#screen-ingest" class="stab"><span class="stab-dot"></span>NOVA Ingest</a>
+        <a href="#screen-audit" class="stab"><span class="stab-dot"></span>Audit Queue</a>
+        <a href="#screen-auditor-review" class="stab"><span class="stab-dot"></span>Math Verification</a>
+        <a href="#screen-history" class="stab"><span class="stab-dot"></span>History Log</a>
+        <a href="#screen-trainer" class="stab"><span class="stab-dot"></span>EVOLVE Trainer</a>
+        <a href="#screen-chat" class="stab"><span class="stab-dot"></span>SAGE Copilot</a>
+      </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div class="ss-detail anim" id="screen-dashboard" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_dashboard_top.png', 'Invoice AI — Command Center Dashboard')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Live in Production</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/dashboard</div>
+          </div>
+          <img src="live_dashboard_top.png" alt="Invoice AI — Command Center Dashboard" onerror="this.src='ss_dashboard.png'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-blue">Command Center</span>
+        <h3>Your entire AP operation,<br/>at a glance.</h3>
+        <p>The dashboard loads with a complete financial picture — no reports to run, no data to pull. Four live KPI tiles show total invoiced, paid, outstanding, and at-risk volume across all currencies (₹ INR, $ USD, € EUR) simultaneously.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>Multi-currency KPI tiles — INR, USD, EUR live, no switching</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>Invoice Spend Trend chart — spot unusual spikes instantly</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>AI Score ring — field extraction %, alert response %, avg processing time (58.9s live)</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>"Needs Attention" list — only true exceptions, not the full queue</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>Tenant Isolation ID visible in sidebar footer — architecture proof, not a promise</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- DASHBOARD LOWER / NEEDS ATTENTION -->
+    <div class="ss-detail flip anim" id="screen-attention" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_dashboard_mid.png', 'Needs Attention & Actionable Insights')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Exception Triage</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/dashboard#insights</div>
+          </div>
+          <img src="live_dashboard_mid.png" alt="Needs Attention and Actionable Insights" onerror="this.src='ss_dashboard.png'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-amber">Alerts & Insights</span>
+        <h3>Only the invoices that genuinely need you.</h3>
+        <p>Below the KPI tiles, the "Needs Attention" list shows only invoices flagged by SENTINEL with a formal alert code. Everything else processed and moved on. The Actionable Insights tab surfaces vendor-level patterns across the full history.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>Each row: invoice number, vendor, flagged amount — triage without opening the document</li>
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>Actionable Insights — vendor price creep, recurring mismatches, anomalous timing</li>
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>Trainer Impact tab — see how recent rule changes changed alert volume</li>
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>Top Vendors tab — rank by spend, spot concentration risk without a data request</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- INGEST -->
+    <div class="ss-detail anim" id="screen-ingest" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_ingest_top.png', 'File Ingestion — Powered by NOVA')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Vision Intake</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/ingest</div>
+          </div>
+          <img src="live_ingest_top.png" alt="File Ingestion — NOVA" onerror="this.src='ss_ingest_gen.jpg'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-teal">NOVA — Vision Intake</span>
+        <h3>Drop a PDF. Get structured data in under 4 seconds.</h3>
+        <p>The Ingest screen is where invoices enter the system. Drag-drop a file, connect Google Drive, or let Autopilot pull from your mailbox on a schedule. NOVA reads the document structurally — a moved field does not break the pipeline.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#0A1D2E"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#22D3EE"/></svg></div>Accepts PDF, PNG, JPG, TIFF, WEBP, BMP — photos and scans auto-converted</li>
+          <li><div class="fl-icon" style="background:#0A1D2E"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#22D3EE"/></svg></div>SHA-256 hash check before any AI token is spent — duplicates caught in &lt; 5ms</li>
+          <li><div class="fl-icon" style="background:#0A1D2E"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#22D3EE"/></svg></div>Receiving / Autopilot toggle — switch between manual batch and scheduled collection</li>
+          <li><div class="fl-icon" style="background:#0A1D2E"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#22D3EE"/></svg></div>Status Ledger streams real-time extraction progress once dispatched</li>
+          <li><div class="fl-icon" style="background:#0A1D2E"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#22D3EE"/></svg></div>Google Drive Browse → import from cloud without downloading first</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- AUDIT QUEUE -->
+    <div class="ss-detail flip anim" id="screen-audit" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_audit_top.png', 'SENTINEL Audit Queue & Verification Status')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>100% Coverage</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/audit</div>
+          </div>
+          <img src="live_audit_top.png" alt="Audit Queue — SENTINEL" onerror="this.src='ss_audit.png'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-red">SENTINEL — Audit & Compliance</span>
+        <h3>Every invoice verified. Not sampled — every single one.</h3>
+        <p>The Audit Queue shows every invoice and its SENTINEL verdict. Green "Completed" = passed all arithmetic checks and 3-way matching. Amber "Duplicate" = SENTINEL found the same invoice already in the system. Nothing reaches the ledger without passing SENTINEL first.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#1A0D0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#F87171"/></svg></div>Status tabs: All · Review Required · Paid · Pending · Rejected — filter to what matters</li>
+          <li><div class="fl-icon" style="background:#1A0D0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#F87171"/></svg></div>Every row: vendor, all three dates (issued, ingested, due), amount, AI verdict</li>
+          <li><div class="fl-icon" style="background:#1A0D0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#F87171"/></svg></div>Duplicate detection: same vendor, same total, different invoice number — most expensive class to miss</li>
+          <li><div class="fl-icon" style="background:#1A0D0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#F87171"/></svg></div>Eye icon → full invoice with split-screen PO comparison</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- AUDITOR DEEP DIVE REVIEW & MATH VERIFICATION -->
+    <div class="ss-detail anim" id="screen-auditor-review" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_auditor_review.png', 'SENTINEL — Auditor Review & Math Verification Console')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Deterministic Proof</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/review/INV-24580</div>
+          </div>
+          <img src="live_auditor_review.png" alt="Auditor Review — Interactive PDF & Math Verification Console" onerror="this.src='ss_audit.png'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-green">SENTINEL — Math Verification Console</span>
+        <h3>Line-by-line proof.<br/>Bounding boxes on every figure.</h3>
+        <p>When an auditor inspects any flagged document, InvoiceEQ displays the source PDF side-by-side with exact mathematical bounding boxes. Green boxes indicate reconstructed line items that match down to the exact cent; discrepancy warning banners highlight the exact line that broke reconciliation.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>Exact Decimal Bounding: Subtotal ($12,450.00), Tax Rate (8.875%), and Total ($13,555.00) highlighted on source document</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>Discrepancy Warning Banner: Explains the exact failure reason (e.g. minor mismatch in Line Item 3 pricing)</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>Auditor Notes & Validation: Formal compliance trail recorded directly into immutable ledger</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>One-click "Mark Paid & Finalize" or route to dispute with a single keystroke</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="ss-detail flip anim" id="screen-history" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_history_top.png', 'Ingestion History & Batch Ledger')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Immutable Log</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/history</div>
+          </div>
+          <img src="live_history_top.png" alt="Ingestion History" onerror="this.src='ss_login.png'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-blue">Ingestion History</span>
+        <h3>A full log of everything that ever entered your workspace.</h3>
+        <p>The History screen records every ingestion run — manual uploads, email inbound, connector imports, and Autopilot runs — with the outcome of each file. Files that turned out not to be invoices are listed as explained entries, never silently discarded.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>Filter by source: Manual · Email · Connector · Autopilot</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>Each run: date, source, file count, success/fail breakdown</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>"LOADED" badge confirms batch completed without issues</li>
+          <li><div class="fl-icon" style="background:#0D1A3A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#4C8DFF"/></svg></div>Immutable audit trail: who uploaded what, when, and what happened — no IT request needed</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- AI TRAINER -->
+    <div class="ss-detail anim" id="screen-trainer" style="margin-bottom:88px">
+      <div class="ss-frame" onclick="openLightbox('live_trainer_top.png', 'EVOLVE — AI Trainer & Self-Tuning Rules Sandbox')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Self-Tuning</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/trainer</div>
+          </div>
+          <img src="live_trainer_top.png" alt="AI Trainer — EVOLVE" onerror="this.src='ss_trainer.png'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-green">EVOLVE — Self-Tuning Rules</span>
+        <h3>Teach the system once. It learns for every invoice after.</h3>
+        <p>The AI Trainer lets finance staff — not developers — define rules for specific vendors. Every rule is tested against 500 historical invoices before promotion to production. Zero regressions on record means a rule for one vendor never breaks another.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>Global rules (all vendors) + vendor-specific rules (one supplier)</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>Sandbox mode: test against historical data before committing</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>500-invoice replay: automatic safety check on every rule promotion</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>No code required — designed for finance teams, not developers</li>
+          <li><div class="fl-icon" style="background:#0D2A1A"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#34D399"/></svg></div>Rollback: revert any rule from the same screen that promoted it</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- CHAT -->
+    <div class="ss-detail flip anim" id="screen-chat">
+      <div class="ss-frame" onclick="openLightbox('live_chat_top.png', 'SAGE — Spend Copilot & Natural Language Query')">
+        <div class="ss-frame-glow"></div>
+        <div class="ss-badge"><span class="hero-badge-dot" style="margin-right:4px"></span>Spend Copilot</div>
+        <div class="ss-frame-inner">
+          <div class="browser-bar">
+            <div class="browser-dot" style="background:#F87171"></div>
+            <div class="browser-dot" style="background:#FBBF24"></div>
+            <div class="browser-dot" style="background:#34D399"></div>
+            <div class="browser-url">invoicellm.admsofttech.com/chat</div>
+          </div>
+          <img src="live_chat_top.png" alt="SAGE — Spend Copilot chat" onerror="this.src='ss_dashboard_gen.jpg'"/>
+          <div class="ss-expand-hint">🔍 Expand High-Res</div>
+        </div>
+      </div>
+      <div class="ss-detail-text">
+        <span class="tag tag-amber">SAGE — Spend Copilot</span>
+        <h3>Ask anything about your invoices. In plain language.</h3>
+        <p>SAGE lets any authorised user query the full invoice history without writing SQL or raising a data request. Questions return a direct answer, the SQL used to produce it, and citation links to the source invoices. Read-only — cannot approve, modify, or flag any record.</p>
+        <ul class="feature-list">
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>"Show quarterly spend for TechCorp Solutions" — answered with live total ₹51,395.75</li>
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>SQL Drawer — expand to see the exact query that produced the answer</li>
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>Vendor price creep visible in seconds — no data extract, no analyst request</li>
+          <li><div class="fl-icon" style="background:#1F1A0D"><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="3" fill="#FBBF24"/></svg></div>72.2% golden-set pass rate on complex financial queries</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ METRICS ══════════════════════════════════════ -->
+<section id="metrics" class="sec">
+  <div class="con">
+    <div class="sec-hdr">
+      <div class="eyebrow">Measured performance</div>
+      <h2 class="h2">Real numbers. Caveats<br/>included — always.</h2>
+      <p class="lead" style="margin-top:14px">In accounts payable, 98% accuracy is not a good score. It is a 2% financial exposure spread across thousands of documents that all <em>look</em> fine.</p>
+    </div>
+    <div class="metrics-g">
+      <div class="mc anim"><div class="mc-icon" style="background:#0D1A3A"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="#4C8DFF" stroke-width="1.5"/><path d="M6 9l2 2 4-4" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mc-val" style="color:var(--blue)">0.00%</div><div class="mc-lbl">Arithmetic hallucination rate</div><div class="mc-cav">By construction — no model is in the arithmetic path. Totals are rebuilt in exact decimal code; a figure that cannot reconstruct stops the invoice.</div></div>
+      <div class="mc anim"><div class="mc-icon" style="background:#0D2A1A"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 16V6l7-4 7 4v10" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/><rect x="7" y="10" width="4" height="6" rx="1" stroke="#34D399" stroke-width="1.5"/></svg></div><div class="mc-val" style="color:var(--green)">88–96%</div><div class="mc-lbl">Straight-through processing</div><div class="mc-cav">Typical range for this class of system — not a guarantee for your operation. Measure it on your own worst documents before planning against this.</div></div>
+      <div class="mc anim"><div class="mc-icon" style="background:#0A1D2E"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="#22D3EE" stroke-width="1.5"/><path d="M9 5v4l3 2" stroke="#22D3EE" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mc-val" style="color:var(--teal)">&lt; 3.8s</div><div class="mc-lbl">Median document latency</div><div class="mc-cav">Median, not average — a few large documents would make an average look better than it is. Excludes queue wait at peak load.</div></div>
+      <div class="mc anim"><div class="mc-icon" style="background:#1F1A0D"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/><rect x="10" y="2" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/><rect x="2" y="10" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/><rect x="10" y="10" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/></svg></div><div class="mc-val" style="color:var(--amber)">14 days</div><div class="mc-lbl">Time to production cutover</div><div class="mc-cav">On a standard ERP with credentials available on day one. Custom connectors and multi-entity rollouts take longer — documented clearly below.</div></div>
+      <div class="mc anim"><div class="mc-icon" style="background:#0D1A3A"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 14l4-4 4 3 6-8" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div class="mc-val" style="color:var(--blue)">99.3%</div><div class="mc-lbl">NOVA field extraction accuracy</div><div class="mc-cav">Measured across 27 real-world PDF invoice runs on 3 separate test sets at &lt; 3.8s median latency.</div></div>
+      <div class="mc anim"><div class="mc-icon" style="background:#0D2A1A"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="6" stroke="#34D399" stroke-width="1.5"/><path d="M9 5v4l-2 2" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mc-val" style="color:var(--green)">0</div><div class="mc-lbl">EVOLVE regression rate</div><div class="mc-cav">Every rule replayed against a 500-invoice corpus before promotion. A rule change for one vendor has never broken another — across all rules shipped to date.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ PROBLEM ════════════════════════════════════════ -->
+<section id="problem" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">The problem</div><h2 class="h2">Two approaches. One shared<br/>failure point.</h2><p class="lead" style="margin-top:14px">Both template OCR and general-purpose AI extract invoice data and produce a number. Neither independently verifies that number is correct.</p></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:22px">
+      <div class="anim" style="background:var(--card);border:1px solid var(--border);border-left:3px solid var(--red);border-radius:var(--r);padding:30px">
+        <div class="tag tag-red" style="margin-bottom:14px">Template OCR — ABBYY, Kofax</div>
+        <p style="font-family:var(--serif);font-size:22px;color:var(--text-h);margin-bottom:14px;line-height:1.25">"Reads positions, not documents."</p>
+        <p style="font-size:14px;line-height:1.68;margin-bottom:18px">A supplier moves a field two centimetres and the template stops matching. Character confusion between "O" and "0" creates an invoice number that <em>looks</em> right but fails the ERP duplicate check silently.</p>
+        <div style="background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.18);border-radius:var(--rx);padding:10px 14px;font-size:12.5px;color:var(--red);font-family:var(--mono)">→ layout drift → silent extraction error → duplicate payment risk</div>
+      </div>
+      <div class="anim" style="background:var(--card);border:1px solid var(--border);border-left:3px solid var(--amber);border-radius:var(--r);padding:30px">
+        <div class="tag tag-amber" style="margin-bottom:14px">General-purpose LLM Extraction</div>
+        <p style="font-family:var(--serif);font-size:22px;color:var(--text-h);margin-bottom:14px;line-height:1.25">"Produces plausible numbers."</p>
+        <p style="font-size:14px;line-height:1.68;margin-bottom:18px">A language model generates the most probable digits. When line items and tax don't reconcile, it produces a figure that makes the arithmetic <em>look</em> right — formatted identically to a correct answer, no uncertainty signal.</p>
+        <div style="background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.18);border-radius:var(--rx);padding:10px 14px;font-size:12.5px;color:var(--amber);font-family:var(--mono)">→ confident wrong answer · styled identically to a correct one</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ MODULES ════════════════════════════════════════ -->
+<section id="modules" class="sec">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Platform modules</div><h2 class="h2">Seven purpose-built modules.<br/>One codebase. No bolt-ons.</h2><p class="lead" style="margin-top:14px">Every capability is native to the same codebase. A correction in EVOLVE propagates to NOVA, SENTINEL, and matching in the same transaction — not via a third-party API call.</p></div>
+    <div class="mod-g">
+      <div class="mod anim"><div class="mod-icon" style="background:#0D1A3A"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="#4C8DFF" stroke-width="1.5"/><path d="M7 10l2 2 4-4" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mod-name">NOVA</div><div class="mod-role">Vision Intake</div><div class="mod-desc">Reads invoices from email, cloud drives, upload, or REST API. Position-independent extraction via Azure Document Intelligence + typed JSON schema.</div><div class="mod-kpi">99.3% field accuracy · &lt; 3.8s · 12 document families</div></div>
+      <div class="mod anim"><div class="mod-icon" style="background:#1A0D0D"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2L3 6v6c0 4 3.5 7 7 8 3.5-1 7-4 7-8V6L10 2z" stroke="#F87171" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 10l2 2 4-4" stroke="#F87171" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mod-name">SENTINEL</div><div class="mod-role">Truth Engine</div><div class="mod-desc">Rebuilds every total from line items using exact decimal arithmetic. Issues 10 formal alert codes. Failed reconstruction = hard stop, always.</div><div class="mod-kpi">0.00% arithmetic hallucination · 10 alert codes</div></div>
+      <div class="mod anim"><div class="mod-icon" style="background:#0A1D2E"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="7" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/><rect x="11" y="2" width="7" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/><rect x="6" y="11" width="8" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/></svg></div><div class="mod-name">3-Way Match</div><div class="mod-role">Reconciliation Engine</div><div class="mod-desc">Invoice × PO × goods receipt. Vector similarity for part-number alignment. Partial deliveries and retention handled natively.</div><div class="mod-kpi">±0.01 tolerance · vector part matching · retention aware</div></div>
+      <div class="mod anim"><div class="mod-icon" style="background:#0D2A1A"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2v4M10 14v4M2 10h4M14 10h4" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="10" r="4" stroke="#34D399" stroke-width="1.5"/></svg></div><div class="mod-name">EVOLVE</div><div class="mod-role">Self-Tuning Rules</div><div class="mod-desc">Learns vendor-specific extraction quirks from corrections. 500-invoice replay before any rule goes live. No-code trainer UI for finance teams.</div><div class="mod-kpi">0 regressions · 500-invoice replay · no-code</div></div>
+      <div class="mod anim"><div class="mod-icon" style="background:#1F1A0D"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 4h12v10H4z" stroke="#FBBF24" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 16l2 2 2-2" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/><path d="M7 8h6M7 11h4" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mod-name">SAGE</div><div class="mod-role">Spend Copilot</div><div class="mod-desc">Plain-language queries over the entire invoice history. Returns sourced SQL + citation links. Read-only — cannot approve or modify any record.</div><div class="mod-kpi">72.2% golden-set pass rate · SQL drawer + citations</div></div>
+      <div class="mod anim"><div class="mod-icon" style="background:#0D1A3A"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 10a6 6 0 1112 0 6 6 0 01-12 0z" stroke="#4C8DFF" stroke-width="1.5"/><path d="M10 7v3l2 2" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/></svg></div><div class="mod-name">Autopilot Sync</div><div class="mod-role">Scheduled Collection</div><div class="mod-desc">Polls Google Drive, email mailbox, Salesforce on a schedule. Invoices arrive in the system automatically — nobody needs to download or upload files.</div><div class="mod-kpi">Google Drive · Email · Salesforce · REST API</div></div>
+      <div class="mod anim"><div class="mod-icon" style="background:#0A1D2E"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 16l12-6L4 4v5l8 1-8 1v5z" stroke="#22D3EE" stroke-width="1.5" stroke-linejoin="round"/></svg></div><div class="mod-name">Outbound AR Pre-Flight</div><div class="mod-role">Customer Billing QA</div><div class="mod-desc">Applies arithmetic verification to your own outbound customer invoices before they leave. Errors caught before delivery = fewer disputes = faster payment.</div><div class="mod-kpi">Target DSO: 65 → under 25 days</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ PIPELINE ════════════════════════════════════════ -->
+<section id="pipeline" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">How it works</div><h2 class="h2">Five stages. Each with a contract.<br/>Failure stops — never guesses.</h2><p class="lead" style="margin-top:14px">Each stage defines what it accepts, what it produces, and what it does when something falls short. The answer is always "route to a human" — never "proceed with low confidence."</p></div>
+    <div class="pipe">
+      <div class="pipe-step anim"><div class="pipe-num">1</div><div class="pipe-body"><div class="pipe-name">Intake — Document arrives <span class="tag tag-blue" style="font-size:10px">SHA-256</span></div><p class="pipe-desc">Invoice received via email, Google Drive sync, manual upload, or REST API. File type confirmed from magic bytes (not filename). SHA-256 hash computed immediately — a duplicate is caught before any OCR or AI token is spent.</p><span class="pipe-rule">Contract: document is genuine, deduplicated, and structurally valid before extraction begins.</span></div></div>
+      <div class="pipe-step anim"><div class="pipe-num">2</div><div class="pipe-body"><div class="pipe-name">NOVA — Extraction <span class="tag tag-teal" style="font-size:10px">99.3% accuracy</span></div><p class="pipe-desc">Azure Document Intelligence reads page geometry, text, and tables. A typed JSON schema bounds the LLM extraction — amounts return as exact decimal, dates as ISO 8601. A field that moves on the page does not break extraction because NOVA reads structure, not position.</p><span class="pipe-rule">Contract: all fields are typed and structured. "Plausible but unverifiable" is not a valid output.</span></div></div>
+      <div class="pipe-step anim"><div class="pipe-num">3</div><div class="pipe-body"><div class="pipe-name">SENTINEL — Arithmetic Verification <span class="tag tag-red" style="font-size:10px">0% hallucination</span></div><p class="pipe-desc">Exact decimal code (not a model) rebuilds every total: Σ(line amounts) = subtotal, subtotal + tax − discount = invoice total, tax vs. applicable rate. Any discrepancy triggers a formal alert code and stops the invoice. No confidence band overrides a failed check.</p><span class="pipe-rule">Contract: every figure either reconstructs from first principles or generates a hard stop.</span></div></div>
+      <div class="pipe-step anim"><div class="pipe-num">4</div><div class="pipe-body"><div class="pipe-name">3-Way Reconciliation <span class="tag tag-purple" style="font-size:10px">Vector matching</span></div><p class="pipe-desc">Verified invoice matched against purchase order and goods receipt. Part descriptions aligned via vector similarity (tolerates abbreviations). Partial deliveries reconciled at dock-receipt level. Retention and holdback recognised as document structure.</p><span class="pipe-rule">Contract: what was billed matches what was ordered and received, or a reconciliation exception is raised before posting.</span></div></div>
+      <div class="pipe-step anim"><div class="pipe-num">5</div><div class="pipe-body"><div class="pipe-name">Ledger Commit — Post to ERP <span class="tag tag-green" style="font-size:10px">SAP · Oracle · NetSuite</span></div><p class="pipe-desc">Passes all four stages → posts to ERP with a complete, immutable audit trail: what was extracted, which rule applied, which PO it matched, who reviewed it. An invoice that fails any prior stage never reaches this step.</p><span class="pipe-rule">Contract: nothing posts to the ledger without passing arithmetic verification and three-way matching.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ MATURITY ════════════════════════════════════════ -->
+<section id="maturity" class="sec">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Maturity model</div><h2 class="h2">Six levels of AP automation.<br/>Where does your operation sit?</h2></div>
+    <div class="mat-wrap">
+      <table class="mat">
+        <thead><tr><th>Level</th><th>Name</th><th>Description</th><th>Typical STP</th></tr></thead>
+        <tbody>
+          <tr class="mat-dim"><td><span class="lbadge">L0</span></td><td>Manual entry</td><td>Clerks key every line item into the ERP by hand</td><td>0%</td></tr>
+          <tr class="mat-dim"><td><span class="lbadge">L1</span></td><td>Template OCR</td><td>ABBYY / Kofax — breaks when a supplier changes their layout</td><td>18–24%</td></tr>
+          <tr class="mat-dim"><td><span class="lbadge">L2</span></td><td>General-purpose AI</td><td>LLMs extract to JSON — totals still need full human review</td><td>35–45%</td></tr>
+          <tr class="mat-dim"><td><span class="lbadge">L3</span></td><td>Conditional automation</td><td>Rules + 2-way PO match — fails on partial shipments</td><td>55–65%</td></tr>
+          <tr class="mat-dim"><td><span class="lbadge">L4</span></td><td>Deterministic matching</td><td>3-way match, but cannot learn vendor-specific quirks</td><td>75–82%</td></tr>
+          <tr class="mat-active"><td><span class="lbadge lbadge-g">L5</span></td><td><strong>Continuous self-tuning</strong></td><td><strong>InvoiceEQ — verified arithmetic + self-tuning rules</strong></td><td><strong style="color:var(--green)">88–96%</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══ BY ROLE ════════════════════════════════════════ -->
+<section id="by-role" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">By role</div><h2 class="h2">Different teams. One shared result:<br/>no invoice bypasses verification.</h2></div>
+    <div class="role-g">
+      <div class="role anim"><div class="role-title">CFO & Internal Audit</div><div class="role-owns">Own: fiduciary control and exposure</div><p style="font-size:13.5px;line-height:1.65">Coverage moves from sampling ~30 invoices to 100% population. Deterministic arithmetic covers every document — including the £42 utility invoice that never gets checked.</p></div>
+      <div class="role anim"><div class="role-title">AP Operations</div><div class="role-owns">Own: getting invoices processed</div><p style="font-size:13.5px;line-height:1.65">Downloading, organising, and uploading files stops being a job. Autopilot collects from email and cloud drives; extraction runs without manual intervention.</p></div>
+      <div class="role anim"><div class="role-title">Financial Controller</div><div class="role-owns">Own: period close accuracy</div><p style="font-size:13.5px;line-height:1.65">Unmatched receipts shrink to genuine exceptions. Three-way matching filters structural mismatches before they reach the controller's queue — what remains is truly unusual.</p></div>
+      <div class="role anim"><div class="role-title">Procurement</div><div class="role-owns">Own: order and receipt integrity</div><p style="font-size:13.5px;line-height:1.65">Manual part-number matching stops arriving in buyers' inboxes. Vector similarity handles supplier abbreviations; partial deliveries reconcile natively.</p></div>
+      <div class="role anim"><div class="role-title">Treasury & FP&A</div><div class="role-owns">Own: spend visibility</div><p style="font-size:13.5px;line-height:1.65">Price movement is visible without a data request. SAGE queries invoice history in plain language — vendor price creep surfaces before it compounds.</p></div>
+      <div class="role anim"><div class="role-title">IT & Architecture</div><div class="role-owns">Own: risk and change safety</div><p style="font-size:13.5px;line-height:1.65">Cross-entity data access is not expressible at the query layer — not prevented by a flag. Rule rollback is available from the same UI that promoted the rule.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ COMPARE ════════════════════════════════════════ -->
+<section id="compare" class="sec">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Competitive comparison</div><h2 class="h2">The comparison with the<br/>honest rows kept in.</h2></div>
+    <div class="cmp-wrap">
+      <table class="cmp">
+        <thead><tr><th style="width:180px">Dimension</th><th>Legacy OCR<br/><span style="font-weight:400;font-size:11px;text-transform:none;letter-spacing:0">ABBYY, Kofax</span></th><th>General AI Extraction<br/><span style="font-weight:400;font-size:11px;text-transform:none;letter-spacing:0">GPT / Claude APIs</span></th><th class="good">InvoiceEQ</th></tr></thead>
+        <tbody>
+          <tr><td class="dlbl">Arithmetic verification</td><td>Regex rules, breaks on layout shift. No independent rebuild.</td><td>Model generates most probable total. Confident wrong answer = looks like a correct one.</td><td class="good">Exact decimal code. No model in arithmetic path. Failed reconstruction = hard stop, always.</td></tr>
+          <tr><td class="dlbl">3-way reconciliation</td><td>Rigid exact-string matching. Abbreviations and partial deliveries create manual exceptions at scale.</td><td>Unreliable on multi-table line items. Partial delivery logic inconsistent across invocations.</td><td class="good">Exact → fuzzy → vector similarity cascade. Partial deliveries and retention handled natively.</td></tr>
+          <tr><td class="dlbl">Rule adaptation</td><td>Consultant project per template change. Supplier redesign = new engagement.</td><td>Prompt drift — one change silently degrades other suppliers. No replay corpus.</td><td class="good">500-invoice replay before promotion. Zero regressions. Finance team operates the trainer, not developers.</td></tr>
+          <tr><td class="dlbl">Data isolation</td><td>On-premise/private-cloud. Physical isolation, high operational cost.</td><td>Training exposure. Enterprise opt-outs exist but are not universal.</td><td class="good">Zero retention for training. Per-tenant crypto isolation at storage layer — not a configurable flag.</td></tr>
+          <tr><td class="dlbl">Time to production</td><td>4–9 month consulting cycle. Sequential per supplier cluster.</td><td>Bespoke internal engineering. Everything built from scratch.</td><td class="good">14 days on standard ERP. What extends it is documented — see deployment section.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:16px;font-size:13px;color:var(--text-dim);font-style:italic;font-family:var(--mono)">// This table favours InvoiceEQ — it is a product catalogue. The limits section below documents where InvoiceEQ is the wrong choice.</p>
+  </div>
+</section>
+
+<!-- ══ SECURITY ════════════════════════════════════════ -->
+<section id="security" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Security & compliance</div><h2 class="h2">Isolation is structural,<br/>not a configuration setting.</h2><p class="lead" style="margin-top:14px">Every property below is enforced at the architecture layer. Cross-tenant reads are not expressible in the system's query model — not merely forbidden by an application rule.</p></div>
+    <div class="sec-g">
+      <div class="sec-c anim"><div class="sec-c-title"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 2L3 5.5v4c0 3.5 2.5 6 6 7 3.5-1 6-3.5 6-7v-4L9 2z" stroke="#34D399" stroke-width="1.5" stroke-linejoin="round"/></svg>Row-Level DB Isolation</div><p style="font-size:13.5px;line-height:1.65">Mandatory tenant predicate injected at ORM layer on every query. Cross-tenant read is not expressible — not merely forbidden.</p></div>
+      <div class="sec-c anim"><div class="sec-c-title"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" stroke="#4C8DFF" stroke-width="1.5"/><rect x="10" y="2" width="6" height="6" rx="1" stroke="#4C8DFF" stroke-width="1.5"/><rect x="2" y="10" width="6" height="6" rx="1" stroke="#4C8DFF" stroke-width="1.5"/><rect x="10" y="10" width="6" height="6" rx="1" stroke="#4C8DFF" stroke-width="1.5"/></svg>Partitioned Vector Indices</div><p style="font-size:13.5px;line-height:1.65">Each tenant's embeddings live in a physically separate namespace. A SAGE query from Tenant A cannot traverse Tenant B's data.</p></div>
+      <div class="sec-c anim"><div class="sec-c-title"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="8" width="12" height="8" rx="2" stroke="#FBBF24" stroke-width="1.5"/><path d="M6 8V6a3 3 0 016 0v2" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/></svg>Ephemeral Storage Tokens</div><p style="font-size:13.5px;line-height:1.65">Document files accessed via signed URLs with 15-minute lifetime. No public buckets. A captured URL expires before it can be misused.</p></div>
+      <div class="sec-c anim"><div class="sec-c-title"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="#22D3EE" stroke-width="1.5"/><path d="M6 9l2 2 4-4" stroke="#22D3EE" stroke-width="1.5" stroke-linecap="round"/></svg>Zero Training Retention</div><p style="font-size:13.5px;line-height:1.65">No invoice data used to improve AI models. Architecture — not a contractual opt-out sitting on top of a pipeline that could change.</p></div>
+      <div class="sec-c anim"><div class="sec-c-title"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M4 16l12-6L4 4v5l8 1-8 1v5z" stroke="#F87171" stroke-width="1.5" stroke-linejoin="round"/></svg>Hard Delete — Complete Purge</div><p style="font-size:13.5px;line-height:1.65">Deletion removes from every store atomically: relational DB, vector index, blob storage. Deleted records cannot reappear in SAGE answers.</p></div>
+      <div class="sec-c anim"><div class="sec-c-title"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="3" y="3" width="12" height="12" rx="2" stroke="#A78BFA" stroke-width="1.5"/><path d="M6 9l2 2 4-4" stroke="#A78BFA" stroke-width="1.5" stroke-linecap="round"/></svg>RS256 Asymmetric Auth</div><p style="font-size:13.5px;line-height:1.65">Session tokens use RS256 + JWKS caching + issuer pinning. API keys stored as PBKDF2-HMAC-SHA256 hashes — plaintext never retained.</p></div>
+    </div>
+    <div class="cert-row">
+      <div class="cert"><div class="cert-name">SOC 2</div><div class="cert-sub">Type II</div></div>
+      <div class="cert"><div class="cert-name">ISO 27001</div><div class="cert-sub">Information Security</div></div>
+      <div class="cert"><div class="cert-name">GDPR</div><div class="cert-sub">EU Data Protection</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ SCENARIOS ══════════════════════════════════════ -->
+<section id="scenarios" class="sec">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Enterprise scenarios</div><h2 class="h2">Six industries. The same failure<br/>pattern, different surfaces.</h2></div>
+    <div class="scen-list">
+      <div class="scen anim"><div><div class="scen-type">Manufacturing</div><div class="scen-title">Multi-entity manufacturer</div><div class="scen-stat">38,000 inv/mo · 4,200 suppliers · 3 countries</div></div><div><div class="scen-break"><div class="scen-lbl lbl-red">What breaks today</div><p style="font-size:13.5px;line-height:1.65">Three countries = three tax regimes. Invoices misrouted to the wrong jurisdiction process under the wrong tax treatment — manual correction required at every period close.</p></div><div><div class="scen-lbl lbl-green">How InvoiceEQ addresses it</div><p style="font-size:13.5px;line-height:1.65">Jurisdiction read per document from the extracted supplier address — not a routing rule someone assigned. SENTINEL applies the correct rate automatically.</p></div></div></div>
+      <div class="scen anim"><div><div class="scen-type">Automotive supply chain</div><div class="scen-title">Tier-1 automotive supplier</div><div class="scen-stat">900 suppliers · 60,000 part numbers · JIT</div></div><div><div class="scen-break"><div class="scen-lbl lbl-red">What breaks today</div><p style="font-size:13.5px;line-height:1.65">Invoice says "WGT-A3-REV2"; PO says "Widget Assembly A3 (Revision 2)". Exact-string matching fails. At 60,000 part numbers this is a full-time job. Partial JIT deliveries create false quantity mismatches.</p></div><div><div class="scen-lbl lbl-green">How InvoiceEQ addresses it</div><p style="font-size:13.5px;line-height:1.65">Vector similarity matches supplier descriptions to PO lines without identical strings. Partial deliveries reconcile against dock receipts, not the full PO quantity.</p></div></div></div>
+      <div class="scen anim"><div><div class="scen-type">Construction & EPC</div><div class="scen-title">Infrastructure contractor</div><div class="scen-stat">Progress billing · retention · subcontractors</div></div><div><div class="scen-break"><div class="scen-lbl lbl-red">What breaks today</div><p style="font-size:13.5px;line-height:1.65">Standard 5–10% retention looks like an arithmetic mismatch to any system that doesn't understand construction billing. Every progress claim becomes an exception.</p></div><div><div class="scen-lbl lbl-green">How InvoiceEQ addresses it</div><p style="font-size:13.5px;line-height:1.65">Retention is recognised as document structure — a specific deduction type with defined treatment. A correctly-drawn progress claim verifies and posts without manual review.</p></div></div></div>
+      <div class="scen anim"><div><div class="scen-type">Regulated industry</div><div class="scen-title">Pharmaceutical distribution</div><div class="scen-stat">Controlled supply chain · high SKU count</div></div><div><div class="scen-break"><div class="scen-lbl lbl-red">What breaks today</div><p style="font-size:13.5px;line-height:1.65">Audits sample ~30 from 45,000/month. The 44,970 unchecked are unquantified exposure — any systematic error is invisible until an external audit surfaces it.</p></div><div><div class="scen-lbl lbl-green">How InvoiceEQ addresses it</div><p style="font-size:13.5px;line-height:1.65">100% population coverage. Every invoice audited. Complete, immutable trail for every record — accessible directly, no IT data extract needed.</p></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ LIMITS ══════════════════════════════════════════ -->
+<section id="limits" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Honest limits</div><h2 class="h2">When InvoiceEQ is the wrong choice.</h2><p class="lead" style="margin-top:14px">Every vendor says yes to everything — which is why buyers stop trusting what vendors say. Stating this clearly is the only reason the rest of this catalogue should be believed.</p></div>
+    <div class="limits-g">
+      <div class="limit anim"><div class="limit-n">01</div><div class="limit-t"><strong>No purchase orders.</strong> Three-way matching requires a PO and goods receipt. Without them you get arithmetic verification + duplicate detection — not the matching layer that drives the highest STP bands.</div></div>
+      <div class="limit anim"><div class="limit-n">02</div><div class="limit-t"><strong>Under ~500 invoices/month.</strong> At that volume a competent person is cheaper than any software. The economics only change above approximately 500 documents a month.</div></div>
+      <div class="limit anim"><div class="limit-n">03</div><div class="limit-t"><strong>Already live on Coupa or Ariba.</strong> Displacing a working procure-to-pay suite is a renewal conversation, not a capability-gap one. Don't start that evaluation mid-contract.</div></div>
+      <div class="limit anim"><div class="limit-n">04</div><div class="limit-t"><strong>Policy mandates on-premise hardware.</strong> This is cloud-native on Azure. Regional cloud deployment can be discussed; on-premise hardware cannot.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ DEPLOYMENT ══════════════════════════════════════ -->
+<section id="deployment" class="sec">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Getting started</div><h2 class="h2">The 14-day pilot. What it<br/>actually contains.</h2><p class="lead" style="margin-top:14px">14 days assumes a single entity on a standard ERP with credentials available on day one. What extends it is documented below — read it before committing to a timeline.</p></div>
+    <div class="deploy-g">
+      <div class="dc anim"><div class="dp-phase">Phase 1</div><div class="dp-days">Days 1–3</div><div class="dp-title">Historical ingestion & baseline</div><p class="dp-what">Load past invoices. Measure extraction accuracy against your ERP's existing records — what InvoiceEQ reads vs. what the ERP holds.</p><div class="dp-end">→ measured baseline, not an estimate</div></div>
+      <div class="dc anim"><div class="dp-phase">Phase 2</div><div class="dp-days">Days 4–7</div><div class="dp-title">Tuning against your suppliers</div><p class="dp-what">Vendor tolerances and rules set, then replayed against historical corpus. No rule reaches production without passing the 500-invoice replay.</p><div class="dp-end">→ rules proven on your own history</div></div>
+      <div class="dc anim"><div class="dp-phase">Phase 3</div><div class="dp-days">Days 8–11</div><div class="dp-title">Connectors & matching</div><p class="dp-what">Mail and cloud intake configured. ERP write path tested against real POs and goods receipts. Three-way match validated end-to-end.</p><div class="dp-end">→ working path to your ledger</div></div>
+      <div class="dc anim"><div class="dp-phase">Phase 4</div><div class="dp-days">Days 12–14</div><div class="dp-title">Controlled cutover</div><p class="dp-what">STP enabled for high-confidence suppliers first. Lower-confidence documents continue through manual review while the system learns.</p><div class="dp-end">→ live on a scope you chose</div></div>
+    </div>
+    <div style="margin-top:28px;padding:20px 26px;background:var(--card);border:1px solid var(--border);border-radius:var(--r);border-left:3px solid var(--amber)">
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--amber);margin-bottom:10px;font-family:var(--mono)">// What extends beyond 14 days</div>
+      <ul style="font-size:14px;line-height:1.7;padding-left:20px;color:var(--text-b)">
+        <li>Custom ERP connectors beyond SAP, Oracle, and NetSuite</li>
+        <li>Multi-entity rollouts — each entity is a separate deployment sequence</li>
+        <li>Environments where ERP credentials or historical data aren't available on day one</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ══ FAQ ════════════════════════════════════════════ -->
+<section id="faq" class="sec sec-dark">
+  <div class="con">
+    <div class="sec-hdr"><div class="eyebrow">Frequently asked</div><h2 class="h2">The questions worth asking<br/>before any commitment.</h2></div>
+    <div class="faq-list" style="max-width:800px">
+      <div class="faq-item"><button class="faq-q" onclick="toggleFaq(this)">Does a language model ever decide a financial number?<span class="faq-icon">+</span></button><div class="faq-a">No. Extraction reads what is printed on the document. Every total is rebuilt with exact decimal arithmetic in ordinary Python code — not estimated by a model. If the reconstructed total disagrees with the stated total, the invoice stops for human review. The model is not in the arithmetic path by design, not by configuration.</div></div>
+      <div class="faq-item"><button class="faq-q" onclick="toggleFaq(this)">What happens when a supplier changes their invoice layout?<span class="faq-icon">+</span></button><div class="faq-a">Most layout changes pass through without intervention — NOVA reads document structure, not field positions. If a genuine extraction error results, an operator corrects it once. EVOLVE observes the correction, proposes a candidate rule, replays it against 500 historical invoices, then promotes only if zero regressions are found.</div></div>
+      <div class="faq-item"><button class="faq-q" onclick="toggleFaq(this)">Is our invoice data used to train AI models?<span class="faq-icon">+</span></button><div class="faq-a">No. Zero retention for training. Tenant records, vector indices, and document files are isolated at the storage layer with per-tenant cryptographic separation — not by an application flag that could be changed. No customer invoice is ever used to improve a base model.</div></div>
+      <div class="faq-item"><button class="faq-q" onclick="toggleFaq(this)">How long until we're live in production?<span class="faq-icon">+</span></button><div class="faq-a">14 days to production cutover on a standard ERP with credentials available on day one. Custom connectors, multi-entity rollouts, and environments without ready credentials extend this. The deployment section above documents exactly what extends it.</div></div>
+      <div class="faq-item"><button class="faq-q" onclick="toggleFaq(this)">How do we verify the claims before signing?<span class="faq-icon">+</span></button><div class="faq-a">Bring your worst 500 invoices — the ones that break your current tooling — and measure the straight-through rate against the published 88–96% band. A 12-point evaluation scorecard is available to run InvoiceEQ and any competitor through identical criteria side-by-side. That measurement is the pilot.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══ CTA ════════════════════════════════════════════ -->
+<section class="cta-sec sec">
+  <div class="cta-in">
+    <h2 class="cta-hl">Judge it on the invoices<br/>that break everything else.</h2>
+    <p class="cta-sub">Every figure in this catalogue is designed to be measured against your own documents — including the ones your current tooling cannot read. That is the pilot, not a demonstration.</p>
+    <div class="cta-row">
+      <a href="https://invoicellm.admsofttech.com" target="_blank" class="btn btn-primary btn-lg">Open the Live App →</a>
+      <a href="#compare" class="btn btn-ghost btn-lg">Review Scorecard</a>
+    </div>
+    <p style="font-size:13px;color:var(--text-dim);font-style:italic">14 days to production cutover. Evaluated against your own invoices, including the ones that break your current system.</p>
+  </div>
+</section>
+
+<!-- ══ FOOTER ══════════════════════════════════════════ -->
+<footer class="footer">
+  <div class="con footer-in">
+    <a href="#hero" class="logo">
+      <svg width="26" height="26" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#111C2E"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg>
+      <span class="logo-name" style="font-size:16px">InvoiceEQ</span>
+    </a>
+    <nav class="footer-nav">
+      <a href="#website-screens">Website</a><a href="#product-screens">Product</a>
+      <a href="#modules">Modules</a><a href="#pipeline">Pipeline</a>
+      <a href="#compare">Compare</a><a href="#security">Security</a>
+      <a href="#scenarios">Scenarios</a><a href="#faq">FAQ</a>
+    </nav>
+    <div class="footer-legal">Product catalogue · September 2026<br/>invoicellm.admsofttech.com · All metrics measured, caveats intentional.</div>
+  </div>
+</footer>
+
+<!-- ══ LIGHTBOX MODAL ═════════════════════════════ -->
+<div id="lightbox" class="lightbox-modal" onclick="if(event.target===this)closeLightbox()">
+  <div class="lightbox-box">
+    <div class="lightbox-header">
+      <div class="lightbox-title">
+        <span class="tag tag-blue" style="font-size:10px">HIGH-RES INSPECTION</span>
+        <span id="lightbox-caption" style="color:var(--text-h)">Invoice AI Screen</span>
+      </div>
+      <button class="lightbox-close" onclick="closeLightbox()" title="Close (Esc)">✕</button>
+    </div>
+    <div class="lightbox-body">
+      <img id="lightbox-img" src="" alt="High Resolution Screenshot View"/>
+    </div>
+  </div>
+</div>
+
+</div><!-- page-wrap -->
+
+<script>
+// ── Lightbox zoom
+function openLightbox(src, title){
+  var modal = document.getElementById('lightbox');
+  var img = document.getElementById('lightbox-img');
+  var cap = document.getElementById('lightbox-caption');
+  if(!modal || !img) return;
+  img.src = src;
+  if(cap) cap.textContent = title || 'Invoice AI Screen';
+  modal.style.display = 'flex';
+  requestAnimationFrame(function(){ modal.classList.add('open'); });
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox(){
+  var modal = document.getElementById('lightbox');
+  if(!modal) return;
+  modal.classList.remove('open');
+  setTimeout(function(){
+    modal.style.display = 'none';
+    document.body.style.overflow = '';
+  }, 220);
+}
+
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape') closeLightbox();
+});
+
+// ── Screen tabs active sync
+var screenTabs = document.querySelectorAll('.stab');
+var screenIds = ['screen-dashboard','screen-attention','screen-ingest','screen-audit','screen-auditor-review','screen-history','screen-trainer','screen-chat'];
+window.addEventListener('scroll', function(){
+  var sy = window.scrollY;
+  screenIds.forEach(function(id){
+    var el = document.getElementById(id);
+    if(!el) return;
+    if(el.offsetTop - 120 <= sy && el.offsetTop + el.offsetHeight - 120 > sy){
+      screenTabs.forEach(function(t){ t.classList.remove('active'); });
+      var match = document.querySelector('.stab[href="#' + id + '"]');
+      if(match) match.classList.add('active');
+    }
+  });
+}, {passive:true});
+
+// ── FAQ accordion
+function toggleFaq(btn){
+  var a=btn.nextElementSibling,open=btn.classList.contains('open');
+  document.querySelectorAll('.faq-q.open').forEach(function(q){q.classList.remove('open');q.nextElementSibling.classList.remove('open');q.closest('.faq-item').classList.remove('open-item')});
+  if(!open){btn.classList.add('open');a.classList.add('open');btn.closest('.faq-item').classList.add('open-item')}
+}
+
+// ── Intersection Observer animations
+if('IntersectionObserver' in window){
+  var io=new IntersectionObserver(function(entries){
+    entries.forEach(function(e,i){
+      if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}
+    });
+  },{threshold:0.07,rootMargin:'0px 0px -40px 0px'});
+  document.querySelectorAll('.anim').forEach(function(el,i){
+    el.style.transitionDelay=(i%6)*0.07+'s';
+    io.observe(el);
+  });
+}
+
+// ── Nav scroll highlight
+var navEl=document.getElementById('nav');
+var sections=['hero','website-screens','product-screens','modules','pipeline','compare','security','scenarios'];
+window.addEventListener('scroll',function(){
+  var sy=window.scrollY;
+  if(navEl){navEl.classList.toggle('scrolled',sy>40)}
+  sections.forEach(function(id){
+    var el=document.getElementById(id);
+    if(!el)return;
+    if(el.offsetTop-80<=sy&&el.offsetTop+el.offsetHeight-80>sy){
+      document.querySelectorAll('.nav-links a').forEach(function(a){a.classList.remove('active')});
+      var m=document.querySelector('.nav-links a[href="#'+id+'"]');
+      if(m)m.classList.add('active');
+    }
+  });
+},{passive:true});
+
+// ── Smooth scroll
+document.querySelectorAll('a[href^="#"]').forEach(function(a){
+  a.addEventListener('click',function(e){
+    var t=document.querySelector(this.getAttribute('href'));
+    if(t){e.preventDefault();t.scrollIntoView({behavior:'smooth',block:'start'})}
+  });
+});
+</script>
+</body>
+</html>

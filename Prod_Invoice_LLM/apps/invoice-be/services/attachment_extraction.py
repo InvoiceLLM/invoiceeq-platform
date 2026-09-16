@@ -144,6 +144,14 @@ def extract_attachment(
         index_attachment(row, db_session)
         progress(STAGE_MATCHING)
         match_attachment(row, db_session)
+        # Feature 33 Task 33.9: emit facts behind ENABLE_ATTACHMENT_FACTS
+        if getattr(get_settings(), "ENABLE_ATTACHMENT_FACTS", True):
+            try:
+                from services.facts import emit_facts
+
+                emit_facts(row, row.extracted_json, db_session=db_session)
+            except Exception as e:
+                logger.error("Fact emission failed for attachment %s: %s", row.id, e)
         insight_attachment(
             row, db_session, progress=progress, notify_job_id=notify_job_id, insight_state=insight_state,
             ocr_text=ocr_text,

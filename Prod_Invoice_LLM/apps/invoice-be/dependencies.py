@@ -63,6 +63,8 @@ class TenantContext(BaseModel):
     # -- purely additive there.
     auth_method: str = "clerk"
     key_scope: str | None = None
+    # Feature 33 Task 33.11: role clearance ("ops" or "exec")
+    clearance: str = "ops"
 
 # Cache for Clerk JWKS keys
 _jwks_cache = {}
@@ -761,6 +763,7 @@ def get_tenant_context_allow_unpaid(
         can_audit=can_audit,
         can_load=can_load,
         can_send_invoices=can_send_invoices,
+        clearance="exec" if role == "Admin" else "ops",
     )
 
     return context

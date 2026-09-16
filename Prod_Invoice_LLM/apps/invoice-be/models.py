@@ -430,6 +430,8 @@ class ChatSession(SQLModel, table=True):
     # Deliberately a snapshot, never an accumulator: a focus that only ever grows
     # would make turn 20 answer about a vendor abandoned at turn 3.
     focus: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    # Feature 33: role clearance ("ops" or "exec")
+    clearance: str = Field(default="ops", max_length=8)
     # Feature 26 Phase 2 (Gap 437): the oldest half of a long conversation,
     # condensed once and then reused, so history older than the 3,000-token
     # window is not simply dropped. Written by `get_chat_history()`.
@@ -609,6 +611,8 @@ class ChatAttachment(SQLModel, table=True):
     # bubble go backwards.
     insights_version: int = Field(default=0, nullable=False)
     insights: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    # Feature 33: role clearance ("ops" or "exec"), inherited from session
+    clearance: str = Field(default="ops", max_length=8)
 
 
 class ChatFeedback(SQLModel, table=True):
@@ -664,6 +668,8 @@ class User(SQLModel, table=True):
     # tenant-wide plan/email prerequisite gate (feature_16_settings.md) --
     # both must be true for a given user to see/use outbound sending.
     can_send_invoices: bool = Field(default=False, nullable=False)
+    # Feature 33 Task 33.39: per-user UI preferences
+    ui_prefs: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: datetime | None = Field(default=None)
 
@@ -895,6 +901,8 @@ class TenantChatRule(SQLModel, table=True):
     context_text: str = Field(default="", max_length=2000)
     created_by: str | None = Field(default=None, max_length=255)
     enabled: bool = Field(default=True)
+    # Feature 33: "user" | "atlas"
+    source: str = Field(default="user", max_length=32)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1762,6 +1770,10 @@ class Insight(SQLModel, table=True):
     # Nullable because a finding can outlive its session, and because the
     # dashboard ranks findings for a tenant with no session in hand at all.
     session_id: UUID | None = Field(default=None, index=True)
+    # Feature 33: "attachment" | "tenant"
+    scope: str = Field(default="attachment", max_length=16, index=True)
+    # Feature 33: "ops" | "exec"
+    clearance: str = Field(default="ops", max_length=8, index=True)
     doc_type: str = Field(default="OTHER", max_length=32)
     card: str = Field(max_length=64)
     finding_key: str = Field(max_length=255, index=True)
@@ -1955,3 +1967,106 @@ class ChatCorrection(SQLModel, table=True):
     promoted_example_id: UUID | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# =============================================================================
+# Feature 33 (ATLAS Analyst Agent) — Phase 0 Models
+# =============================================================================
+
+class Fact(SQLModel, table=True):
+    """Feature 33 Task 33.8 — The Facts Ledger.
+
+    What a document asserts, persisted independently of the document row.
+    Critical FK rule: source_id uses ON DELETE SET NULL so the TTL sweeper
+    deleting chat_attachments does NOT destroy Facts. User manual hard-delete
+    explicitly wipes associated facts in the same transaction.
+    """
+    __tablename__ = "fact"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    clearance: str = Field(default="ops", max_length=8, index=True)
+    kind: str = Field(max_length=64, index=True)
+    subject_kind: str = Field(max_length=64)
+    subject_id: str = Field(max_length=255)
+    counterparty_id: str | None = Field(default=None, max_length=255)
+    as_of: date | None = Field(default=None, index=True)
+    figures: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    source_kind: str | None = Field(default=None, max_length=32)
+    source_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("chat_attachments.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
+    evidence: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TodayItem(SQLModel, table=True):
+    """Feature 33 Task 33.7 / 33.32 — The row behind each line on the Today screen."""
+    __tablename__ = "today_item"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    section: str = Field(max_length=32, index=True)
+    clearance: str = Field(default="ops", max_length=8, index=True)
+    text: str = Field(default="", max_length=2000)
+    seeded_question: str | None = Field(default=None, max_length=1000)
+    insight_id: UUID | None = Field(default=None)
+    meta: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    severity: int = Field(default=3, index=True)
+    cleared_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InputRequest(SQLModel, table=True):
+    """Feature 33 Task 33.5 / 33.35 — A request for a specific document kind with unlock value."""
+    __tablename__ = "input_request"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    kind: str = Field(max_length=64, index=True)
+    phrase: str = Field(default="", max_length=1000)
+    unlock_amount: float | None = Field(default=None)
+    unlock_currency: str | None = Field(default=None, max_length=8)
+    unlock_count: int | None = Field(default=None)
+    clearance: str = Field(default="ops", max_length=8)
+    fulfilled_at: datetime | None = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ActionLog(SQLModel, table=True):
+    """Feature 33 Task 33.8 / 33.25 — One row per user-confirmed ATLAS action."""
+    __tablename__ = "action_log"
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    user_id: str = Field(max_length=255, index=True)
+    capability: str = Field(max_length=64, index=True)
+    args: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    result: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
+    outcome: str = Field(default="success", max_length=16)
+    error_message: str | None = Field(default=None, max_length=2000)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TenantProfileRule(SQLModel, table=True):
+    """Feature 33 Task 33.7 / 33.28 — Onboarding questionnaire preferences & rules."""
+    __tablename__ = "tenant_profile_rule"
+    __table_args__ = (
+        sa.UniqueConstraint("tenant_id", "key", name="uq_tenant_profile_rule_tenant_key"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(index=True)
+    key: str = Field(max_length=64, index=True)
+    value: str = Field(max_length=2000)
+    source: str = Field(default="atlas_onboarding", max_length=32)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+

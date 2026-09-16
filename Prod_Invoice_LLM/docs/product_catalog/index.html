@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>InvoiceEQ — Autonomous Accounts Payable Platform</title>
+  <meta name="description" content="InvoiceEQ reads supplier invoices, verifies every total deterministically, reconciles against purchase orders and receipts, and posts to your ledger — without a language model ever deciding a number." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="catalog.css" />
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo">
+        <span class="logo-mark">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="6" fill="#121A2C"/>
+            <path d="M6 6h7v7H6z" fill="#4C8DFF"/>
+            <path d="M15 6h7v7h-7z" fill="#22D3EE"/>
+            <path d="M6 15h7v7H6z" fill="#FBBF24"/>
+            <path d="M15 15h7v7h-7z" fill="#34D399"/>
+          </svg>
+        </span>
+        <span class="logo-text">InvoiceEQ</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="nav-link active">Overview</a></li>
+        <li><a href="modules.html" class="nav-link">Modules</a></li>
+        <li><a href="how-it-works.html" class="nav-link">How It Works</a></li>
+        <li><a href="compare.html" class="nav-link">Compare</a></li>
+        <li><a href="security.html" class="nav-link">Security</a></li>
+        <li><a href="scenarios.html" class="nav-link">Scenarios</a></li>
+      </ul>
+      <a href="how-it-works.html#deployment" class="btn-primary nav-cta">Start 14-Day Pilot</a>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero" id="hero">
+    <div class="hero-grid-bg"></div>
+    <div class="container hero-content">
+      <div class="hero-badge">Autonomous Accounts Payable · September 2026</div>
+      <h1 class="hero-headline">Accounts payable that<br/><em>proves its own arithmetic.</em></h1>
+      <p class="hero-sub">
+        InvoiceEQ reads supplier invoices, verifies every total deterministically,
+        reconciles them against your purchase orders and receipts, and posts to your
+        ledger — without a language model ever deciding a number.
+      </p>
+      <div class="hero-cta-row">
+        <a href="how-it-works.html#deployment" class="btn-primary btn-lg">Begin 14-Day Pilot</a>
+        <a href="how-it-works.html" class="btn-ghost btn-lg">See the Pipeline →</a>
+      </div>
+      <p class="hero-caveat">
+        Bring your worst 500 invoices — not your cleanest — and measure the straight-through rate yourself.
+      </p>
+    </div>
+  </section>
+
+  <!-- CORE INVARIANT BANNER -->
+  <section class="invariant-banner">
+    <div class="container">
+      <div class="invariant-inner">
+        <span class="invariant-icon">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 2L12.5 7H18L13.5 10.5L15.5 16L10 12.5L4.5 16L6.5 10.5L2 7H7.5L10 2Z" fill="#4C8DFF"/>
+          </svg>
+        </span>
+        <p class="invariant-text">
+          <strong>The core invariant:</strong> If line items plus tax do not equal the stated total,
+          nothing posts to the ledger. There is no confidence threshold that overrides it and no
+          exception path around it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- HEADLINE METRICS -->
+  <section class="section" id="metrics">
+    <div class="container">
+      <div class="section-label">Measured performance</div>
+      <h2 class="section-title">Numbers with their caveats<br/>attached — by design.</h2>
+      <p class="section-sub">
+        In accounts payable, 98% accuracy is not a good score — it is a 2% financial exposure,
+        spread invisibly across thousands of documents that all look fine.
+      </p>
+      <div class="metrics-grid">
+
+        <div class="metric-card">
+          <div class="metric-glyph" style="background:#0D1A3A">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <circle cx="9" cy="9" r="8" stroke="#4C8DFF" stroke-width="1.5"/>
+              <path d="M6 9l2 2 4-4" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="metric-value text-blue">0.00%</div>
+          <div class="metric-label">Arithmetic hallucination rate</div>
+          <div class="metric-caveat">By construction, not by sampling — no model sits in the arithmetic path. Totals are rebuilt in exact decimal code; one that cannot be reconstructed stops.</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-glyph" style="background:#0D2A1A">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M2 16V6l7-4 7 4v10" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/>
+              <rect x="7" y="10" width="4" height="6" rx="1" stroke="#34D399" stroke-width="1.5"/>
+            </svg>
+          </div>
+          <div class="metric-value text-green">88–96%</div>
+          <div class="metric-label">Straight-through processing (STP)</div>
+          <div class="metric-caveat">A maturity band for this class of system, not a measurement of your operation. Measure it on your own worst documents before planning against it.</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-glyph" style="background:#0A1D2E">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <circle cx="9" cy="9" r="7" stroke="#22D3EE" stroke-width="1.5"/>
+              <path d="M9 5v4l3 2" stroke="#22D3EE" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="metric-value text-teal">&lt; 3.8s</div>
+          <div class="metric-label">Median document latency</div>
+          <div class="metric-caveat">Median, not average — a handful of very large documents would flatter an average. Excludes queue wait at peak.</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-glyph" style="background:#1F1A0D">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <rect x="2" y="2" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/>
+              <rect x="10" y="2" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/>
+              <rect x="2" y="10" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/>
+              <rect x="10" y="10" width="6" height="6" rx="1" stroke="#FBBF24" stroke-width="1.5"/>
+            </svg>
+          </div>
+          <div class="metric-value text-amber">14 days</div>
+          <div class="metric-label">Time to production cutover</div>
+          <div class="metric-caveat">Against a standard ERP with credentials available on day one. Custom connectors and multi-entity rollouts run longer.</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-glyph" style="background:#0D1A3A">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M2 14l4-4 4 3 6-8" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="metric-value text-blue">99.3%</div>
+          <div class="metric-label">NOVA field accuracy</div>
+          <div class="metric-caveat">At &lt; 3.8s median latency. Measured across 27 real-world PDF invoice runs on 3 separate test sets.</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-glyph" style="background:#0D2A1A">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M9 3v12M3 9h12" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="metric-value text-green">0</div>
+          <div class="metric-label">EVOLVE regression rate</div>
+          <div class="metric-caveat">Across 500-document replay corpus. Every candidate rule is tested before it goes near production.</div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- PROBLEM: WHY ALTERNATIVES FAIL -->
+  <section class="section section-dark" id="problem">
+    <div class="container">
+      <div class="section-label">The problem</div>
+      <h2 class="section-title">Two approaches. One shared failure point.</h2>
+      <p class="section-sub">Both produce a number nobody actually verified.</p>
+
+      <div class="fail-grid">
+        <div class="fail-card">
+          <div class="fail-tag">Template OCR — ABBYY, Kofax</div>
+          <div class="fail-quote">"Reads positions, not documents."</div>
+          <p>A supplier moves a field two centimetres and the template stops matching. Character confusion between "O" and "0" produces an invoice number that looks right to a person but is a different string to the ERP — so the duplicate check that should fire never does.</p>
+          <div class="fail-callout">Failure mode: position drift → silent extraction error → no duplicate flag fires.</div>
+        </div>
+        <div class="fail-card">
+          <div class="fail-tag">General-purpose AI / LLM extraction</div>
+          <div class="fail-quote">"Produces plausible numbers."</div>
+          <p>A language model asked for a total generates the most probable sequence of digits. When line items and tax don't quite reconcile, it produces a figure that makes the arithmetic <em>look</em> right. It never signals uncertainty, so the error arrives formatted exactly like a correct answer.</p>
+          <div class="fail-callout">Failure mode: confident wrong answer, styled identically to a correct one.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MATURITY LADDER -->
+  <section class="section" id="maturity">
+    <div class="container">
+      <div class="section-label">Maturity model</div>
+      <h2 class="section-title">Six levels of AP automation.<br/>Where do you sit today?</h2>
+      <p class="section-sub">Most organisations buying this category are between L1 and L3.</p>
+
+      <div class="maturity-table-wrap">
+        <table class="maturity-table">
+          <thead>
+            <tr>
+              <th>Level</th>
+              <th>Name</th>
+              <th>Description</th>
+              <th>STP band</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="level-dim">
+              <td><span class="level-badge">L0</span></td>
+              <td>Manual entry</td>
+              <td>Clerks key line items into the ERP</td>
+              <td>0%</td>
+            </tr>
+            <tr class="level-dim">
+              <td><span class="level-badge">L1</span></td>
+              <td>Template OCR</td>
+              <td>ABBYY, Kofax — breaks when a layout shifts</td>
+              <td>18–24%</td>
+            </tr>
+            <tr class="level-dim">
+              <td><span class="level-badge">L2</span></td>
+              <td>General-purpose AI</td>
+              <td>LLMs parsing to JSON; totals need full review</td>
+              <td>35–45%</td>
+            </tr>
+            <tr class="level-dim">
+              <td><span class="level-badge">L3</span></td>
+              <td>Conditional automation</td>
+              <td>Rules + 2-way PO match; fails on partial shipments</td>
+              <td>55–65%</td>
+            </tr>
+            <tr class="level-dim">
+              <td><span class="level-badge">L4</span></td>
+              <td>Deterministic matching</td>
+              <td>3-way matching, but can't learn vendor quirks</td>
+              <td>75–82%</td>
+            </tr>
+            <tr class="level-active">
+              <td><span class="level-badge level-badge-active">L5</span></td>
+              <td><strong>Continuous self-tuning</strong></td>
+              <td><strong>InvoiceEQ — verified maths + self-tuning rule engine</strong></td>
+              <td><strong class="text-green">88–96%</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI TEAM OVERVIEW -->
+  <section class="section section-dark" id="modules-overview">
+    <div class="container">
+      <div class="section-label">Platform modules</div>
+      <h2 class="section-title">Seven modules. One codebase.<br/>No bolted-on third-party engines.</h2>
+      <div class="module-cards">
+
+        <a href="modules.html#nova" class="module-card">
+          <div class="module-glyph" style="background:#0D1A3A">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <circle cx="10" cy="10" r="8" stroke="#4C8DFF" stroke-width="1.5"/>
+              <path d="M7 10l2 2 4-4" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="module-name">NOVA</div>
+          <div class="module-role">Vision Intake</div>
+          <div class="module-desc">Reads 12 document families via multi-door ingestion — email, cloud drive, upload, API. No template required.</div>
+          <div class="module-kpi">99.3% field accuracy · &lt; 3.8s</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+        <a href="modules.html#sentinel" class="module-card">
+          <div class="module-glyph" style="background:#1A0D0D">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M10 2L3 6v6c0 4 3.5 7 7 8 3.5-1 7-4 7-8V6L10 2z" stroke="#F87171" stroke-width="1.5" stroke-linejoin="round"/>
+              <path d="M7 10l2 2 4-4" stroke="#F87171" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="module-name">SENTINEL</div>
+          <div class="module-role">Truth Engine</div>
+          <div class="module-desc">Rebuilds every total with exact decimal arithmetic. 10 formal alert codes. A total it cannot reconstruct does not pass.</div>
+          <div class="module-kpi">0.00% maths hallucination</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+        <a href="modules.html#match" class="module-card">
+          <div class="module-glyph" style="background:#0A1D2E">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <rect x="2" y="2" width="7" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/>
+              <rect x="11" y="2" width="7" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/>
+              <rect x="6" y="11" width="8" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/>
+              <path d="M9 9v2M11 9v2" stroke="#22D3EE" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="module-name">3-Way Match</div>
+          <div class="module-role">Reconciliation Engine</div>
+          <div class="module-desc">Invoice vs. purchase order vs. goods receipt. Vector similarity aligns supplier part abbreviations. Tolerates partial shipments.</div>
+          <div class="module-kpi">±0.01 tolerance on partial deliveries</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+        <a href="modules.html#evolve" class="module-card">
+          <div class="module-glyph" style="background:#0D2A1A">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M10 2v4M10 14v4M2 10h4M14 10h4" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/>
+              <circle cx="10" cy="10" r="4" stroke="#34D399" stroke-width="1.5"/>
+            </svg>
+          </div>
+          <div class="module-name">EVOLVE</div>
+          <div class="module-role">Self-Tuning Rules</div>
+          <div class="module-desc">Learns a supplier's quirks from corrections. Every candidate rule replays against 500 historical invoices before going live.</div>
+          <div class="module-kpi">0 regressions / 500-doc corpus</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+        <a href="modules.html#sage" class="module-card">
+          <div class="module-glyph" style="background:#1F1A0D">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M4 4h12v10H4z" rx="2" stroke="#FBBF24" stroke-width="1.5" stroke-linejoin="round"/>
+              <path d="M8 16l2 2 2-2" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M7 8h6M7 11h4" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="module-name">SAGE</div>
+          <div class="module-role">Spend Copilot</div>
+          <div class="module-desc">Ask natural-language questions of your entire invoice history. Surfaces vendor price creep and off-contract spend.</div>
+          <div class="module-kpi">Read-only query sandbox</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+        <a href="modules.html#autopilot" class="module-card">
+          <div class="module-glyph" style="background:#0D1A3A">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M4 10a6 6 0 1112 0 6 6 0 01-12 0z" stroke="#4C8DFF" stroke-width="1.5"/>
+              <path d="M10 7v3l2 2" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="module-name">Autopilot Sync</div>
+          <div class="module-role">Scheduling Engine</div>
+          <div class="module-desc">Collects documents from mail and cloud drives on a schedule. Intake stops being a person's job.</div>
+          <div class="module-kpi">Google Drive · Email · REST</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+        <a href="modules.html#outbound" class="module-card">
+          <div class="module-glyph" style="background:#0A1D2E">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M4 16l12-6L4 4v5l8 1-8 1v5z" stroke="#22D3EE" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="module-name">Outbound AR Pre-Flight</div>
+          <div class="module-role">Customer Billing QA</div>
+          <div class="module-desc">Audits the company's own outbound invoices before they go out — line maths, tax splits, PO references vs. contract terms.</div>
+          <div class="module-kpi">DSO target: 65 → under 25 days</div>
+          <div class="module-arrow">→</div>
+        </a>
+
+      </div>
+      <div class="section-cta-row">
+        <a href="modules.html" class="btn-ghost">Explore all modules in detail →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- BY ROLE -->
+  <section class="section" id="by-role">
+    <div class="container">
+      <div class="section-label">By role</div>
+      <h2 class="section-title">Different teams. One shared outcome:<br/>no invoice that bypasses verification.</h2>
+      <div class="role-grid">
+
+        <div class="role-card">
+          <div class="role-title">CFO &amp; Internal Audit</div>
+          <div class="role-owns">Own: fiduciary control and exposure</div>
+          <p>Testing moves from a sample to the whole population. Deterministic arithmetic and duplicate interception cover every invoice, not a random 30.</p>
+        </div>
+
+        <div class="role-card">
+          <div class="role-title">AP Operations</div>
+          <div class="role-owns">Own: getting documents in and processed</div>
+          <p>Downloading and filing stops being a job. Autopilot Sync collects from mail and cloud drives; extraction runs without a person in the loop.</p>
+        </div>
+
+        <div class="role-card">
+          <div class="role-title">Financial Controller</div>
+          <div class="role-owns">Own: close accuracy and accruals</div>
+          <p>Unmatched receipts shrink to genuine exceptions. Three-way matching filters out the structural mismatches before they reach the controller's queue.</p>
+        </div>
+
+        <div class="role-card">
+          <div class="role-title">Procurement</div>
+          <div class="role-owns">Own: order and receipt integrity</div>
+          <p>Matching stops arriving in a buyer's inbox. Part matching tolerates supplier abbreviations; partial deliveries reconcile natively without manual intervention.</p>
+        </div>
+
+        <div class="role-card">
+          <div class="role-title">Treasury &amp; FP&amp;A</div>
+          <div class="role-owns">Own: spend visibility, supplier behaviour</div>
+          <p>Price movement is visible without a data request. SAGE queries the entire invoice history in plain English — vendor price creep surfaces before it compounds.</p>
+        </div>
+
+        <div class="role-card">
+          <div class="role-title">IT &amp; Architecture</div>
+          <div class="role-owns">Own: risk, isolation, change safety</div>
+          <p>A finance system that does not become their problem. Structural tenant separation, rule replay before promotion, and rollback capability cover the integration risk.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- LIMITS (credibility mechanism) -->
+  <section class="section section-dark" id="limits">
+    <div class="container">
+      <div class="section-label">Where this doesn't apply</div>
+      <h2 class="section-title">When InvoiceEQ is the wrong tool.</h2>
+      <p class="section-sub">Every vendor document answers yes to everything, which is precisely why buyers discount all of it. Making these statements now is the only reason to believe the rest.</p>
+      <div class="limits-grid">
+        <div class="limit-item">
+          <div class="limit-num">01</div>
+          <div class="limit-text"><strong>You don't raise purchase orders.</strong> Three-way matching needs a PO and goods receipt; without them you get verification and duplicate control — not the core value driver.</div>
+        </div>
+        <div class="limit-item">
+          <div class="limit-num">02</div>
+          <div class="limit-text"><strong>Under ~500 invoices per month.</strong> A competent person is cheaper than any software at that volume.</div>
+        </div>
+        <div class="limit-item">
+          <div class="limit-num">03</div>
+          <div class="limit-text"><strong>Already live on Coupa or Ariba.</strong> Displacing a working procure-to-pay suite is a renewal-driven conversation, not a capability-gap one.</div>
+        </div>
+        <div class="limit-item">
+          <div class="limit-num">04</div>
+          <div class="limit-text"><strong>Policy mandates on-premise hardware.</strong> This is a cloud architecture. Regional cloud can be discussed; on-prem hardware cannot.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA FOOTER -->
+  <section class="section cta-section" id="cta">
+    <div class="container">
+      <div class="cta-inner">
+        <h2 class="cta-headline">Judge it on the invoices<br/>that break everything else.</h2>
+        <p class="cta-sub">Every figure in this catalogue is meant to be measured against your own documents — including the ones your current tooling cannot read. We offer a companion 12-point evaluation scorecard to score InvoiceEQ and any competitor on the same criteria.</p>
+        <div class="cta-actions">
+          <a href="how-it-works.html#deployment" class="btn-primary btn-lg">Start the 14-Day Pilot</a>
+          <a href="compare.html" class="btn-ghost btn-lg">Download Scorecard →</a>
+        </div>
+        <p class="cta-caveat">14 days to production cutover on a standard ERP, evaluated against your historical invoices — including the ones that break current tooling.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <span class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 28 28" fill="none">
+            <rect width="28" height="28" rx="6" fill="#121A2C"/>
+            <path d="M6 6h7v7H6z" fill="#4C8DFF"/>
+            <path d="M15 6h7v7h-7z" fill="#22D3EE"/>
+            <path d="M6 15h7v7H6z" fill="#FBBF24"/>
+            <path d="M15 15h7v7h-7z" fill="#34D399"/>
+          </svg>
+        </span>
+        <span class="logo-text">InvoiceEQ</span>
+      </div>
+      <nav class="footer-nav">
+        <a href="modules.html">Modules</a>
+        <a href="how-it-works.html">How It Works</a>
+        <a href="compare.html">Compare</a>
+        <a href="security.html">Security</a>
+        <a href="scenarios.html">Scenarios</a>
+      </nav>
+      <div class="footer-legal">
+        Product catalogue · September 2026 · Facts derived from live product documentation.
+        Metrics are measured, not estimated; caveats are intentional.
+      </div>
+    </div>
+  </footer>
+
+  <script src="catalog.js"></script>
+</body>
+</html>

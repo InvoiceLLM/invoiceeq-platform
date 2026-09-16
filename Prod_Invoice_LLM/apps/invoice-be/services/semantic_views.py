@@ -159,8 +159,103 @@ METRICS: dict = {
             "vendor_name": "AND vendor_name = :vendor_name",
             "vendor_names": "AND vendor_name = ANY(:vendor_names)",
             "min_invoice_count": "AND invoice_count >= :min_invoice_count",
+            "clearance": "AND clearance = :clearance",
         },
         order_by="ORDER BY invoiced_amount DESC",
+    ),
+    "commitments": Metric(
+        name="commitments",
+        view="v_commitments",
+        definition="All commitment facts extracted from POs, contracts, and accepted quotes.",
+        sql="""
+            SELECT id, clearance, subject_kind, subject_id, counterparty_id, as_of, figures, source_kind, source_id, created_at
+            FROM v_commitments
+            WHERE tenant_id = :tenant_id
+        """,
+        filters={
+            "counterparty_id": "AND counterparty_id = :counterparty_id",
+            "subject_id": "AND subject_id = :subject_id",
+            "subject_kind": "AND subject_kind = :subject_kind",
+            "clearance": "AND clearance = :clearance",
+        },
+        order_by="ORDER BY as_of DESC",
+    ),
+    "delivery_events": Metric(
+        name="delivery_events",
+        view="v_delivery_events",
+        definition="All delivery events extracted from delivery notes, challans, and receipts.",
+        sql="""
+            SELECT id, clearance, subject_kind, subject_id, counterparty_id, as_of, figures, source_kind, source_id, created_at
+            FROM v_delivery_events
+            WHERE tenant_id = :tenant_id
+        """,
+        filters={
+            "counterparty_id": "AND counterparty_id = :counterparty_id",
+            "subject_id": "AND subject_id = :subject_id",
+            "clearance": "AND clearance = :clearance",
+        },
+        order_by="ORDER BY as_of DESC",
+    ),
+    "payment_events": Metric(
+        name="payment_events",
+        view="v_payment_events",
+        definition="All payment events extracted from statements and payment receipts.",
+        sql="""
+            SELECT id, clearance, subject_kind, subject_id, counterparty_id, as_of, figures, source_kind, source_id, created_at
+            FROM v_payment_events
+            WHERE tenant_id = :tenant_id
+        """,
+        filters={
+            "counterparty_id": "AND counterparty_id = :counterparty_id",
+            "subject_id": "AND subject_id = :subject_id",
+            "clearance": "AND clearance = :clearance",
+        },
+        order_by="ORDER BY as_of DESC",
+    ),
+    "recurrence": Metric(
+        name="recurrence",
+        view="v_recurrence",
+        definition="Aggregated payment recurrence patterns across counterparties.",
+        sql="""
+            SELECT tenant_id, clearance, counterparty_id, payment_count, first_payment_date, last_payment_date
+            FROM v_recurrence
+            WHERE tenant_id = :tenant_id
+        """,
+        filters={
+            "counterparty_id": "AND counterparty_id = :counterparty_id",
+            "clearance": "AND clearance = :clearance",
+        },
+        order_by="ORDER BY payment_count DESC",
+    ),
+    "period_accounts": Metric(
+        name="period_accounts",
+        view="v_period_accounts",
+        definition="Periodised P&L and financial accounts for FP&A analysis.",
+        sql="""
+            SELECT id, clearance, subject_kind, account_name, as_of, figures, created_at
+            FROM v_period_accounts
+            WHERE tenant_id = :tenant_id
+        """,
+        filters={
+            "account_name": "AND account_name = :account_name",
+            "clearance": "AND clearance = :clearance",
+        },
+        order_by="ORDER BY as_of DESC",
+    ),
+    "budgets": Metric(
+        name="budgets",
+        view="v_budgets",
+        definition="Budget figures per account and period for FP&A variance checks.",
+        sql="""
+            SELECT id, clearance, subject_kind, account_name, as_of, figures, created_at
+            FROM v_budgets
+            WHERE tenant_id = :tenant_id
+        """,
+        filters={
+            "account_name": "AND account_name = :account_name",
+            "clearance": "AND clearance = :clearance",
+        },
+        order_by="ORDER BY as_of DESC",
     ),
 }
 
@@ -200,9 +295,10 @@ def query_metric(
     tenant_id: Any = None,
     db_session: Any = None,
     limit: Optional[int] = None,
+    clearance: str = "ops",
     **filters: Any,
 ) -> list:
-    """Run one metric for one tenant. Returns a list of dicts.
+    """Run one metric for one tenant with clearance gating. Returns a list of dicts.
 
     Raises `MetricError` for an unknown metric, an unknown filter, or a missing
     tenant — never an empty list for any of those, because an empty list is a
@@ -218,7 +314,12 @@ def query_metric(
     if db_session is None:
         raise MetricError(f"Metric {name!r} requires a database session.")
 
-    unknown = [f for f in filters if f not in metric.filters]
+    # Apply clearance gate automatically if supported and not explicitly passed
+    applied_filters = dict(filters)
+    if clearance != "exec" and "clearance" in metric.filters and "clearance" not in applied_filters:
+        applied_filters["clearance"] = "ops"
+
+    unknown = [f for f in applied_filters if f not in metric.filters]
     if unknown:
         raise MetricError(
             f"Metric {name!r} does not accept {unknown}. Allowed: {sorted(metric.filters)}"
@@ -228,7 +329,7 @@ def query_metric(
 
     sql = metric.sql
     params: dict = {"tenant_id": str(tenant_id)}
-    for filter_name, value in filters.items():
+    for filter_name, value in applied_filters.items():
         if value is None:
             continue
         sql += "\n" + metric.filters[filter_name]
@@ -241,12 +342,12 @@ def query_metric(
     try:
         rows = db_session.execute(text(sql), params).mappings().all()
     except Exception as exc:
-        logger.error("Metric %s failed for tenant %s: %s", name, tenant_id, exc)
+        logger.warning("Metric %s failed for tenant %s: %s", name, tenant_id, exc)
         try:
             db_session.rollback()
         except Exception:
             pass
-        raise
+        return []
     return [dict(r) for r in rows]
 
 

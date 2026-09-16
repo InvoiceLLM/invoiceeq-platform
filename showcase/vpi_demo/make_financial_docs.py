@@ -153,7 +153,87 @@ def payment_advice(pa_no, pa_date, vendor_key, inv_no, inv_date, amount, utr):
     build(f"PA_{pa_no}_{vendor_key}.pdf", story)
 
 
-# ---------------------------------------------------------------- bank statement
+# ---------------------------------------------------------------- bank statements
+def bank_statement_june_2026():
+    opening = 1_100_000.00
+    txns = [  # (date, description, debit, credit)
+        ("01-Jun-2026", "OPENING BALANCE", None, None),
+        ("03-Jun-2026", "NEFT DR HDFC0000123 GST PAYMENT MAY-26 CIN 26061234567", 165_400.00, None),
+        ("05-Jun-2026", "NEFT DR OM STATIONERY MART INV OM-1980 UTR HDFCN26060512345", 38_500.00, None),
+        ("08-Jun-2026", "NEFT CR KAVERI AUTO COMPONENTS PVT LTD VPI-OUT-2005", None, 450_000.00),
+        ("10-Jun-2026", "NEFT CR SUNRISE ENGINEERING WORKS VPI-OUT-2006", None, 490_000.00),
+        ("12-Jun-2026", "ACH DR MSEDCL ELECTRICITY BILL JUN-26", 92_150.00, None),
+        ("14-Jun-2026", "NEFT DR SALARY JUN-26 BATCH 1 (42 EMPLOYEES)", 1_450_000.00, None),
+        ("20-Jun-2026", "NEFT DR SHREE PACKAGING INDUSTRIES INV SHR-1990 UTR HDFCN26062012346", 115_000.00, None),
+        ("25-Jun-2026", "NEFT CR DECCAN MACHINERY LTD ADVANCE AGAINST VPI-OUT-2007", None, 950_000.00),
+        ("30-Jun-2026", "BANK CHARGES NEFT/RTGS JUN-26 INCL GST", 1_150.00, None),
+    ]
+    rows = [["Date", "Narration", "Withdrawal (Dr)", "Deposit (Cr)", "Balance"]]
+    bal = opening
+    for d, n, dr, cr in txns:
+        if dr:
+            bal -= dr
+        if cr:
+            bal += cr
+        rows.append([d, Paragraph(n, SM), f"{dr:,.2f}" if dr else "", f"{cr:,.2f}" if cr else "", f"{bal:,.2f}"])
+    story = [
+        Paragraph("HDFC BANK LIMITED — BANK STATEMENT", H),
+        Paragraph("Branch: Bhosari MIDC, Pune 411026 &nbsp;&nbsp; IFSC: HDFC0000471 &nbsp;&nbsp; Account type: Current", SM),
+        Paragraph("Account holder: <b>Vishwa Precision Industries Pvt Ltd</b>, Plot 47, MIDC Bhosari, Pune, MH 411026", SM),
+        Paragraph("Account No: XXXXXXXX4471 &nbsp;&nbsp; Statement period: 01-Jun-2026 to 30-Jun-2026 &nbsp;&nbsp; Currency: INR", SM),
+        Spacer(1, 4 * mm),
+        grid(rows, [22 * mm, 82 * mm, 24 * mm, 22 * mm, 24 * mm]),
+        Spacer(1, 4 * mm),
+        grid([["Opening balance", rs(opening)],
+              ["Total withdrawals", rs(sum(t[2] for t in txns if t[2]))],
+              ["Total deposits", rs(sum(t[3] for t in txns if t[3]))],
+              ["Closing balance", rs(bal)]], [138 * mm, 32 * mm], header=False),
+        Spacer(1, 5 * mm),
+        Paragraph("This is a computer-generated statement and does not require a signature.", SM),
+    ]
+    build("BankStatement_HDFC_4471_Jun2026.pdf", story)
+
+
+def bank_statement_july_2026():
+    opening = 1_127_800.00
+    txns = [  # (date, description, debit, credit)
+        ("01-Jul-2026", "OPENING BALANCE", None, None),
+        ("03-Jul-2026", "NEFT DR HDFC0000123 GST PAYMENT JUN-26 CIN 26071234567", 172_500.00, None),
+        ("05-Jul-2026", "NEFT DR OM STATIONERY MART INV OM-1990 UTR HDFCN26070512345", 39_200.00, None),
+        ("08-Jul-2026", "NEFT CR KAVERI AUTO COMPONENTS PVT LTD VPI-OUT-2009", None, 765_000.00),
+        ("10-Jul-2026", "NEFT CR SUNRISE ENGINEERING WORKS VPI-OUT-2010", None, 805_000.00),
+        ("12-Jul-2026", "ACH DR MSEDCL ELECTRICITY BILL JUL-26", 94_800.00, None),
+        ("14-Jul-2026", "NEFT DR SALARY JUL-26 BATCH 1 (42 EMPLOYEES)", 1_470_000.00, None),
+        ("20-Jul-2026", "NEFT DR BHARAT HARDWARE & FASTENERS INV BHA-1995 UTR HDFCN26072012346", 98_500.00, None),
+        ("25-Jul-2026", "NEFT CR DECCAN MACHINERY LTD ADVANCE AGAINST VPI-OUT-2011", None, 428_400.00),
+        ("31-Jul-2026", "BANK CHARGES NEFT/RTGS JUL-26 INCL GST", 1_200.00, None),
+    ]
+    rows = [["Date", "Narration", "Withdrawal (Dr)", "Deposit (Cr)", "Balance"]]
+    bal = opening
+    for d, n, dr, cr in txns:
+        if dr:
+            bal -= dr
+        if cr:
+            bal += cr
+        rows.append([d, Paragraph(n, SM), f"{dr:,.2f}" if dr else "", f"{cr:,.2f}" if cr else "", f"{bal:,.2f}"])
+    story = [
+        Paragraph("HDFC BANK LIMITED — BANK STATEMENT", H),
+        Paragraph("Branch: Bhosari MIDC, Pune 411026 &nbsp;&nbsp; IFSC: HDFC0000471 &nbsp;&nbsp; Account type: Current", SM),
+        Paragraph("Account holder: <b>Vishwa Precision Industries Pvt Ltd</b>, Plot 47, MIDC Bhosari, Pune, MH 411026", SM),
+        Paragraph("Account No: XXXXXXXX4471 &nbsp;&nbsp; Statement period: 01-Jul-2026 to 31-Jul-2026 &nbsp;&nbsp; Currency: INR", SM),
+        Spacer(1, 4 * mm),
+        grid(rows, [22 * mm, 82 * mm, 24 * mm, 22 * mm, 24 * mm]),
+        Spacer(1, 4 * mm),
+        grid([["Opening balance", rs(opening)],
+              ["Total withdrawals", rs(sum(t[2] for t in txns if t[2]))],
+              ["Total deposits", rs(sum(t[3] for t in txns if t[3]))],
+              ["Closing balance", rs(bal)]], [138 * mm, 32 * mm], header=False),
+        Spacer(1, 5 * mm),
+        Paragraph("This is a computer-generated statement and does not require a signature.", SM),
+    ]
+    build("BankStatement_HDFC_4471_Jul2026.pdf", story)
+
+
 def bank_statement():
     opening = 1_250_000.00
     txns = [  # (date, description, debit, credit)
@@ -209,4 +289,7 @@ if __name__ == "__main__":
     payment_advice("PA-VPI-0071", "05-Aug-2026", "OM", "OM -2000", "09-Jul-2026", 41_654.00, "HDFCN26080512345")
     payment_advice("PA-VPI-0072", "06-Aug-2026", "BHA", "BHA-2002", "09-Jul-2026", 103_191.00, "HDFCN26080612346")
     payment_advice("PA-VPI-0073", "07-Aug-2026", "SHR", "SHR-2004", "09-Jul-2026", 121_894.00, "HDFCN26080712347")
+    # Statements: June, July, August 2026 series
+    bank_statement_june_2026()
+    bank_statement_july_2026()
     bank_statement()

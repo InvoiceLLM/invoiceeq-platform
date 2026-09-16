@@ -452,6 +452,15 @@ class Settings(BaseSettings):
     # a card whose flag is off returns `skipped` with that as its reason rather
     # than silently disappearing from the bubble.
     ENABLE_ATTACHMENT_INSIGHTS: bool = False
+    # Feature 33 (ATLAS Analyst Agent) settings
+    ENABLE_ATTACHMENT_FACTS: bool = True
+    ENABLE_ANALYST_PLANNER: bool = False
+    ENABLE_ANALYST_ACTIONS: bool = False
+    ANALYST_RUN_NOW_COOLDOWN_SECONDS: int = 600
+    ANALYST_DISCOVER_DEBOUNCE_SECONDS: int = 3600
+    ANALYST_APPROVAL_THRESHOLD_DEFAULT: float = 100000.0
+    ANALYST_ONBOARD_MIN_DOCS: int = 10
+    ANALYST_SUPPRESS_AFTER: int = 3
 
     AZURE_STORAGE_CONNECTION_STRING: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"

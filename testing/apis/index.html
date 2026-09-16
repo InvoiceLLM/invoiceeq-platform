@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InvoiceLLM — External Partner API Testing Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .font-mono { font-family: 'Fira Code', monospace; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: #0f172a; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-6 lg:p-8">
+
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- TOP HEADER & BRAND -->
+    <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
+      <div>
+        <div class="flex items-center gap-3">
+          <div class="h-9 w-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
+            ⚡
+          </div>
+          <div>
+            <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+              InvoiceLLM <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Partner API Portal</span>
+            </h1>
+            <p class="text-xs text-slate-400">Standalone live API runner & real-time HTTP inspector console</p>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="btnRunAll" onclick="runAllTests()" class="px-4 py-2 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-lg shadow-md hover:shadow-cyan-500/20 transition-all flex items-center gap-2">
+          <span>▶</span> Run Full Test Suite
+        </button>
+        <button onclick="clearConsole()" class="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-medium rounded-lg border border-slate-800 transition">
+          Clear Console
+        </button>
+      </div>
+    </header>
+
+    <!-- CONFIGURATION PANEL (TARGET URL & KEYS) -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-xl backdrop-blur">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4">
+        
+        <!-- Target Environment -->
+        <div class="md:col-span-4 space-y-1.5">
+          <label class="text-xs font-medium text-slate-300 flex items-center justify-between">
+            <span>🌐 Target Host URL</span>
+            <span class="text-[10px] text-cyan-400 font-mono" id="activeHostLabel">Custom Domain</span>
+          </label>
+          <div class="flex gap-1.5">
+            <select id="presetTarget" onchange="applyPresetTarget(this.value)" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500">
+              <option value="https://invoicellm.admsofttech.com">Production (invoicellm.admsofttech.com)</option>
+              <option value="https://ca-invoice-website-dev.thankfulmeadow-4281ea23.eastus2.azurecontainerapps.io">Azure Raw (Website Gateway)</option>
+              <option value="http://localhost:8000">Local Backend (8000)</option>
+              <option value="http://localhost:3000">Local Website (3000)</option>
+              <option value="custom">Custom URL...</option>
+            </select>
+            <input type="text" id="targetUrl" value="https://invoicellm.admsofttech.com" class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500" placeholder="https://..." />
+          </div>
+        </div>
+
+        <!-- Auth Token / API Key Input -->
+        <div class="md:col-span-5 space-y-1.5">
+          <label class="text-xs font-medium text-slate-300 flex items-center justify-between">
+            <span>🔑 Bearer JWT Token or API Key</span>
+            <span class="text-[10px] text-slate-500 font-mono">X-API-Key / Authorization</span>
+          </label>
+          <input type="password" id="authToken" placeholder="Bearer eyJ... or inv_live_..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500" />
+        </div>
+
+        <!-- Webhook Shared Secret -->
+        <div class="md:col-span-3 space-y-1.5">
+          <label class="text-xs font-medium text-slate-300 flex items-center justify-between">
+            <span>🔒 Webhook Secret</span>
+            <span class="text-[10px] text-slate-500 font-mono">?key=...</span>
+          </label>
+          <input type="text" id="webhookSecret" value="AdmInvoiceSecret2026" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500" />
+        </div>
+
+      </div>
+    </section>
+
+    <!-- 4 INTERACTIVE TEST CARDS GRID -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <!-- TEST 1: INBOUND WEBHOOK -->
+      <div class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between transition group shadow-lg">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-cyan-400 animate-pulse"></span>
+              TEST 1: Inbound Webhook
+            </span>
+            <span id="badge1" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Ready</span>
+          </div>
+          <h3 class="text-sm font-semibold text-white">SendGrid Email Ingestion</h3>
+          <p class="text-xs text-slate-400 mt-1">Dispatches a multipart simulated vendor email with attached invoice PDF to trigger AI Inbound Parse.</p>
+          
+          <div class="mt-3 p-2 rounded bg-slate-950/70 border border-slate-800/80 text-[11px] font-mono text-slate-400 space-y-1">
+            <div><span class="text-indigo-400">POST</span> /api/v1/email/mailintegration</div>
+            <div class="text-slate-500 text-[10px]">From: vendor@sample.com ➔ To: invoice@receive...</div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between pt-3 border-t border-slate-800/60">
+          <span class="text-[11px] text-slate-500 font-mono" id="time1">—</span>
+          <button id="btnTest1" onclick="runTest1()" class="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium rounded-lg transition shadow-sm flex items-center gap-1.5">
+            <span>▶</span> Run Webhook Test
+          </button>
+        </div>
+      </div>
+
+      <!-- TEST 2: SUPPORT TICKET API -->
+      <div class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between transition group shadow-lg">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+              TEST 2: Support Ticket API
+            </span>
+            <span id="badge2" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Ready</span>
+          </div>
+          <h3 class="text-sm font-semibold text-white">Public Ticket Creation</h3>
+          <p class="text-xs text-slate-400 mt-1">Submits a JSON inquiry payload, generates an `INQ-2026-XXXX` reference number, and tests staff notification dispatch.</p>
+          
+          <div class="mt-3 p-2 rounded bg-slate-950/70 border border-slate-800/80 text-[11px] font-mono text-slate-400 space-y-1">
+            <div><span class="text-indigo-400">POST</span> /api/contact</div>
+            <div class="text-slate-500 text-[10px]">Payload: { name, email, subject, message }</div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between pt-3 border-t border-slate-800/60">
+          <span class="text-[11px] text-slate-500 font-mono" id="time2">—</span>
+          <button id="btnTest2" onclick="runTest2()" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition shadow-sm flex items-center gap-1.5">
+            <span>▶</span> Create Support Ticket
+          </button>
+        </div>
+      </div>
+
+      <!-- TEST 3: UPLOAD INVOICE -->
+      <div class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between transition group shadow-lg">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-amber-400"></span>
+              TEST 3: Upload & Ingest Invoice
+            </span>
+            <span id="badge3" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Ready</span>
+          </div>
+          <h3 class="text-sm font-semibold text-white">Direct Invoice Upload</h3>
+          <p class="text-xs text-slate-400 mt-1">Uploads a PDF file directly with Bearer token authentication to enqueue Azure OCR & LLM extraction.</p>
+          
+          <div class="mt-3 flex items-center gap-2">
+            <input type="file" id="invoiceFileInput" accept=".pdf" class="text-xs text-slate-400 file:mr-2 file:py-1 file:px-2.5 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer" />
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between pt-3 border-t border-slate-800/60">
+          <span class="text-[11px] text-slate-500 font-mono" id="time3">—</span>
+          <button id="btnTest3" onclick="runTest3()" class="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded-lg transition shadow-sm flex items-center gap-1.5">
+            <span>▶</span> Upload & Ingest PDF
+          </button>
+        </div>
+      </div>
+
+      <!-- TEST 4: IDENTITY VERIFICATION -->
+      <div class="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl p-4 flex flex-col justify-between transition group shadow-lg">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-purple-400 flex items-center gap-1.5">
+              <span class="h-2 w-2 rounded-full bg-purple-400"></span>
+              TEST 4: Key / Identity Verification
+            </span>
+            <span id="badge4" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Ready</span>
+          </div>
+          <h3 class="text-sm font-semibold text-white">Tenant & Token Authentication</h3>
+          <p class="text-xs text-slate-400 mt-1">Validates active session credentials against the backend to verify tenant context, organization ID, and RBAC permissions.</p>
+          
+          <div class="mt-3 p-2 rounded bg-slate-950/70 border border-slate-800/80 text-[11px] font-mono text-slate-400 space-y-1">
+            <div><span class="text-indigo-400">GET</span> /api/v1/auth/me</div>
+            <div class="text-slate-500 text-[10px]">Validates Clerk JWT / Token against backend context</div>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between pt-3 border-t border-slate-800/60">
+          <span class="text-[11px] text-slate-500 font-mono" id="time4">—</span>
+          <button id="btnTest4" onclick="runTest4()" class="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition shadow-sm flex items-center gap-1.5">
+            <span>▶</span> Verify Token & Tenant
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 📡 LIVE HTTP INSPECTOR CONSOLE -->
+    <section class="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+      <!-- Console Header -->
+      <div class="bg-slate-900/90 border-b border-slate-800 px-4 py-2.5 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-xs font-semibold text-slate-200 tracking-wide">📡 LIVE HTTP INSPECTOR CONSOLE</span>
+          <span id="inspectorStatus" class="ml-2 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400">Awaiting dispatch...</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="copyConsoleOutput()" class="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded bg-slate-800/60 hover:bg-slate-800 border border-slate-700 transition flex items-center gap-1">
+            📋 Copy JSON
+          </button>
+        </div>
+      </div>
+
+      <!-- Console Body -->
+      <div class="p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 font-mono text-xs">
+        
+        <!-- Request Summary Pane -->
+        <div class="lg:col-span-5 space-y-3 bg-slate-900/40 p-3 rounded-lg border border-slate-800/60">
+          <div>
+            <div class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Dispatched Request</div>
+            <div id="inspectorMethodUrl" class="text-cyan-400 font-semibold mt-1 break-all select-all">
+              None
+            </div>
+          </div>
+
+          <div>
+            <div class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Request Headers</div>
+            <pre id="inspectorHeaders" class="text-slate-300 text-[11px] mt-1 overflow-x-auto select-all">{}</pre>
+          </div>
+
+          <div>
+            <div class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Request Payload</div>
+            <pre id="inspectorPayload" class="text-slate-300 text-[11px] mt-1 overflow-x-auto max-h-36 scrollbar-thin select-all">{}</pre>
+          </div>
+        </div>
+
+        <!-- Response Pane -->
+        <div class="lg:col-span-7 space-y-2 bg-slate-900/40 p-3 rounded-lg border border-slate-800/60 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between pb-1 border-b border-slate-800">
+              <div class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Server Response Body</div>
+              <div class="flex items-center gap-2">
+                <span id="inspectorStatusCode" class="text-[11px] font-bold text-slate-400">—</span>
+                <span id="inspectorLatency" class="text-[10px] text-slate-500">—</span>
+              </div>
+            </div>
+            <pre id="inspectorResponseBody" class="mt-2 text-emerald-400 text-[11px] overflow-y-auto max-h-80 scrollbar-thin select-all">
+// Response output will appear here in real-time...
+            </pre>
+          </div>
+          <div class="text-[10px] text-slate-500 text-right pt-2">
+            InvoiceLLM Telemetry Engine • End-to-End Live Inspector
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- JAVASCRIPT ENGINE -->
+  <script>
+    function getHost() {
+      return document.getElementById('targetUrl').value.replace(/\/+$/, '');
+    }
+
+    function getAuthHeader() {
+      const token = document.getElementById('authToken').value.trim();
+      if (!token) return {};
+      if (token.startsWith('Bearer ') || token.startsWith('inv_')) {
+        return { 'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}` };
+      }
+      return { 'Authorization': `Bearer ${token}` };
+    }
+
+    function applyPresetTarget(val) {
+      if (val === 'custom') return;
+      document.getElementById('targetUrl').value = val;
+      document.getElementById('activeHostLabel').innerText = val.includes('localhost') ? 'Local Env' : 'Live Gateway';
+    }
+
+    function setBadge(id, state, text) {
+      const el = document.getElementById(`badge${id}`);
+      if (!el) return;
+      el.innerText = text;
+      el.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full border ';
+      if (state === 'loading') {
+        el.className += 'bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse';
+      } else if (state === 'success') {
+        el.className += 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+      } else if (state === 'error') {
+        el.className += 'bg-rose-500/10 text-rose-400 border-rose-500/30';
+      } else {
+        el.className += 'bg-slate-800 text-slate-400 border-slate-700';
+      }
+    }
+
+    function updateInspector(method, url, headers, payload, status, latencyMs, responseData) {
+      document.getElementById('inspectorMethodUrl').innerText = `${method} ${url}`;
+      document.getElementById('inspectorHeaders').innerText = JSON.stringify(headers, null, 2);
+      document.getElementById('inspectorPayload').innerText = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+      
+      const statusEl = document.getElementById('inspectorStatusCode');
+      const badgeEl = document.getElementById('inspectorStatus');
+      const bodyEl = document.getElementById('inspectorResponseBody');
+      
+      statusEl.innerText = `${status}`;
+      document.getElementById('inspectorLatency').innerText = `${latencyMs}ms`;
+
+      if (status >= 200 && status < 300) {
+        statusEl.className = 'text-[11px] font-bold text-emerald-400';
+        badgeEl.className = 'ml-2 text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+        badgeEl.innerText = `HTTP ${status} SUCCESS`;
+        bodyEl.className = 'mt-2 text-emerald-400 text-[11px] overflow-y-auto max-h-80 scrollbar-thin select-all';
+      } else {
+        statusEl.className = 'text-[11px] font-bold text-rose-400';
+        badgeEl.className = 'ml-2 text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30';
+        badgeEl.innerText = `HTTP ${status} ERROR`;
+        bodyEl.className = 'mt-2 text-rose-400 text-[11px] overflow-y-auto max-h-80 scrollbar-thin select-all';
+      }
+
+      bodyEl.innerText = typeof responseData === 'object' ? JSON.stringify(responseData, null, 2) : String(responseData);
+    }
+
+    async function smartFetch(url, options = {}) {
+      if (window.location.protocol.startsWith('http') && window.location.port === '8080') {
+        const proxyUrl = `/proxy?url=${encodeURIComponent(url)}`;
+        return await fetch(proxyUrl, options);
+      }
+      return await fetch(url, options);
+    }
+
+    async function parseResponse(resp) {
+      try {
+        const raw = await resp.text();
+        try {
+          return JSON.parse(raw);
+        } catch {
+          return raw;
+        }
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
+    // TEST 1: Inbound Webhook
+    async function runTest1() {
+      const secret = document.getElementById('webhookSecret').value.trim();
+      const url = `${getHost()}/api/v1/email/mailintegration?key=${encodeURIComponent(secret)}`;
+      setBadge(1, 'loading', 'Sending...');
+      
+      const formData = new FormData();
+      formData.append('from', 'vendor@sample-corp.com');
+      formData.append('to', 'invoice@receive.invoicellm.admsofttech.com');
+      formData.append('subject', 'Invoice #INV-2026-9901 for Services Rendered');
+      formData.append('text', 'Please find attached invoice for payment.\n\nThank you,\nSample Corp');
+      
+      // Synthetic minimal valid PDF
+      const pdfBytes = new Uint8Array([
+        0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xd0, 0xd4, 0xc5, 0xd8, 0x0a,
+        0x31, 0x20, 0x30, 0x20, 0x6f, 0x62, 0x6a, 0x0a, 0x3c, 0x3c, 0x2f, 0x54, 0x79, 0x70, 0x65,
+        0x2f, 0x43, 0x61, 0x74, 0x61, 0x6c, 0x6f, 0x67, 0x2f, 0x50, 0x61, 0x67, 0x65, 0x73, 0x20,
+        0x32, 0x20, 0x30, 0x20, 0x52, 0x3e, 0x3e, 0x0a, 0x65, 0x6e, 0x64, 0x6f, 0x62, 0x6a, 0x0a,
+        0x32, 0x20, 0x30, 0x20, 0x6f, 0x62, 0x6a, 0x0a, 0x3c, 0x3c, 0x2f, 0x54, 0x79, 0x70, 0x65,
+        0x2f, 0x50, 0x61, 0x67, 0x65, 0x73, 0x2f, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x20, 0x30, 0x3e,
+        0x3e, 0x0a, 0x65, 0x6e, 0x64, 0x6f, 0x62, 0x6a, 0x0a, 0x78, 0x72, 0x65, 0x66, 0x0a, 0x30,
+        0x20, 0x33, 0x0a, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x20, 0x36,
+        0x35, 0x35, 0x33, 0x35, 0x20, 0x66, 0x0a, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
+        0x30, 0x31, 0x35, 0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x20, 0x6e, 0x0a, 0x30, 0x30, 0x30,
+        0x30, 0x30, 0x30, 0x30, 0x30, 0x36, 0x38, 0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x20, 0x6e,
+        0x0a, 0x74, 0x72, 0x61, 0x69, 0x6c, 0x65, 0x72, 0x0a, 0x3c, 0x3c, 0x2f, 0x53, 0x69, 0x7a,
+        0x65, 0x20, 0x33, 0x2f, 0x52, 0x6f, 0x6f, 0x74, 0x20, 0x31, 0x20, 0x30, 0x20, 0x52, 0x3e,
+        0x3e, 0x0a, 0x73, 0x74, 0x61, 0x72, 0x74, 0x78, 0x72, 0x65, 0x66, 0x0a, 0x31, 0x30, 0x39,
+        0x0a, 0x25, 0x25, 0x45, 0x4f, 0x46
+      ]);
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      formData.append('attachment1', blob, 'sample_invoice.pdf');
+
+      const start = performance.now();
+      try {
+        const resp = await smartFetch(url, { method: 'POST', body: formData });
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time1').innerText = `${latency}ms`;
+        const data = await parseResponse(resp);
+        updateInspector('POST', url, { 'Content-Type': 'multipart/form-data' }, { from: 'vendor@sample-corp.com', subject: 'Invoice #INV-2026-9901', attachment: 'sample_invoice.pdf' }, resp.status, latency, data);
+        setBadge(1, resp.ok ? 'success' : 'error', `${resp.status} ${resp.statusText}`);
+      } catch(err) {
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time1').innerText = `${latency}ms`;
+        updateInspector('POST', url, {}, { error: err.message }, 0, latency, { error: err.message });
+        setBadge(1, 'error', 'Failed');
+      }
+    }
+
+    // TEST 2: Support Ticket API
+    async function runTest2() {
+      const url = `${getHost()}/api/contact`;
+      setBadge(2, 'loading', 'Posting...');
+      
+      const payload = {
+        name: 'Partner Integration Agent',
+        email: 'partner.tester@admsofttech.com',
+        subject: 'API Portal Verification Ping',
+        message: 'Validating support ticket dispatch pipeline and email alerting.'
+      };
+
+      const start = performance.now();
+      try {
+        const resp = await smartFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time2').innerText = `${latency}ms`;
+        const data = await parseResponse(resp);
+        updateInspector('POST', url, { 'Content-Type': 'application/json' }, payload, resp.status, latency, data);
+        setBadge(2, resp.ok ? 'success' : 'error', `${resp.status} ${resp.statusText}`);
+      } catch(err) {
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time2').innerText = `${latency}ms`;
+        updateInspector('POST', url, {}, payload, 0, latency, { error: err.message });
+        setBadge(2, 'error', 'Failed');
+      }
+    }
+
+    // TEST 3: Invoice Direct Upload
+    async function runTest3() {
+      const base = getHost();
+      const url = base.includes(':8000') ? `${base}/api/v1/invoices/upload` : `${base}/api/invoices/upload`;
+      setBadge(3, 'loading', 'Uploading...');
+      
+      const fileInput = document.getElementById('invoiceFileInput');
+      let file = fileInput.files[0];
+      
+      if (!file) {
+        // Fallback synthetic minimal PDF
+        const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xd0, 0xd4, 0xc5, 0xd8, 0x0a, 0x25, 0x25, 0x45, 0x4f, 0x46]);
+        file = new File([pdfBytes], "test_invoice_auto.pdf", { type: "application/pdf" });
+      }
+
+      const formData = new FormData();
+      formData.append('files', file);
+
+      const headers = getAuthHeader();
+      const start = performance.now();
+      try {
+        const resp = await smartFetch(url, {
+          method: 'POST',
+          headers: headers,
+          body: formData
+        });
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time3').innerText = `${latency}ms`;
+        const data = await parseResponse(resp);
+        updateInspector('POST', url, { ...headers, 'Content-Type': 'multipart/form-data' }, { filename: file.name, sizeBytes: file.size }, resp.status, latency, data);
+        setBadge(3, resp.ok ? 'success' : 'error', `${resp.status} ${resp.statusText}`);
+      } catch(err) {
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time3').innerText = `${latency}ms`;
+        updateInspector('POST', url, headers, { error: err.message }, 0, latency, { error: err.message });
+        setBadge(3, 'error', 'Failed');
+      }
+    }
+
+    // TEST 4: Identity & Tenant Verification
+    async function runTest4() {
+      const base = getHost();
+      const url = base.includes(':8000') ? `${base}/auth/me` : `${base}/api/auth/me`;
+      setBadge(4, 'loading', 'Verifying...');
+      
+      const headers = { ...getAuthHeader(), 'Content-Type': 'application/json' };
+      const start = performance.now();
+      try {
+        const resp = await smartFetch(url, { method: 'GET', headers: headers });
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time4').innerText = `${latency}ms`;
+        const data = await parseResponse(resp);
+        updateInspector('GET', url, headers, {}, resp.status, latency, data);
+        setBadge(4, resp.ok ? 'success' : 'error', `${resp.status} ${resp.statusText}`);
+      } catch(err) {
+        const latency = Math.round(performance.now() - start);
+        document.getElementById('time4').innerText = `${latency}ms`;
+        updateInspector('GET', url, headers, {}, 0, latency, { error: err.message });
+        setBadge(4, 'error', 'Failed');
+      }
+    }
+
+    // RUN ALL TESTS IN SEQUENCE
+    async function runAllTests() {
+      document.getElementById('btnRunAll').disabled = true;
+      document.getElementById('btnRunAll').innerText = '⏳ Running Suite...';
+      
+      await runTest4(); // Check identity first
+      await new Promise(r => setTimeout(r, 400));
+      await runTest2(); // Check support API
+      await new Promise(r => setTimeout(r, 400));
+      await runTest1(); // Check inbound webhook
+      await new Promise(r => setTimeout(r, 400));
+      await runTest3(); // Check invoice upload
+
+      document.getElementById('btnRunAll').disabled = false;
+      document.getElementById('btnRunAll').innerText = '▶ Run Full Test Suite';
+    }
+
+    function clearConsole() {
+      document.getElementById('inspectorMethodUrl').innerText = 'None';
+      document.getElementById('inspectorHeaders').innerText = '{}';
+      document.getElementById('inspectorPayload').innerText = '{}';
+      document.getElementById('inspectorResponseBody').innerText = '// Response cleared.';
+      document.getElementById('inspectorStatusCode').innerText = '—';
+      document.getElementById('inspectorLatency').innerText = '—';
+      document.getElementById('inspectorStatus').innerText = 'Ready';
+      document.getElementById('inspectorStatus').className = 'ml-2 text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400';
+    }
+
+    function copyConsoleOutput() {
+      const text = document.getElementById('inspectorResponseBody').innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        alert('Response JSON copied to clipboard!');
+      });
+    }
+
+    // Auto-save target & key in localStorage
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedToken = localStorage.getItem('invoice_test_token');
+      if (savedToken) document.getElementById('authToken').value = savedToken;
+      
+      document.getElementById('authToken').addEventListener('change', (e) => {
+        localStorage.setItem('invoice_test_token', e.target.value);
+      });
+    });
+  </script>
+</body>
+</html>

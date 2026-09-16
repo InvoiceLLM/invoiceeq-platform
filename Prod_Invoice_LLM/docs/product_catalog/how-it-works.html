@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How It Works & Deployment — InvoiceEQ</title>
+  <meta name="description" content="The five-stage InvoiceEQ pipeline and the 14-day production cutover timeline — what each stage does, what it guarantees, and what extends it." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="catalog.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo"><span class="logo-mark"><svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="nav-link">Overview</a></li>
+        <li><a href="modules.html" class="nav-link">Modules</a></li>
+        <li><a href="how-it-works.html" class="nav-link active">How It Works</a></li>
+        <li><a href="compare.html" class="nav-link">Compare</a></li>
+        <li><a href="security.html" class="nav-link">Security</a></li>
+        <li><a href="scenarios.html" class="nav-link">Scenarios</a></li>
+      </ul>
+      <a href="#deployment" class="btn-primary nav-cta">Start 14-Day Pilot</a>
+    </div>
+  </nav>
+
+  <div class="container page-hero">
+    <div class="page-hero-eyebrow">The pipeline</div>
+    <h1 class="page-hero-title">Five stages. Each with<br/>a defined contract.</h1>
+    <p class="page-hero-sub">Anything that fails its contract stops and is routed to a human — it is never guessed at. Every stage is independently auditable, independently replaceable, and independently testable.</p>
+  </div>
+
+  <section class="section">
+    <div class="container">
+      <div class="pipeline-steps">
+
+        <div class="pipeline-step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-name">Intake</div>
+            <p class="step-desc">InvoiceEQ receives the document — via configured email mailbox, Google Drive / Salesforce sync, direct upload through the web interface, or the REST API. File headers are validated at the byte level immediately on receipt: file type is confirmed from magic bytes, not from the filename or MIME header a sender can falsify. A SHA-256 digest is computed before any further processing.</p>
+            <div class="step-rule">Contract: the document is genuine, deduplicated, and structurally valid before extraction begins.</div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-name">NOVA Vision — Extraction</div>
+            <p class="step-desc">The document is read as a document, not as a fixed template. Azure Document Intelligence processes the visual layer — page geometry, text runs, table structures. A multi-pass LLM extraction step, bounded by a strict typed JSON schema, reads fields: header data (vendor, date, number, terms), line items (description, quantity, unit price, amount), and totals. All amounts are returned as exact decimal notation; all dates in ISO 8601. A moved field does not break the pipeline — extraction is position-independent.</p>
+            <div class="step-rule">Contract: extracted fields are typed, structured, and machine-verifiable. Plausible-but-unverifiable is not a valid output.</div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-name">SENTINEL — Arithmetic Verification</div>
+            <p class="step-desc">SENTINEL rebuilds every total from the extracted line items using exact decimal arithmetic in deterministic code — no language model sits in this path. It checks: sum of line item amounts equals stated subtotal; subtotal plus tax minus any discount equals stated invoice total; tax amount corresponds to the applicable rate on the subtotal. Any discrepancy, at any check, issues a formal alert code and stops the invoice. There is no confidence band that overrides a failed arithmetic check.</p>
+            <div class="step-rule">Contract: every figure on the invoice either reconstructs from first principles or triggers a hard stop.</div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-name">3-Way Reconciliation — Match Against PO and GR</div>
+            <p class="step-desc">A verified invoice is checked against the corresponding purchase order and goods receipt. Part numbers are aligned via vector similarity (tolerating supplier abbreviations). Billed quantities are reconciled against received quantities, tolerating partial shipments within a ±0.01 band. Price variances outside approved tolerance bands surface as exceptions. Retention clauses and holdback amounts are recognised as document structure, not arithmetic failures.</p>
+            <div class="step-rule">Contract: what was billed matches what was ordered and what was received, or a reconciliation exception is raised before posting.</div>
+          </div>
+        </div>
+
+        <div class="pipeline-step">
+          <div class="step-num">5</div>
+          <div class="step-body">
+            <div class="step-name">Ledger Commit</div>
+            <p class="step-desc">An invoice that passes all four prior stages posts to the target ERP — SAP S/4HANA, Oracle Cloud, or NetSuite — with a complete audit trail attached: what was extracted, what was verified, which rules applied, which purchase order and goods receipt it matched, and who (if anyone) manually reviewed it. The audit trail is immutable and tenant-isolated. An invoice that fails any prior stage never reaches this step.</p>
+            <div class="step-rule">Contract: nothing posts to the ledger that has not passed arithmetic verification and three-way reconciliation.</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- DEPLOYMENT TIMELINE -->
+  <section class="section section-dark" id="deployment">
+    <div class="container">
+      <div class="section-label">Deployment</div>
+      <h2 class="section-title">The 14-day production cutover.<br/>What it actually contains.</h2>
+      <p class="section-sub">14 days assumes a single entity on a standard ERP with credentials available on day one. What extends it is documented below — read it before committing to a timeline.</p>
+
+      <div class="deployment-grid">
+        <div class="deployment-card">
+          <div class="deploy-phase">Phase 1</div>
+          <div class="deploy-days">Days 1–3</div>
+          <div class="deploy-title">Historical ingestion &amp; baseline</div>
+          <p class="deploy-what">Load past invoices from the customer's archive. Measure extraction accuracy against current ERP records — what InvoiceEQ reads vs. what the ERP already holds.</p>
+          <div class="deploy-end">You end with: a measured baseline, not an estimate.</div>
+        </div>
+        <div class="deployment-card">
+          <div class="deploy-phase">Phase 2</div>
+          <div class="deploy-days">Days 4–7</div>
+          <div class="deploy-title">Tuning against your suppliers</div>
+          <p class="deploy-what">Vendor tolerances and extraction rules are set, then replayed against the historical corpus first. No rule reaches production without passing the 500-invoice replay.</p>
+          <div class="deploy-end">You end with: rules proven against your own history.</div>
+        </div>
+        <div class="deployment-card">
+          <div class="deploy-phase">Phase 3</div>
+          <div class="deploy-days">Days 8–11</div>
+          <div class="deploy-title">Connectors &amp; matching</div>
+          <p class="deploy-what">Mail and cloud intake channels configured. ERP write path tested against real purchase orders and goods receipts. Three-way match validated end-to-end.</p>
+          <div class="deploy-end">You end with: a working path to your ledger.</div>
+        </div>
+        <div class="deployment-card">
+          <div class="deploy-phase">Phase 4</div>
+          <div class="deploy-days">Days 12–14</div>
+          <div class="deploy-title">Controlled production cutover</div>
+          <p class="deploy-what">Straight-through processing enabled for high-confidence suppliers first. Lower-confidence documents continue through manual review while the system learns. Scope is chosen by the customer.</p>
+          <div class="deploy-end">You end with: live processing on a scope you chose.</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 40px; padding: 24px 28px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; border-left: 3px solid var(--amber);">
+        <div style="font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--amber); margin-bottom:10px;">What extends the 14 days</div>
+        <ul style="font-size:14px; line-height:1.7; padding-left:20px; color:var(--text-b);">
+          <li>Custom ERP connectors beyond SAP, Oracle, and NetSuite</li>
+          <li>Multi-entity rollouts — each entity is effectively a separate deployment sequence</li>
+          <li>Environments where credentials or historical invoice data are not available on day one</li>
+          <li>Environments with on-premise-only ERP access requiring network path setup</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section" id="faq">
+    <div class="container">
+      <div class="section-label">Frequently asked</div>
+      <h2 class="section-title">The questions that matter<br/>before a commitment.</h2>
+
+      <div class="faq-list" style="margin-top:40px;">
+
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)">Does a language model ever decide a number?<span class="faq-q-icon">+</span></button>
+          <div class="faq-a">No. Extraction reads what is printed on the document; every total is rebuilt with exact decimal arithmetic in ordinary code. Disagreement between the stated total and the reconstructed total stops the invoice for human review. The model never arbitrates a figure — it is not in the arithmetic path by design, not by configuration.</div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)">What happens when a supplier changes their invoice layout?<span class="faq-q-icon">+</span></button>
+          <div class="faq-a">Extraction is not template-bound, so most layout changes pass through without intervention. If a field moves or a column order changes, NOVA reads it as a document and finds the field structurally rather than by position. A genuine extraction error from a layout change becomes an operator correction, which EVOLVE observes and proposes as a candidate rule — replayed against 500 historical invoices before promotion.</div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)">Is invoice data used to train models?<span class="faq-q-icon">+</span></button>
+          <div class="faq-a">No. Zero retention for training. Tenant records, vector indices, and files are isolated at the storage layer — not by an application-level flag that could be changed, but by partitioned storage with per-tenant cryptographic isolation. No customer invoice is used to improve a base model.</div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)">How long until we are live?<span class="faq-q-icon">+</span></button>
+          <div class="faq-a">14 days to production cutover on a standard ERP, evaluated against the customer's own historical invoices — including the ones that break current tooling. Custom connectors, multi-entity rollouts, and environments without credentials on day one extend that timeline. The deployment section above documents exactly what extends it.</div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)">How do we verify the claims before signing?<span class="faq-q-icon">+</span></button>
+          <div class="faq-a">Bring your worst 500 invoices — not your cleanest — and measure the straight-through rate yourself against the published band (88–96%). That measurement is the pilot. A companion 12-point evaluation scorecard lets you score InvoiceEQ and any competitor on identical criteria. We offer both because the only number that matters is the one your documents produce.</div>
+        </div>
+
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)">We don't have a purchase order process. Does InvoiceEQ still apply?<span class="faq-q-icon">+</span></button>
+          <div class="faq-a">Partially. The core value driver — three-way matching — requires a purchase order and goods receipt. Without them, you get deterministic arithmetic verification, duplicate detection, and extraction accuracy, but not the reconciliation layer that drives the highest STP bands. This is documented clearly in the "where this doesn't apply" section — we would rather say it clearly than win a deal that underdelivers on your specific situation.</div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand"><span class="logo-mark"><svg width="22" height="22" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></div>
+      <nav class="footer-nav"><a href="index.html">Overview</a><a href="modules.html">Modules</a><a href="compare.html">Compare</a><a href="security.html">Security</a><a href="scenarios.html">Scenarios</a></nav>
+      <div class="footer-legal">Product catalogue · September 2026</div>
+    </div>
+  </footer>
+
+  <script src="catalog.js"></script>
+</body>
+</html>

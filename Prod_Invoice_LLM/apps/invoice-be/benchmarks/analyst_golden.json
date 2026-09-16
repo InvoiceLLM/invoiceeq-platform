@@ -1,0 +1,407 @@
+{
+  "version": 1,
+  "created": "2026-09-15",
+  "feature": "Feature 33 tasks 33.21 & 33.40 — ATLAS AI Analyst golden bank",
+  "note": "11 attachment scenarios + 5 tenant-scope weeks across VPI demo and multi-currency scenarios. Figures derived by arithmetic from committed demo data or hand calculations (Hard rule 3). Graded by deterministic set and figure comparison.",
+  "attachment_cases": [
+    {
+      "id": "po_overbilled_vpi",
+      "doc_type": "PURCHASE_ORDER",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "PO-VPI-1041",
+        "party_name": "Rajesh Steel Corporation",
+        "doc_date": "2026-08-05",
+        "grand_total": 437190.0,
+        "extracted_json": {
+          "doc_type": "PURCHASE_ORDER",
+          "po_number": "PO-VPI-1041",
+          "payment_terms": "Net 30",
+          "grand_total": 437190.0,
+          "items": [
+            {"description": "HR Steel Coil 2mm", "hsn": "7208", "quantity": 6, "rate": 48500.0, "amount": 291000.0},
+            {"description": "Steel Angle Bar", "hsn": "7216", "quantity": 30, "rate": 2650.0, "amount": 79500.0}
+          ]
+        }
+      },
+      "invoices": [
+        {
+          "invoice_number": "RAJ-2008",
+          "vendor_name": "Rajesh Steel Corporation",
+          "grand_total": 437190.0,
+          "po_number": "PO-VPI-1041",
+          "invoice_date": "2026-08-20",
+          "due_date": "2026-09-15",
+          "flow_direction": "INBOUND"
+        }
+      ],
+      "expected_cards": {
+        "agreed_vs_billed": "ok",
+        "terms_check": "ok"
+      },
+      "expected_figures": {
+        "agreed_total": 437190.0,
+        "billed_total": 437190.0
+      },
+      "must_not_contain": [999999.0]
+    },
+    {
+      "id": "terms_mismatch_gbp",
+      "doc_type": "PURCHASE_ORDER",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "PO-VPI-1042",
+        "party_name": "Ganesh Bearings Pvt Ltd",
+        "doc_date": "2026-08-08",
+        "grand_total": 68676.0,
+        "extracted_json": {
+          "doc_type": "PURCHASE_ORDER",
+          "po_number": "PO-VPI-1042",
+          "payment_terms": "Net 30 (new vendor)",
+          "grand_total": 68676.0
+        }
+      },
+      "invoices": [
+        {
+          "invoice_number": "GBP-2011",
+          "vendor_name": "Ganesh Bearings Pvt Ltd",
+          "grand_total": 68676.0,
+          "po_number": "PO-VPI-1042",
+          "invoice_date": "2026-08-19",
+          "due_date": "2026-09-18",
+          "flow_direction": "INBOUND"
+        }
+      ],
+      "expected_cards": {
+        "terms_check": "ok"
+      },
+      "expected_figures": {
+        "agreed_payment_days": 30.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "three_way_match_clean_shr",
+      "doc_type": "DELIVERY_NOTE",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "DC-SHR-0501",
+        "party_name": "Shree Packaging Industries",
+        "doc_date": "2026-08-18",
+        "extracted_json": {
+          "doc_type": "DELIVERY_NOTE",
+          "dc_number": "DC-SHR-0501",
+          "po_number": "PO-VPI-1043",
+          "items": [
+            {"description": "Corrugated Boxes", "quantity": 150},
+            {"description": "Wooden Pallets", "quantity": 50},
+            {"description": "Stretch Wrap Film", "quantity": 6}
+          ]
+        }
+      },
+      "invoices": [
+        {
+          "invoice_number": "SHR-2005",
+          "vendor_name": "Shree Packaging Industries",
+          "grand_total": 121894.0,
+          "po_number": "PO-VPI-1043",
+          "invoice_date": "2026-08-18",
+          "flow_direction": "INBOUND"
+        }
+      ],
+      "expected_cards": {
+        "three_way_match": "ok"
+      },
+      "expected_figures": {
+        "delivered_qty_150": 150.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "short_delivery_nat",
+      "doc_type": "DELIVERY_NOTE",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "DC-NMT-2291",
+        "party_name": "National MRO Traders",
+        "doc_date": "2026-08-19",
+        "extracted_json": {
+          "doc_type": "DELIVERY_NOTE",
+          "dc_number": "DC-NMT-2291",
+          "po_number": "PO-VPI-1039",
+          "items": [
+            {"description": "Industrial Lubricant 20L", "quantity": 5},
+            {"description": "Replacement V-Belts", "quantity": 10},
+            {"description": "Safety Gloves case", "quantity": 8}
+          ]
+        }
+      },
+      "invoices": [
+        {
+          "invoice_number": "NAT-2006",
+          "vendor_name": "National MRO Traders",
+          "grand_total": 79956.8,
+          "po_number": "PO-VPI-1039",
+          "invoice_date": "2026-08-19",
+          "flow_direction": "INBOUND"
+        }
+      ],
+      "expected_cards": {
+        "three_way_match": "ok"
+      },
+      "expected_figures": {
+        "delivered_qty": 10.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "credit_note_overlap_bha",
+      "doc_type": "CREDIT_NOTE",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "BHF-CN-2010",
+        "party_name": "Bharat Hardware & Fasteners",
+        "doc_date": "2026-08-17",
+        "grand_total": 42775.0,
+        "extracted_json": {
+          "doc_type": "CREDIT_NOTE",
+          "credit_note_number": "BHF-CN-2010",
+          "grand_total": 42775.0,
+          "items": [
+            {"description": "Hex Bolts M10x40, box 100", "quantity": 25, "rate": 1450.0, "amount": 36250.0}
+          ]
+        }
+      },
+      "invoices": [
+        {
+          "invoice_number": "BHA-2002",
+          "vendor_name": "Bharat Hardware & Fasteners",
+          "grand_total": 103191.0,
+          "invoice_date": "2026-07-09",
+          "paid": true,
+          "flow_direction": "INBOUND"
+        },
+        {
+          "invoice_number": "BHA-2003",
+          "vendor_name": "Bharat Hardware & Fasteners",
+          "grand_total": 103191.0,
+          "invoice_date": "2026-08-17",
+          "paid": false,
+          "flow_direction": "INBOUND"
+        }
+      ],
+      "expected_cards": {
+        "card_net_position": "ok"
+      },
+      "expected_figures": {
+        "credit_note_total": 42775.0,
+        "net_remaining": 60416.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "bank_statement_matched_hdfc",
+      "doc_type": "BANK_STATEMENT",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "HDFC-4471-AUG26",
+        "party_name": "HDFC Bank Limited",
+        "doc_date": "2026-08-31",
+        "extracted_json": {
+          "doc_type": "BANK_STATEMENT",
+          "account_number": "XXXXXXXX4471",
+          "opening_balance": 1250000.0,
+          "closing_balance": 526279.0,
+          "transactions": [
+            {"date": "2026-08-05", "description": "NEFT DR OM STATIONERY MART INV OM -2000 UTR HDFCN26080512345", "debit": 41654.0},
+            {"date": "2026-08-06", "description": "NEFT DR BHARAT HARDWARE & FASTENERS INV BHA-2002 UTR HDFCN26080612346", "debit": 103191.0},
+            {"date": "2026-08-07", "description": "NEFT DR SHREE PACKAGING INDUSTRIES INV SHR-2004 UTR HDFCN26080712347", "debit": 121894.0},
+            {"date": "2026-08-09", "description": "NEFT CR KAVERI AUTO COMPONENTS PVT LTD VPI-OUT-2012", "credit": 483210.0}
+          ]
+        }
+      },
+      "invoices": [
+        {"invoice_number": "OM -2000", "vendor_name": "Om Stationery Mart", "grand_total": 41654.0, "invoice_date": "2026-07-09", "flow_direction": "INBOUND"},
+        {"invoice_number": "BHA-2002", "vendor_name": "Bharat Hardware", "grand_total": 103191.0, "invoice_date": "2026-07-09", "flow_direction": "INBOUND"},
+        {"invoice_number": "SHR-2004", "vendor_name": "Shree Packaging", "grand_total": 121894.0, "invoice_date": "2026-07-09", "flow_direction": "INBOUND"},
+        {"invoice_number": "VPI-OUT-2012", "customer_name": "Kaveri Auto Components", "grand_total": 483210.0, "invoice_date": "2026-07-14", "flow_direction": "OUTBOUND"}
+      ],
+      "expected_cards": {
+        "statement_reconciliation": "ok"
+      },
+      "expected_figures": {
+        "matched_inflow": 483210.0,
+        "matched_outflow_om": 41654.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "bank_statement_unmatched_outflow",
+      "doc_type": "BANK_STATEMENT",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "HDFC-4471-AUG26-UNMATCHED",
+        "party_name": "HDFC Bank Limited",
+        "doc_date": "2026-08-31",
+        "extracted_json": {
+          "doc_type": "BANK_STATEMENT",
+          "account_number": "XXXXXXXX4471",
+          "transactions": [
+            {"date": "2026-08-12", "description": "ACH DR MSEDCL ELECTRICITY BILL AUG-26", "debit": 96410.0},
+            {"date": "2026-08-14", "description": "NEFT DR SALARY AUG-26 BATCH 1 (42 EMPLOYEES)", "debit": 1486000.0}
+          ]
+        }
+      },
+      "invoices": [],
+      "expected_cards": {
+        "unmatched_outflows": "ok"
+      },
+      "expected_figures": {
+        "salary_debit": 1486000.0,
+        "electricity_debit": 96410.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "tax_return_reconciliation_gst",
+      "doc_type": "GST_RETURN",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "GSTR-3B-JUL26",
+        "party_name": "GSTN",
+        "doc_date": "2026-08-20",
+        "extracted_json": {
+          "doc_type": "GST_RETURN",
+          "return_type": "GSTR-3B",
+          "period": "2026-07",
+          "itc_claimed_cgst": 20344.5,
+          "itc_claimed_sgst": 20344.5,
+          "tax_paid_cash": 184320.0
+        }
+      },
+      "invoices": [
+        {"invoice_number": "BHA-2002", "vendor_name": "Bharat Hardware", "grand_total": 103191.0, "invoice_date": "2026-07-09", "flow_direction": "INBOUND"}
+      ],
+      "expected_cards": {
+        "tax_reconciliation": "ok"
+      },
+      "expected_figures": {
+        "tax_paid": 184320.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "loan_schedule_upcoming",
+      "doc_type": "LOAN_SCHEDULE",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "HDFC-TERM-LOAN-981",
+        "party_name": "HDFC Bank",
+        "doc_date": "2026-01-10",
+        "extracted_json": {
+          "doc_type": "LOAN_SCHEDULE",
+          "loan_account": "TL-98104",
+          "principal_amount": 5000000.0,
+          "emi_amount": 125000.0,
+          "repayment_day": 5
+        }
+      },
+      "invoices": [],
+      "expected_cards": {
+        "loan_commitment": "ok"
+      },
+      "expected_figures": {
+        "emi_amount": 125000.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "budget_variance_fy27",
+      "doc_type": "BUDGET",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "BUDGET-FY27",
+        "party_name": "Vishwa Precision Industries",
+        "doc_date": "2026-04-01",
+        "extracted_json": {
+          "doc_type": "BUDGET",
+          "fiscal_year": "2026-27",
+          "budget_by_account": {
+            "Packaging": 1500000.0,
+            "Electricity": 1200000.0,
+            "Salaries": 18000000.0
+          }
+        }
+      },
+      "invoices": [],
+      "expected_cards": {
+        "budget_variance": "ok"
+      },
+      "expected_figures": {
+        "packaging_budget": 1500000.0
+      },
+      "must_not_contain": []
+    },
+    {
+      "id": "period_pnl_margin_q1",
+      "doc_type": "PERIOD_ACCOUNTS",
+      "currency": "INR",
+      "attachment": {
+        "doc_number": "PNL-Q1-FY27",
+        "party_name": "Vishwa Precision Industries",
+        "doc_date": "2026-06-30",
+        "extracted_json": {
+          "doc_type": "PERIOD_ACCOUNTS",
+          "period": "Q1-FY27",
+          "revenue": 14500000.0,
+          "cogs": 9800000.0,
+          "gross_margin": 4700000.0
+        }
+      },
+      "invoices": [],
+      "expected_cards": {
+        "pnl_margin": "ok"
+      },
+      "expected_figures": {
+        "gross_margin": 4700000.0
+      },
+      "must_not_contain": []
+    }
+  ],
+  "tenant_scope_cases": [
+    {
+      "week": "Day 1",
+      "stage": "onboarding_discover",
+      "expected_inbound_count": 10,
+      "expected_outbound_count": 0,
+      "expected_unsettled_payables": 1514553.6,
+      "expected_proposals": ["default_terms_net_30"]
+    },
+    {
+      "week": "Day 2",
+      "stage": "outbound_ingested",
+      "expected_inbound_count": 11,
+      "expected_outbound_count": 12,
+      "expected_receivables": 5248631.0,
+      "expected_payables": 1636447.6
+    },
+    {
+      "week": "Day 3",
+      "stage": "attachments_ingested",
+      "expected_matched_payments": 3,
+      "expected_credit_note_overlap": "BHA-2003"
+    },
+    {
+      "week": "Day 8",
+      "stage": "weekly_scheduled_run",
+      "expected_recurring_salaries": 1486000.0,
+      "expected_recurring_electricity": 96410.0
+    },
+    {
+      "week": "Day 30",
+      "stage": "steady_state_fpa",
+      "expected_forecast_horizon_days": 60,
+      "expected_tiers": ["certain", "committed", "recurring", "estimated"]
+    }
+  ]
+}

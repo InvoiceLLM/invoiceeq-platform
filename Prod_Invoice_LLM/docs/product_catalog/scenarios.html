@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enterprise Scenarios — InvoiceEQ</title>
+  <meta name="description" content="Six enterprise deployment scenarios covering manufacturing, automotive, EPC, pharma, shared services, and retail — what breaks today and how InvoiceEQ addresses it." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="catalog.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo"><span class="logo-mark"><svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="nav-link">Overview</a></li>
+        <li><a href="modules.html" class="nav-link">Modules</a></li>
+        <li><a href="how-it-works.html" class="nav-link">How It Works</a></li>
+        <li><a href="compare.html" class="nav-link">Compare</a></li>
+        <li><a href="security.html" class="nav-link">Security</a></li>
+        <li><a href="scenarios.html" class="nav-link active">Scenarios</a></li>
+      </ul>
+      <a href="how-it-works.html#deployment" class="btn-primary nav-cta">Start 14-Day Pilot</a>
+    </div>
+  </nav>
+
+  <div class="container page-hero">
+    <div class="page-hero-eyebrow">Enterprise scenarios</div>
+    <h1 class="page-hero-title">Six deployments. The same<br/>failure pattern, different surfaces.</h1>
+    <p class="page-hero-sub">These are representative scenarios, not case studies. Names and organisation details are generic — select the one closest to your situation and use it as a starting frame for the pilot scoping conversation.</p>
+  </div>
+
+  <section class="section">
+    <div class="container">
+      <div class="scenario-list">
+
+        <div class="scenario-card">
+          <div class="scenario-meta">
+            <div class="scenario-type">Manufacturing</div>
+            <div class="scenario-title">Multi-entity manufacturer</div>
+            <div class="scenario-stat">38,000 invoices/mo · 4,200 suppliers · 3 countries</div>
+          </div>
+          <div class="scenario-body">
+            <div class="scenario-break">
+              <div class="scenario-break-label">What breaks today</div>
+              <p>Three countries means three tax regimes — VAT rates, reverse-charge rules, and withholding requirements vary by jurisdiction. No individual AP team member knows all three. Invoice processing is routed by country of origin, but routing logic fails when a supplier issues from an unexpected entity. The result: invoices processed under the wrong tax treatment, requiring manual correction at close.</p>
+            </div>
+            <div>
+              <div class="scenario-fix-label">How InvoiceEQ addresses it</div>
+              <p>Tax jurisdiction is read per document from the supplier address and registration details extracted by NOVA — not assigned by routing logic. SENTINEL applies the applicable rate for that jurisdiction when verifying totals. A UK VAT invoice and a German reverse-charge invoice are verified against different rules automatically, not by manual routing assignment.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="scenario-card">
+          <div class="scenario-meta">
+            <div class="scenario-type">Automotive supply chain</div>
+            <div class="scenario-title">Tier-1 automotive supplier</div>
+            <div class="scenario-stat">900 suppliers · 60,000 part numbers · JIT delivery</div>
+          </div>
+          <div class="scenario-body">
+            <div class="scenario-break">
+              <div class="scenario-break-label">What breaks today</div>
+              <p>A supplier's invoice refers to part "WGT-A3-REV2" against a PO line referencing "Widget Assembly A3 (Revision 2)." Exact-string matching fails. A buyer manually confirms they refer to the same item and clears the exception — 60,000 part numbers creates a full-time exception queue. JIT delivery means partial receipts are routine: a PO for 500 units ships in three tranches; each tranche invoice creates a mismatch against the full-PO quantity.</p>
+            </div>
+            <div>
+              <div class="scenario-fix-label">How InvoiceEQ addresses it</div>
+              <p>Vector similarity matching aligns supplier part descriptions to PO line items without requiring exact string equality. "WGT-A3-REV2" matches "Widget Assembly A3 (Revision 2)" within a configurable similarity threshold. Partial delivery invoicing reconciles against dock receipts, not full PO quantities — a tranche of 180 units against a 500-unit PO is matched against the corresponding goods receipt, not flagged as a quantity exception.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="scenario-card">
+          <div class="scenario-meta">
+            <div class="scenario-type">Construction &amp; EPC</div>
+            <div class="scenario-title">Infrastructure &amp; EPC contractor</div>
+            <div class="scenario-stat">Subcontractor billing · progress claims · retention</div>
+          </div>
+          <div class="scenario-body">
+            <div class="scenario-break">
+              <div class="scenario-break-label">What breaks today</div>
+              <p>Retention / holdback is a standard construction billing practice: the client withholds 5–10% of each progress claim until practical completion. Arithmetic verification systems treat the retention deduction as an unexplained discrepancy — the invoice total does not equal line items minus the deduction as computed. The result: every construction invoice becomes an exception, regardless of correctness. The exception queue becomes unmanageable.</p>
+            </div>
+            <div>
+              <div class="scenario-fix-label">How InvoiceEQ addresses it</div>
+              <p>Retention and holdback amounts are recognised as document structure — a specific line item type with defined treatment — not as arithmetic failures. The verification engine rebuilds the total including the retention deduction as a negative line item against the gross amount. A correctly-drawn progress claim with 5% retention verifies successfully and posts without manual review.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="scenario-card">
+          <div class="scenario-meta">
+            <div class="scenario-type">Regulated industry</div>
+            <div class="scenario-title">Pharmaceutical distribution</div>
+            <div class="scenario-stat">Regulated supply chain · high SKU count · audit sampling</div>
+          </div>
+          <div class="scenario-body">
+            <div class="scenario-break">
+              <div class="scenario-break-label">What breaks today</div>
+              <p>Audit reviews sample approximately 30 invoices from a monthly population of 45,000. The 44,970 unchecked invoices represent an unquantified financial exposure — any systematic error that bypasses the sample is invisible until an external audit or a supplier dispute surfaces it. Regulators increasingly view statistical sampling as insufficient for controlled-substance supply chains.</p>
+            </div>
+            <div>
+              <div class="scenario-fix-label">How InvoiceEQ addresses it</div>
+              <p>100% population verification: every invoice is processed through deterministic arithmetic verification and three-way matching, regardless of value. The audit trail for every invoice is complete and immutable — an auditor can pull any processed invoice and see exactly what was extracted, what was verified, and which purchase order and goods receipt it matched, without an IT data extract.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="scenario-card">
+          <div class="scenario-meta">
+            <div class="scenario-type">Shared services</div>
+            <div class="scenario-title">Group shared services centre</div>
+            <div class="scenario-stat">14 legal entities · one AP team · cross-entity risk</div>
+          </div>
+          <div class="scenario-body">
+            <div class="scenario-break">
+              <div class="scenario-break-label">What breaks today</div>
+              <p>Onboarding a new legal entity into the shared services centre takes a quarter — new template sets for that entity's supplier base, configuration changes in the ERP, and training. During onboarding, the entity processes manually. Cross-entity data access risk exists in shared platforms where tenant isolation is an application flag rather than a structural property — one misconfiguration exposes all entities' invoice data.</p>
+            </div>
+            <div>
+              <div class="scenario-fix-label">How InvoiceEQ addresses it</div>
+              <p>Adding a new legal entity is tenant configuration, not a migration or template project. The new entity inherits the global rule set immediately; supplier-specific tuning is layered on top as invoices process. Cross-entity isolation is structural — a mandatory tenant predicate at the ORM layer means entity A's team cannot access entity B's invoice data by construction, not by policy.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="scenario-card">
+          <div class="scenario-meta">
+            <div class="scenario-type">Retail &amp; hospitality</div>
+            <div class="scenario-title">Multi-site retail &amp; hospitality</div>
+            <div class="scenario-stat">800 sites · utilities, freight, small suppliers</div>
+          </div>
+          <div class="scenario-body">
+            <div class="scenario-break">
+              <div class="scenario-break-label">What breaks today</div>
+              <p>A £42 utility invoice from a small regional supplier doesn't get checked — the review threshold means low-value invoices process automatically without verification. A supplier billing an extra £42 per site per month across 800 sites is a £400,800 annual exposure that sits below every alert threshold and accumulates for years. Small-value systematic errors are the class most likely to be invisible in sampling-based review.</p>
+            </div>
+            <div>
+              <div class="scenario-fix-label">How InvoiceEQ addresses it</div>
+              <p>Every invoice is verified regardless of value. The arithmetic check on a £42 utility invoice costs the same as one on a £420,000 construction claim — there is no threshold below which verification is skipped. Systematic overbilling across a large supplier portfolio becomes detectable the month it starts, not after a year of aggregate drift.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-dark">
+    <div class="container">
+      <div style="max-width:680px; margin:0 auto; text-align:center;">
+        <h2 class="cta-headline">None of these scenarios is yours, exactly.</h2>
+        <p class="cta-sub" style="margin-bottom:40px;">The pilot scope starts from your operation, not a reference account. Bring the document types that are currently hardest — the ones generating the most exceptions or manual review — and we measure InvoiceEQ against those specifically.</p>
+        <div class="cta-actions">
+          <a href="how-it-works.html#deployment" class="btn-primary btn-lg">Begin the 14-Day Pilot</a>
+          <a href="compare.html#scorecard" class="btn-ghost btn-lg">Use the Evaluation Scorecard →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand"><span class="logo-mark"><svg width="22" height="22" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></div>
+      <nav class="footer-nav"><a href="index.html">Overview</a><a href="modules.html">Modules</a><a href="how-it-works.html">How It Works</a><a href="compare.html">Compare</a><a href="security.html">Security</a></nav>
+      <div class="footer-legal">Product catalogue · September 2026</div>
+    </div>
+  </footer>
+
+  <script src="catalog.js"></script>
+</body>
+</html>

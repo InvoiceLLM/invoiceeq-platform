@@ -410,6 +410,86 @@ async def get_current_user_context(context: TenantContext = Depends(get_tenant_c
     return context
 
 
+ALLOWED_UI_PREFS_KEYS = {
+    "layout",
+    "first_run_seen",
+    "tour_seen",
+    "questionnaire_progress",
+}
+
+
+@router.get("/me/preferences")
+def get_user_preferences(
+    db_session: Session = Depends(get_db_session),
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
+):
+    """Task 33.39: read the authenticated user's UI preferences."""
+    user = None
+    if context.db_user_id:
+        user = db_session.get(User, context.db_user_id)
+    elif context.user_id:
+        user = db_session.exec(
+            select(User).where(User.clerk_user_id == context.user_id)
+        ).first()
+
+    defaults = {
+        "layout": "surfaces",
+        "first_run_seen": False,
+        "tour_seen": False,
+        "questionnaire_progress": None,
+    }
+    if user is None:
+        return defaults
+
+    prefs = user.ui_prefs or {}
+    return {**defaults, **prefs}
+
+
+@router.patch("/me/preferences")
+def update_user_preferences(
+    updates: dict,
+    db_session: Session = Depends(get_db_session),
+    context: TenantContext = Depends(get_tenant_context_allow_unpaid),
+):
+    """Task 33.39: update one or more UI preference keys. Unknown keys -> 400."""
+    if not isinstance(updates, dict):
+        raise HTTPException(status_code=400, detail="Preferences payload must be a JSON object.")
+
+    unknown = [k for k in updates if k not in ALLOWED_UI_PREFS_KEYS]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown preference keys: {unknown}. Allowed: {sorted(ALLOWED_UI_PREFS_KEYS)}",
+        )
+
+    user = None
+    if context.db_user_id:
+        user = db_session.get(User, context.db_user_id)
+    elif context.user_id:
+        user = db_session.exec(
+            select(User).where(User.clerk_user_id == context.user_id)
+        ).first()
+
+    if user is None:
+        raise HTTPException(status_code=404, detail="User record not found.")
+
+    current = dict(user.ui_prefs or {})
+    current.update(updates)
+    user.ui_prefs = current
+
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    defaults = {
+        "layout": "surfaces",
+        "first_run_seen": False,
+        "tour_seen": False,
+        "questionnaire_progress": None,
+    }
+    return {**defaults, **(user.ui_prefs or {})}
+
+
 @router.post("/provision", response_model=TenantProvisionResponse)
 async def provision_tenant(
     body: TenantProvisionRequest,

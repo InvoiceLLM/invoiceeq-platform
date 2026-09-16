@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Platform Modules — InvoiceEQ</title>
+  <meta name="description" content="Seven purpose-built modules in one codebase — NOVA, SENTINEL, 3-Way Match, EVOLVE, SAGE, Autopilot Sync, and Outbound AR Pre-Flight." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="catalog.css" />
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-logo">
+        <span class="logo-mark"><svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span>
+        <span class="logo-text">InvoiceEQ</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="index.html" class="nav-link">Overview</a></li>
+        <li><a href="modules.html" class="nav-link active">Modules</a></li>
+        <li><a href="how-it-works.html" class="nav-link">How It Works</a></li>
+        <li><a href="compare.html" class="nav-link">Compare</a></li>
+        <li><a href="security.html" class="nav-link">Security</a></li>
+        <li><a href="scenarios.html" class="nav-link">Scenarios</a></li>
+      </ul>
+      <a href="how-it-works.html#deployment" class="btn-primary nav-cta">Start 14-Day Pilot</a>
+    </div>
+  </nav>
+
+  <div class="container page-hero">
+    <div class="page-hero-eyebrow">Platform modules</div>
+    <h1 class="page-hero-title">Seven modules. One codebase.<br/>No bolted-on engines.</h1>
+    <p class="page-hero-sub">Every capability is built into the same product — not assembled from third-party point solutions. A correction in EVOLVE propagates to NOVA extraction, SENTINEL verification, and the 3-way match in the same transaction.</p>
+  </div>
+
+  <section class="section">
+    <div class="container">
+
+      <!-- NOVA -->
+      <div class="module-detail" id="nova">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#0D1A3A; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="#4C8DFF" stroke-width="1.5"/><path d="M7 10l2 2 4-4" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <div class="module-sidebar-name">NOVA</div>
+          <div class="module-sidebar-role">Vision Intake</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>99.3% field accuracy</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#22D3EE"></span>&lt; 3.8s median latency</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#34D399"></span>12 document families</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#FBBF24"></span>SHA-256 duplicate gate</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>What it does</h3>
+          <p>NOVA is the intake layer — the point at which a physical or electronic supplier document becomes a structured data record. It receives files from four channels: email ingest (via configured mailbox), Google Drive / Salesforce sync, direct upload through the web interface, or the REST API. Each file is validated at the byte level before any extraction begins.</p>
+
+          <h3>How extraction works</h3>
+          <p>NOVA reads documents as documents, not as templates. Azure Document Intelligence provides the visual parse layer, returning page geometry, text runs, and table structures. NOVA then applies a multi-pass LLM extraction step bounded by a strict JSON schema — extracted values are typed (dates in ISO 8601, amounts in exact decimal notation) before they leave NOVA. NOVA never returns a string when the schema calls for a number.</p>
+
+          <h3>Deduplication before cost</h3>
+          <p>Before any OCR or LLM token is spent, NOVA computes a SHA-256 digest of the file content. An invoice already present in the tenant's database is intercepted in under 5 milliseconds and returned to the operator as a flagged duplicate — no API call to a language model, no extraction cost, no risk of the same invoice reaching the verification step.</p>
+
+          <h3>What NOVA does not do</h3>
+          <p>NOVA does not decide whether an extracted total is correct. It reads what is printed and passes a structured record to SENTINEL. The boundary is intentional: reading and arithmetic are separated so that each can be tested, audited, and replaced independently.</p>
+        </div>
+      </div>
+
+      <!-- SENTINEL -->
+      <div class="module-detail" id="sentinel">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#1A0D0D; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M10 2L3 6v6c0 4 3.5 7 7 8 3.5-1 7-4 7-8V6L10 2z" stroke="#F87171" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 10l2 2 4-4" stroke="#F87171" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <div class="module-sidebar-name">SENTINEL</div>
+          <div class="module-sidebar-role">Truth Engine</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#F87171"></span>0.00% arithmetic hallucination</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>10 formal alert codes</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#FBBF24"></span>Hard stop on total mismatch</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>The core invariant</h3>
+          <p>SENTINEL exists to enforce one rule without exception: if line items plus tax do not equal the stated invoice total, nothing posts to the ledger. There is no confidence threshold, no tolerance band, and no exception path around it. The invariant is implemented in deterministic decimal arithmetic code — not a language model's judgment.</p>
+
+          <h3>Ten alert codes</h3>
+          <p>When SENTINEL finds a problem, it issues one of ten formal alert codes — each with a specific meaning and a defined routing action. Examples include <code>line_item_calculation_mismatch</code> (the sum of line amounts does not match the stated subtotal), <code>possible_duplicate</code> (same vendor, date, and total but a different invoice number — soft alert, routed to audit queue), and tax anomaly flags. Alert codes are structured, not free-text — they are machine-readable and feed the audit queue, the AI Control Tower, and SAGE's reasoning context.</p>
+
+          <h3>Why arithmetic is not a language model's job</h3>
+          <p>A language model asked to verify a total generates the most probable sequence of digits. When line items and tax don't reconcile, it produces a figure that makes the arithmetic <em>look</em> right. It never signals uncertainty. SENTINEL replaces this with exact decimal arithmetic in ordinary Python code — a figure it cannot reconstruct stops the invoice, always, regardless of how plausible the mismatch looks.</p>
+        </div>
+      </div>
+
+      <!-- 3-WAY MATCH -->
+      <div class="module-detail" id="match">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#0A1D2E; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><rect x="2" y="2" width="7" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/><rect x="11" y="2" width="7" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/><rect x="6" y="11" width="8" height="7" rx="1.5" stroke="#22D3EE" stroke-width="1.5"/></svg>
+          </div>
+          <div class="module-sidebar-name">3-Way Match</div>
+          <div class="module-sidebar-role">Reconciliation Engine</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#22D3EE"></span>±0.01 tolerance on partial deliveries</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>Vector part-number alignment</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#34D399"></span>Retention &amp; holdback aware</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>Invoice vs. PO vs. goods receipt</h3>
+          <p>A verified invoice is not a paid invoice. Three-way matching checks whether what was billed matches what was ordered (purchase order) and what was actually received (goods receipt / dock receipt). Discrepancies between the three — quantity, unit price, part number — are surfaced before any posting occurs.</p>
+
+          <h3>Part-number matching with vector similarity</h3>
+          <p>In practice, a supplier's invoice rarely refers to a part number the way the PO does. "Widget A3" and "Wdgt-A3 Rev.2" may refer to the same item — exact-string matching fails; a person would know they match. The reconciliation engine uses vector similarity to align supplier part descriptions to PO line items, tolerating abbreviations, spacing variations, and minor nomenclature differences.</p>
+
+          <h3>Partial deliveries and retention</h3>
+          <p>Partial shipments and progress billing are handled natively — a billed quantity less than the PO quantity is reconciled against the dock receipt, not flagged as a mismatch. Retention and holdback clauses are recognised as document structure, not as arithmetic failures. Without this, an entire queue of construction or subcontractor invoices becomes exceptions.</p>
+        </div>
+      </div>
+
+      <!-- EVOLVE -->
+      <div class="module-detail" id="evolve">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#0D2A1A; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M10 2v4M10 14v4M2 10h4M14 10h4" stroke="#34D399" stroke-width="1.5" stroke-linecap="round"/><circle cx="10" cy="10" r="4" stroke="#34D399" stroke-width="1.5"/></svg>
+          </div>
+          <div class="module-sidebar-name">EVOLVE</div>
+          <div class="module-sidebar-role">Self-Tuning Rules</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#34D399"></span>0 regressions / 500-doc corpus</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>Rule sandbox before production</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#FBBF24"></span>Vendor-specific and global rules</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>Learning from corrections without breaking anything</h3>
+          <p>When an auditor corrects an extraction or clears an alert for a specific supplier, EVOLVE observes the correction and proposes a candidate rule — a specific adjustment to how that supplier's documents are read or verified. The rule is proposed, not applied.</p>
+
+          <h3>The 500-invoice replay requirement</h3>
+          <p>Before any candidate rule goes near production, it is replayed against 500 historical invoices from the relevant supplier corpus. If the rule causes any extraction to regress — produces a worse output than the current system on any document in the replay set — it is rejected. The regression rate across all rules shipped to date is zero.</p>
+
+          <h3>Scope of rules</h3>
+          <p>Rules operate at three levels: global (applies to all suppliers in the tenant), vendor-specific (applies to a named supplier), and new-vendor bootstrap (defaults used before enough history exists to tune). An operator with no developer access can define and sandbox rules through the Trainer interface — no code, no consulting engagement required. The trainer defines intent; EVOLVE validates safety before promoting.</p>
+        </div>
+      </div>
+
+      <!-- SAGE -->
+      <div class="module-detail" id="sage">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#1F1A0D; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M4 4h12v10H4z" stroke="#FBBF24" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 16l2 2 2-2" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/><path d="M7 8h6M7 11h4" stroke="#FBBF24" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <div class="module-sidebar-name">SAGE</div>
+          <div class="module-sidebar-role">Spend Copilot</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#FBBF24"></span>Read-only query sandbox</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>72.2% golden set pass rate</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#22D3EE"></span>SQL drawer with citations</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>Natural language over the whole invoice history</h3>
+          <p>SAGE allows any authorised user to ask questions of the tenant's full invoice history in plain language: "How much did we pay Cloudflare last month?", "Which suppliers increased unit prices more than 5% in Q3?", "Show me all invoices over $50,000 that went to manual review." SAGE returns a direct answer, the SQL it used to derive it, and citation links to the source invoices.</p>
+
+          <h3>Dual retrieval path</h3>
+          <p>Aggregation questions ("total spend on vendor X in period Y") route to a generated SQL query against PostgreSQL. Unstructured or policy questions route to semantic vector retrieval over the invoice corpus. Both paths enforce mandatory tenant isolation — a query cannot return data from another tenant's records by construction, not by an application-level flag.</p>
+
+          <h3>Read-only by design</h3>
+          <p>SAGE has no write access to the invoice database. It cannot approve, reject, flag, or modify any invoice record. This is a structural constraint, not a configuration option — it means SAGE's answer cannot trigger a ledger action by itself, regardless of how the query is phrased.</p>
+        </div>
+      </div>
+
+      <!-- AUTOPILOT -->
+      <div class="module-detail" id="autopilot">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#0D1A3A; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M4 10a6 6 0 1112 0 6 6 0 01-12 0z" stroke="#4C8DFF" stroke-width="1.5"/><path d="M10 7v3l2 2" stroke="#4C8DFF" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </div>
+          <div class="module-sidebar-name">Autopilot Sync</div>
+          <div class="module-sidebar-role">Scheduling Engine</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>Google Drive polling</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#22D3EE"></span>Email ingest (global mailbox)</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#34D399"></span>Salesforce connector</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>Intake without a person in the loop</h3>
+          <p>Autopilot Sync removes the human step of collecting, downloading, and uploading invoice files. It polls configured sources on a schedule — a shared Google Drive folder, an inbound email mailbox, or a Salesforce document store — and feeds each discovered file into NOVA automatically. The operator defines the source and schedule; Autopilot handles the rest.</p>
+
+          <h3>What it does not replace</h3>
+          <p>Autopilot Sync handles collection. It does not handle what happens after a document fails verification or matching — those are SENTINEL and reconciliation engine responsibilities. An invoice that arrives via Autopilot and fails arithmetic verification goes to the same audit queue as one that was uploaded manually.</p>
+        </div>
+      </div>
+
+      <!-- OUTBOUND AR -->
+      <div class="module-detail" id="outbound">
+        <div class="module-sidebar">
+          <div class="module-glyph" style="background:#0A1D2E; width:52px; height:52px; border-radius:10px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+            <svg width="24" height="24" viewBox="0 0 20 20" fill="none"><path d="M4 16l12-6L4 4v5l8 1-8 1v5z" stroke="#22D3EE" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="module-sidebar-name">Outbound AR Pre-Flight</div>
+          <div class="module-sidebar-role">Customer Billing QA</div>
+          <div class="module-sidebar-kpi">
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#22D3EE"></span>DSO target: 65 → under 25 days</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#4C8DFF"></span>Tax splits, PO ref, line maths</span>
+            <span class="kpi-pill"><span class="kpi-dot" style="background:#34D399"></span>Contract terms verification</span>
+          </div>
+        </div>
+        <div class="module-main">
+          <h3>Verify before sending, not after a dispute</h3>
+          <p>The same verification logic that SENTINEL applies to inbound supplier invoices can be applied to the company's own outbound customer invoices before they leave the building. An outbound invoice with a line item arithmetic error reaches the customer, triggers a dispute, and delays payment — a DSO impact that is entirely preventable.</p>
+
+          <h3>What the pre-flight checks</h3>
+          <p>Line item arithmetic, tax splits against the applicable rate, PO reference matching against the underlying contract, and credit term compliance. An outbound invoice that fails any check is held for correction, not sent. The target DSO improvement (from 65 days to under 25 days) is the downstream result of fewer disputes, not faster chasing.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="section section-dark">
+    <div class="container">
+      <div class="cta-inner" style="max-width:600px; margin:0 auto; text-align:center;">
+        <h2 class="cta-headline">Start with your worst invoices.</h2>
+        <p class="cta-sub">Bring the 500 documents that break your current tooling. Measure the straight-through rate against the published band. That measurement is the pilot, not a demonstration.</p>
+        <div class="cta-actions">
+          <a href="how-it-works.html#deployment" class="btn-primary btn-lg">Begin 14-Day Pilot</a>
+          <a href="compare.html" class="btn-ghost btn-lg">Compare vs. alternatives →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand"><span class="logo-mark"><svg width="22" height="22" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#121A2C"/><path d="M6 6h7v7H6z" fill="#4C8DFF"/><path d="M15 6h7v7h-7z" fill="#22D3EE"/><path d="M6 15h7v7H6z" fill="#FBBF24"/><path d="M15 15h7v7h-7z" fill="#34D399"/></svg></span><span class="logo-text">InvoiceEQ</span></div>
+      <nav class="footer-nav"><a href="index.html">Overview</a><a href="how-it-works.html">How It Works</a><a href="compare.html">Compare</a><a href="security.html">Security</a><a href="scenarios.html">Scenarios</a></nav>
+      <div class="footer-legal">Product catalogue · September 2026 · Metrics are measured, not estimated.</div>
+    </div>
+  </footer>
+
+  <script src="catalog.js"></script>
+</body>
+</html>
