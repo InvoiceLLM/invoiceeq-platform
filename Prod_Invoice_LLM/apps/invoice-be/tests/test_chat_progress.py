@@ -253,9 +253,32 @@ def test_every_sql_repair_attempt_is_published_individually(db_session):
 def test_a_rag_turn_publishes_retrieval_start_and_a_count(db_session):
     rec = _Recorder()
     llm = _ScriptedSqlLLM(None)
+    # BE Gap 580 (CH-13): a retrieved chunk is dropped before the prompt unless its
+    # invoice still exists for this tenant -- that is what stops chat answering from
+    # a deleted invoice. These chunks therefore have to point at real rows; with the
+    # invented ids this test used to use, both are now correctly discarded and the
+    # count is 0.
+    from models import Invoice
+
+    invoices = []
+    for number in ("PROG-1", "PROG-2"):
+        inv = Invoice(
+            id=uuid4(),
+            tenant_id=MOCK_TENANT_ID,
+            file_path=f"mock/{number}.pdf",
+            flow_direction="INBOUND",
+            status="COMPLETED",
+            currency="USD",
+            invoice_number=number,
+            vendor_name="Acme",
+        )
+        db_session.add(inv)
+        invoices.append(inv)
+    db_session.commit()
+
     chunks = [
-        {"document": "invoice text", "metadata": {"invoice_id": str(uuid4()), "vendor_name": "Acme", "page": 1}},
-        {"document": "more text", "metadata": {"invoice_id": str(uuid4()), "vendor_name": "Acme", "page": 2}},
+        {"document": "invoice text", "metadata": {"invoice_id": str(invoices[0].id), "vendor_name": "Acme", "page": 1}},
+        {"document": "more text", "metadata": {"invoice_id": str(invoices[1].id), "vendor_name": "Acme", "page": 2}},
     ]
 
     _run_turn(db_session, llm, "what does the contract say?", on_progress=rec, route="RAG", chunks=chunks)

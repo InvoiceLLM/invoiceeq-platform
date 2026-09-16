@@ -117,3 +117,17 @@ def test_a_webhook_secret_and_audit_history_cannot_be_read_through_chat_sql():
             assert "whsec" not in str(excinfo.value)
 
         assert "INV-569" in execute_generated_sql(f"SELECT invoice_number FROM invoice WHERE {predicate}", str(tenant), session)
+
+
+def test_forbidden_functions_are_refused_gap574():
+    """Gap 574: pg_sleep, pg_read_file and other administrative functions are rejected."""
+    tenant = uuid4()
+    for func_sql in [
+        f"SELECT pg_sleep(30), id FROM invoice WHERE tenant_id = '{tenant}'",
+        f"SELECT pg_read_file('foo'), id FROM invoice WHERE tenant_id = '{tenant}'",
+        f"SELECT pg_ls_dir('.'), id FROM invoice WHERE tenant_id = '{tenant}'",
+    ]:
+        with pytest.raises(ValueError) as excinfo:
+            assert_reads_only_allowed_tables(func_sql, "postgresql", tenant_id=str(tenant))
+        assert "Access Denied" in str(excinfo.value)
+

@@ -110,7 +110,13 @@ def test_every_column_survives_the_round_trip_including_the_json_ones(pg_session
     assert {t["tax_type"] for t in record["taxes"]} == {"CGST", "SGST"}
     assert isinstance(record["items"], list) and record["items"][0]["amount"] == 1000.0
     assert isinstance(record["sa_alerts"], list) and record["sa_alerts"]
-    assert isinstance(record["payment_instructions"], list)
+    # BE Gap 588 (CH-21) reverses what this line used to assert. Founder ruling
+    # 2026-09-16: nobody sees payment credentials in chat, on any door, so
+    # `payment_instructions` and `tax_ids` are excluded from the prompt record --
+    # a model cannot recite a field it was never shown. Asserted as absence, for
+    # the same reason `test_identity_uuids_never_reach_the_prompt` below exists.
+    assert "payment_instructions" not in record
+    assert "tax_ids" not in record
     assert result.records[0].has_alerts is True
 
     block = full_records.full_record_block(result)

@@ -376,11 +376,18 @@ def require_live_chroma(operation: str) -> None:
     the answer is composed (`agents/query_agent.py`, BE Gap 608's second half) so the
     user is told search is degraded instead of being told there are no records.
     """
+    # Only the fallback store is refused, not every non-"http" state. The failure
+    # this exists to prevent is writing embeddings to the container-local
+    # `PersistentClient`, which is empty on every revision and dies with the replica.
+    # `"uninitialised"` is not that: it means no client has been built in this
+    # process yet, which is the normal state under a test double that patches the
+    # collection directly, and refusing it broke indexing paths that were never in
+    # danger (found by tests/test_chat_document_search.py).
     kind = get_chroma_client_kind()
-    if kind != "http":
+    if kind == "persistent-fallback":
         raise ChromaUnavailableError(
-            f"Refusing to {operation}: the vector store is unavailable "
-            f"(client kind {kind!r}). Nothing was written."
+            f"Refusing to {operation}: the vector store is in local-fallback mode "
+            f"(client kind {kind!r}), which no other replica can read. Nothing was written."
         )
 
 

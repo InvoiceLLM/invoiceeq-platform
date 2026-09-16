@@ -83,6 +83,12 @@ def no_redis():
     missing local server doesn't make these tests depend on the environment."""
     with patch("redis.Redis.from_url") as m:
         m.return_value.keys.return_value = []
+        m.return_value.scan_iter.side_effect = lambda *a, **k: iter([])
+        # BE Gap 587 (CH-20): `is_chat_session_locked()` reads a key and treats any
+        # non-None answer as "a turn is already running". A bare MagicMock returns a
+        # truthy mock for `.get()`, so every post in this module came back 409. Real
+        # Redis returns None when nothing holds the lock.
+        m.return_value.get.return_value = None
         yield m
 
 

@@ -403,14 +403,24 @@ def test_first_turn_has_no_previous_sql_block(db_session):
     assert "PREVIOUS TURN'S SQL (the query that produced" not in llm.prompts[0]
 
 
-def test_get_prior_turn_sql_skips_turns_that_ran_no_query(db_session):
-    """A RAG/CHAT-answered turn (generated_sql NULL) must not shadow the most
-    recent turn that actually ran a query."""
+def test_get_prior_turn_sql_reads_only_the_immediately_previous_turn(db_session):
+    """BE Gap 584 (CH-17) reverses what this used to assert.
+
+    It used to pin that a RAG/CHAT-answered turn must not shadow the most recent
+    turn that ran a query -- which is exactly how a query from an abandoned topic
+    got resurrected three turns later and forced the route back to SQL. "The
+    previous turn" now means the previous turn: if the last thing the assistant
+    said ran no query, there is no prior SQL to carry.
+    """
     session_id = uuid4()
     _seed_turn(db_session, session_id, content="Older SQL turn.", sql="SELECT 1", minutes_ago=10)
     _seed_turn(db_session, session_id, content="A RAG answer with no SQL.", sql=None, minutes_ago=2)
 
-    assert get_prior_turn_sql(str(session_id), db_session) == "SELECT 1"
+    assert get_prior_turn_sql(str(session_id), db_session) is None
+
+    fresh = uuid4()
+    _seed_turn(db_session, fresh, content="SQL turn.", sql="SELECT 1", minutes_ago=2)
+    assert get_prior_turn_sql(str(fresh), db_session) == "SELECT 1"
 
 
 def test_get_prior_turn_sql_is_none_for_an_unknown_or_invalid_session(db_session):
@@ -635,7 +645,11 @@ def test_hedge_is_silent_when_no_invoice_ids_could_be_harvested(db_session):
     result = _run(db_session, llm, "Can you explain the 3 USD ones in detail?", session_id)
 
     assert result["result_invoice_ids"] == []
-    assert "Heads up" not in result["content"]
+    # BE Gap 585 (CH-18) reverses this. The warning used to be suppressed exactly
+    # when the follow-up dropped EVERY row -- the most severe case and the one the
+    # user most needs told about. It now fires on zero rows too.
+    assert "Heads up" in result["content"]
+    assert "matched none of them" in result["content"]
 
 
 # ── Gap 253: line-item extraction (rule 6d), dialect-conditioned ─────────────
@@ -1051,7 +1065,12 @@ def test_full_record_block_gives_the_answer_step_the_real_cgst_sgst_breakdown(db
     assert summary_prompt.count('"amount": 9000.0') == 2
     # And the other columns the schema block never exposed either.
     assert '"subtotal": 100000.0' in summary_prompt
-    assert "29ABCDE1234F1Z5" in summary_prompt
+    # BE Gap 588 (CH-21) reverses this line. The GSTIN is a tax identifier, and the
+    # founder ruling of 2026-09-16 is that nobody sees payment or tax credentials in
+    # chat -- so `tax_ids` never reaches the prompt at all now. The tax BREAKDOWN
+    # this test exists for (`taxes`, asserted above) is unaffected: that is the
+    # CGST/SGST split, not an identifier.
+    assert "29ABCDE1234F1Z5" not in summary_prompt
     # Never a licence to invent: the block says so in as many words, because the
     # original live failure (Gap 263) was a FABRICATED CGST/SGST split.
     assert "never derive, split or estimate one" in summary_prompt
@@ -1113,7 +1132,10 @@ def test_full_record_block_cannot_fetch_another_tenants_invoice(db_session):
     block = query_agent._full_record_block_for(
         [str(mine.id), str(theirs.id)], str(MOCK_TENANT_ID), db_session
     )
-    assert "29ABCDE1234F1Z5" in block
+    # BE Gap 588: `tax_ids` is excluded from the block entirely (see the CGST test
+    # above). The tenant-isolation property this test is actually about is asserted
+    # by the two lines below, which are unchanged.
+    assert "29ABCDE1234F1Z5" not in block
     assert "Someone Else Ltd" not in block
     assert "123456.0" not in block
 
@@ -1266,12 +1288,16 @@ def test_full_record_block_is_bounded_by_its_character_budget(db_session):
     ]
     assert 0 < len(shown) < len(invoices)
     assert sum(sizes[number] for number in shown) <= query_agent.MAX_FULL_RECORD_BLOCK_CHARS
-    # Held back, and said so -- with the real count, not a vague hedge.
-    assert (
-        f"({len(invoices) - len(shown)} further identified invoice record(s) were "
-        "held back for size" in block
-    )
-    assert "do not describe this as every matching invoice's detail" in block
+    # BE Gap 591 (CH-24) replaced the prose disclaimer this used to assert. Asking
+    # the model not to generalise is a request, not a control (hard rule 3). What is
+    # asserted now is the structural boundary that replaced it: every matching
+    # invoice appears in a compact table, so none is wholly absent, and the invoices
+    # whose FULL record is attached are named.
+    assert "EVERY MATCHING INVOICE" in block
+    for number in sizes:
+        assert number in block, f"{number} is absent from the summary table"
+    assert f"attached for these {len(shown)} invoice(s) ONLY" in block
+    assert "NOT available this turn" in block
 
 
 def test_full_record_block_still_shows_one_record_larger_than_the_whole_budget(db_session):

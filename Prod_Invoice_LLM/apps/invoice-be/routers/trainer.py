@@ -601,14 +601,24 @@ def _invalidate_chat_answer_cache(tenant_id: str) -> None:
     try:
         import redis
         r = redis.Redis.from_url(get_settings().REDIS_URL, decode_responses=True)
+        # Merge of BE Gap 577 (ours) and BE Gap 604 (theirs). Both belong: the
+        # version bump is what actually retires the entries, and the scan replaces a
+        # blocking KEYS that stalled Redis for every tenant while it ran. The delete
+        # loop stays because entries written before the version existed still have to
+        # age out of memory.
         try:
             from services.chat_cache import bump_tenant_data_version
             bump_tenant_data_version(tenant_id, client=r)
         except Exception:
             pass
-        keys = r.keys(f"chat_answer_cache:{tenant_id}:*")
-        if keys:
-            r.delete(*keys)
+        batch = []
+        for key in r.scan_iter(match=f"chat_answer_cache:{tenant_id}:*", count=100):
+            batch.append(key)
+            if len(batch) >= 100:
+                r.delete(*batch)
+                batch.clear()
+        if batch:
+            r.delete(*batch)
     except Exception as e:
         logger.warning("Failed to invalidate chat answer cache for tenant %s: %s", tenant_id, e)
 

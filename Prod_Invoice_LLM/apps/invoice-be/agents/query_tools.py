@@ -96,6 +96,38 @@ def parse_results_table(markdown: str) -> Optional[tuple[list[str], list[list[st
     lines = [line for line in markdown.strip().splitlines() if line.strip()]
     if len(lines) < 3:
         return None
+
+    # Merge fix, 2026-09-16 (BE Gap 581 x this parser). Gap 581 made the zero-row
+    # category recovery prepend a one-line relaxation note to the table it returns,
+    # and that note became `db_result`. This function read `lines[0]` as the header,
+    # so it saw the note, failed the separator check and returned None -- which
+    # silently emptied the computed-figures block (`query_agent.py`'s only source of
+    # pre-computed figures) on exactly the turns the recovery had just rescued.
+    # Their own test caught it: `test_the_recovered_table_is_totalled_by_the_
+    # computed_figures_block`.
+    #
+    # So the header is located rather than assumed: the first line followed by a
+    # valid separator row. Strictness below is unchanged -- a row whose width does
+    # not match still voids the whole table, because a total computed from most of
+    # the rows is a wrong number that looks like a right one.
+    start = None
+    for index in range(len(lines) - 1):
+        candidate = [c.strip() for c in lines[index].split(" | ")]
+        following = [c.strip() for c in lines[index + 1].split(" | ")]
+        if (
+            candidate
+            and following
+            and len(candidate) == len(following)
+            and all(cell and not (set(cell) - {"-"}) for cell in following)
+        ):
+            start = index
+            break
+    if start is None:
+        return None
+    lines = lines[start:]
+    if len(lines) < 3:
+        return None
+
     columns = [c.strip() for c in lines[0].split(" | ")]
     separator = [c.strip() for c in lines[1].split(" | ")]
     if not columns or any(set(cell) - {"-"} for cell in separator) or not separator:

@@ -57,6 +57,24 @@ class ChatSessionLockedError(Exception):
         self.message = message
 
 
+class ChatQueueUnavailableError(Exception):
+    """BE Gap 601: Redis is unconfigured or unreachable and queueing cannot proceed.
+
+    **Defined but not raised on this branch, deliberately.** `fix/chat-backend-21-gaps`
+    answered Gap 601 by refusing every chat turn while Redis is down; this branch
+    answers it in `enqueue_chat_job()` by counting active `queued`/`processing`
+    turns in Postgres and enforcing `PER_TENANT_MAX_ACTIVE_CHAT` from there. Both
+    fail closed on the ceiling -- the difference is availability: a Redis outage
+    degrades chat here rather than stopping it, and the Gap 605 lease and
+    self-healing logic that lives in the same block has nowhere to go under the
+    other shape.
+
+    Kept because `routers/chat.py` imports and handles it, so the 503 path exists
+    the moment anyone decides the stricter reading is the right one. That is a
+    founder call, not a merge call -- flagged at merge time rather than settled here.
+    """
+
+
 class ChatQueueCapacityError(Exception):
     """Gap 364: the tenant already has `PER_TENANT_MAX_ACTIVE_CHAT` chat jobs
     in flight, so this turn was not enqueued and no slot is held for it.

@@ -82,6 +82,11 @@ else:
 client = TestClient(app)
 
 WIDGET_URL = "/api/v1/widget/chat/message"
+# BE Gap 571 (CH-4 + CH-42), founder ruling 2026-09-16: a widget token is refused
+# at issue time unless at least one origin is registered, and an empty allowlist now
+# denies instead of allowing. Both mean every token in these tests needs an origin,
+# and every widget request needs to send it.
+WIDGET_ORIGIN = "https://acme.com"
 TOKENS_URL = "/api/v1/settings/security/widget-tokens"
 
 
@@ -183,7 +188,7 @@ class TestPrefixDispatch:
         from fastapi import HTTPException
 
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         with pytest.raises(HTTPException) as exc:
             resolve_api_key_context(raw, db_session)
@@ -263,7 +268,7 @@ class TestStructuralContainment:
     def test_widget_token_cannot_reach_the_chat_router(self, db_session: Session):
         """The routes it must NOT reach, checked over real HTTP."""
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         for method, url in (
             ("get", "/api/v1/chat/sessions"),
@@ -271,7 +276,7 @@ class TestStructuralContainment:
             ("get", "/api/v1/invoices"),
             ("get", "/api/v1/settings/security/api-key/verify"),
         ):
-            response = getattr(client, method)(url, headers={"X-API-Key": raw})
+            response = getattr(client, method)(url, headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN})
             assert response.status_code == 401, f"{url} accepted a widget token"
 
 
@@ -282,7 +287,7 @@ class TestStructuralContainment:
 class TestStorage:
     def test_raw_token_is_never_persisted(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        token, raw = issue_widget_token(db_session, tenant.id)
+        token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         assert token.token_hash != raw
         assert token.token_salt != raw
@@ -293,8 +298,8 @@ class TestStorage:
     def test_two_tokens_for_one_tenant(self, db_session: Session):
         """The reason this is its own table: one-key-per-tenant is wrong here."""
         tenant = _seed_tenant(db_session)
-        _a, raw_a = issue_widget_token(db_session, tenant.id, label="Marketing site")
-        _b, raw_b = issue_widget_token(db_session, tenant.id, label="Docs site")
+        _a, raw_a = issue_widget_token(db_session, tenant.id, label="Marketing site", allowed_origins=[WIDGET_ORIGIN])
+        _b, raw_b = issue_widget_token(db_session, tenant.id, label="Docs site", allowed_origins=[WIDGET_ORIGIN])
 
         assert raw_a != raw_b
         assert resolve_widget_token(db_session, raw_a) is not None
@@ -311,7 +316,7 @@ class TestStorage:
         db_session.add(tenant)
         db_session.commit()
 
-        issue_widget_token(db_session, tenant.id)
+        issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         db_session.refresh(tenant)
         assert tenant.api_key_hash == "preexisting-digest"
         assert tenant.api_key_salt == "preexisting-salt"
@@ -319,7 +324,7 @@ class TestStorage:
 
     def test_revocation_is_immediate(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        token, raw = issue_widget_token(db_session, tenant.id)
+        token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         assert resolve_widget_token(db_session, raw) is not None
 
         revoke_widget_token(db_session, tenant.id, token.id)
@@ -327,7 +332,7 @@ class TestStorage:
 
     def test_revoked_row_is_kept_not_deleted(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        token, _raw = issue_widget_token(db_session, tenant.id)
+        token, _raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         revoke_widget_token(db_session, tenant.id, token.id)
 
         row = db_session.exec(
@@ -339,14 +344,14 @@ class TestStorage:
     def test_cannot_revoke_another_tenants_token(self, db_session: Session):
         mine = _seed_tenant(db_session)
         theirs = _seed_tenant(db_session, tenant_id=uuid4())
-        token, raw = issue_widget_token(db_session, theirs.id)
+        token, raw = issue_widget_token(db_session, theirs.id, allowed_origins=[WIDGET_ORIGIN])
 
         assert revoke_widget_token(db_session, mine.id, token.id) is None
         assert resolve_widget_token(db_session, raw) is not None
 
     def test_wrong_and_unknown_tokens_are_the_same_answer(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        issue_widget_token(db_session, tenant.id)
+        issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         assert resolve_widget_token(db_session, generate_widget_token()) is None
         assert resolve_widget_token(db_session, "") is None
@@ -354,7 +359,7 @@ class TestStorage:
 
     def test_last_used_at_is_stamped(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        token, raw = issue_widget_token(db_session, tenant.id)
+        token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         assert token.last_used_at is None
         resolved = resolve_widget_token(db_session, raw)
         assert resolved.last_used_at is not None
@@ -381,13 +386,26 @@ class TestOriginPinning:
     def test_origin_normalisation(self, raw, expected):
         assert normalize_origin(raw) == expected
 
-    def test_empty_allowlist_disables_the_layer(self, db_session: Session):
-        """Deliberate opt-in, not default-deny: an empty list denying everything
-        would make every freshly issued token dead on arrival."""
+    def test_an_empty_allowlist_denies_and_cannot_be_created(self, db_session: Session):
+        """BE Gap 571 inverts what this used to assert.
+
+        It used to pin "deliberate opt-in, not default-deny", reasoned from the
+        failure that avoided: default-deny would make a freshly issued token dead on
+        arrival. That objection is answered rather than overruled -- issuing now
+        refuses a token with no origin, so an empty allowlist means something went
+        wrong rather than "not configured yet", and it fails closed.
+        """
+        import pytest as _pytest
+
         tenant = _seed_tenant(db_session)
-        token, _raw = issue_widget_token(db_session, tenant.id, allowed_origins=[])
-        assert origin_is_allowed(token, "https://anywhere.example") is True
-        assert origin_is_allowed(token, None) is True
+        with _pytest.raises(ValueError):
+            issue_widget_token(db_session, tenant.id, allowed_origins=[])
+
+        # A row that predates the guard still fails closed when it is read.
+        token, _raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
+        token.allowed_origins = []
+        assert origin_is_allowed(token, "https://anywhere.example") is False
+        assert origin_is_allowed(token, None) is False
 
     def test_registered_origin_matches_case_insensitively(self, db_session: Session):
         tenant = _seed_tenant(db_session)
@@ -500,7 +518,7 @@ class TestWidgetCORS:
         }
 
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         with patch("routers.chat.run_query_agent", side_effect=_fake_agent):
             actual = client.post(
                 WIDGET_URL,
@@ -522,7 +540,7 @@ class TestWidgetCORS:
         """Two `Access-Control-Allow-Origin` values is a protocol error every
         browser rejects, so the header is set rather than appended."""
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         with patch("routers.chat.run_query_agent", side_effect=_fake_agent):
             response = client.post(
                 WIDGET_URL,
@@ -556,17 +574,17 @@ class TestWidgetChat:
         db_session.commit()
 
         response = client.post(
-            WIDGET_URL, headers={"X-API-Key": raw}, json={"content": "hi"}
+            WIDGET_URL, headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN}, json={"content": "hi"}
         )
         assert response.status_code == 401
 
     def test_first_message_creates_a_labelled_session(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         with patch("routers.chat.run_query_agent", side_effect=_fake_agent):
             response = client.post(
-                WIDGET_URL, headers={"X-API-Key": raw}, json={"content": "spend?"}
+                WIDGET_URL, headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN}, json={"content": "spend?"}
             )
         assert response.status_code == 200
         body = response.json()
@@ -579,15 +597,15 @@ class TestWidgetChat:
 
     def test_follow_up_reuses_the_session(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         with patch("routers.chat.run_query_agent", side_effect=_fake_agent):
             first = client.post(
-                WIDGET_URL, headers={"X-API-Key": raw}, json={"content": "one"}
+                WIDGET_URL, headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN}, json={"content": "one"}
             ).json()
             second = client.post(
                 WIDGET_URL,
-                headers={"X-API-Key": raw},
+                headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN},
                 json={"content": "two", "session_id": first["session_id"]},
             ).json()
 
@@ -606,20 +624,20 @@ class TestWidgetChat:
         db_session.add(their_session)
         db_session.commit()
 
-        _token, raw = issue_widget_token(db_session, mine.id)
+        _token, raw = issue_widget_token(db_session, mine.id, allowed_origins=[WIDGET_ORIGIN])
         response = client.post(
             WIDGET_URL,
-            headers={"X-API-Key": raw},
+            headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN},
             json={"content": "hi", "session_id": str(their_session.id)},
         )
         assert response.status_code == 403
 
     def test_unknown_session_is_404(self, db_session: Session):
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
         response = client.post(
             WIDGET_URL,
-            headers={"X-API-Key": raw},
+            headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN},
             json={"content": "hi", "session_id": str(uuid4())},
         )
         assert response.status_code == 404
@@ -629,14 +647,14 @@ class TestWidgetChat:
     ):
         """Not a second answer path: same judge, same telemetry, same fallback."""
         tenant = _seed_tenant(db_session)
-        _token, raw = issue_widget_token(db_session, tenant.id)
+        _token, raw = issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         with patch("routers.chat.run_sync_chat_turn") as mocked:
             mocked.return_value = ChatMessage(
                 id=uuid4(), session_id=uuid4(), role="assistant", content="stub"
             )
             response = client.post(
-                WIDGET_URL, headers={"X-API-Key": raw}, json={"content": "hi"}
+                WIDGET_URL, headers={"X-API-Key": raw, "Origin": WIDGET_ORIGIN}, json={"content": "hi"}
             )
         assert response.status_code == 200
         assert mocked.call_count == 1
@@ -686,7 +704,7 @@ class TestAdminManagement:
     def test_per_tenant_cap(self, db_session: Session):
         tenant = _seed_tenant(db_session)
         for _ in range(MAX_TOKENS_PER_TENANT):
-            issue_widget_token(db_session, tenant.id)
+            issue_widget_token(db_session, tenant.id, allowed_origins=[WIDGET_ORIGIN])
 
         response = client.post(TOKENS_URL, json={})
         assert response.status_code == 409
@@ -741,7 +759,7 @@ def test_widget_token_is_tenant_isolated_on_postgres():
             token_a, raw_a = issue_widget_token(
                 session, tenant_a.id, allowed_origins=["https://a.example"]
             )
-            token_b, raw_b = issue_widget_token(session, tenant_b.id)
+            token_b, raw_b = issue_widget_token(session, tenant_b.id, allowed_origins=[WIDGET_ORIGIN])
             created = [token_a.id, token_b.id]
 
             # Real FK + real JSONB round-trip.

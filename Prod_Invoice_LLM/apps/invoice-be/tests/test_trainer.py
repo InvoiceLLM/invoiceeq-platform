@@ -421,7 +421,13 @@ def answer_cache_fixture():
     Patching `redis.Redis.from_url` makes the key scan + delete observable.
     """
     fake = MagicMock()
-    fake.keys.return_value = [_CACHED_ANSWER_KEY]
+    # BE Gap 604 replaced the blocking `KEYS` with a cursor scan, so the stub has to
+    # answer `scan_iter` now. `keys` is left returning nothing so a regression back
+    # to the blocking call cannot quietly keep this test passing.
+    fake.keys.return_value = []
+    # A fresh iterator per call: one MagicMock return_value is a single iterator,
+    # and the second invalidation in a test would find it already exhausted.
+    fake.scan_iter.side_effect = lambda *a, **k: iter([_CACHED_ANSWER_KEY])
     with patch("redis.Redis.from_url", return_value=fake):
         yield fake
 
@@ -429,8 +435,16 @@ def answer_cache_fixture():
 def _assert_answer_cache_flushed(fake):
     # Key pattern is tenant-scoped with no vendor dimension (agents/query_agent.py
     # `_cache_key()`), which is why a vendor-scoped rule change must flush it too.
-    fake.keys.assert_called_once_with(f"chat_answer_cache:{MOCK_TENANT_ID}:*")
-    fake.delete.assert_called_once_with(_CACHED_ANSWER_KEY)
+    #
+    # BE Gap 604: scanned, not `KEYS` -- the blocking call stalled Redis for every
+    # tenant while it ran. BE Gap 577: the tenant data version is bumped as well,
+    # which is what actually retires the entries; the delete only reclaims memory.
+    fake.scan_iter.assert_called_with(
+        match=f"chat_answer_cache:{MOCK_TENANT_ID}:*", count=100
+    )
+    fake.keys.assert_not_called()
+    fake.delete.assert_called_with(_CACHED_ANSWER_KEY)
+    fake.incr.assert_any_call(f"chat_data_version:{MOCK_TENANT_ID}")
 
 
 def _start_session(scope: str, db_session) -> str:
