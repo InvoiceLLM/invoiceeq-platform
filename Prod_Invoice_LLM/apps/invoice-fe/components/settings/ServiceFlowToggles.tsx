@@ -274,7 +274,10 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
       <div className="space-y-3">
         {/* Non-Admin read-only banner */}
         {!isAdmin && (
-          <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300">
+          <div
+            data-testid="service-flow-readonly-banner"
+            className="flex items-center gap-2.5 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300"
+          >
             <Lock className="w-4 h-4 shrink-0" />
             These settings are read-only for your role. Contact an Admin to make changes.
           </div>
@@ -316,10 +319,16 @@ export default function ServiceFlowToggles({ role }: { role: string }) {
           {/* Email Setup tile */}
           <div className="flex flex-col justify-between px-5 py-4 rounded-xl bg-[#111827] border border-[#1E293B]">
             <div className="flex items-start justify-between gap-2">
-              <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+              <div
+                data-testid="service-flow-email-icon"
+                className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0"
+              >
                 <Mail className="w-4 h-4 text-amber-400" />
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono font-bold">
+              <span
+                data-testid="service-flow-sets-badge"
+                className="sets-badge text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono font-bold"
+              >
                 SETS
               </span>
             </div>

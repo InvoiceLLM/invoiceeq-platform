@@ -107,6 +107,18 @@ body {
   min-height: 100vh;
 }
 
+/* Scrollbar Gutter Lock — Zero layout shift on scrollbar spawn/despawn */
+html, body, main {
+  scrollbar-gutter: stable;
+}
+
+/* Instantaneous Theme Transition Suppressor — Prevents animation drag on toggle */
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
 /* Reusable Enterprise Typography Classes */
 .page-title {
   font-family: var(--font-enterprise);
@@ -397,7 +409,7 @@ td, .table-cell {
 [data-theme="infinevo"] aside a[class*="border-l-2"] {
   background-color: #0F6FC6 !important;
   color: #FFFFFF !important;
-  border-left: 4px solid #009DD9 !important;
+  border-left: 2px solid #009DD9 !important;
   border-top-left-radius: 0 !important;
   border-bottom-left-radius: 0 !important;
   box-shadow: 0 4px 14px rgba(15, 111, 198, 0.35) !important;
@@ -1237,7 +1249,7 @@ td, .table-cell {
 [data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-reason-"] {
   background: #FFFFFF !important;
   background-color: #FFFFFF !important;
-  border: 1.5px solid #D6E4F0 !important;
+  border: 1px solid #D6E4F0 !important;
   border-radius: 12px !important;
   box-shadow: 0 2px 8px rgba(15, 30, 60, 0.04) !important;
   transition: all 0.15s ease-in-out !important;
@@ -1279,7 +1291,7 @@ td, .table-cell {
 [data-theme="infinevo"] [data-testid="thumbs-down-triage"] button[data-testid^="triage-scope-"] {
   background: #FFFFFF !important;
   background-color: #FFFFFF !important;
-  border: 1.5px solid #D6E4F0 !important;
+  border: 1px solid #D6E4F0 !important;
   border-radius: 12px !important;
   box-shadow: 0 2px 8px rgba(15, 30, 60, 0.04) !important;
   transition: all 0.15s ease-in-out !important;
@@ -1399,7 +1411,7 @@ td, .table-cell {
 [data-theme="infinevo"] main .select-all {
   background: #FFFFFF !important;
   background-color: #FFFFFF !important;
-  border: 1.5px solid #D6E4F0 !important;
+  border: 1px solid #D6E4F0 !important;
   box-shadow: 0 2px 6px rgba(15, 40, 71, 0.04) !important;
 }
 
@@ -1426,7 +1438,7 @@ td, .table-cell {
 [data-theme="infinevo"] main [class*="bg-[#0F141F]"] {
   background: #FFFFFF !important;
   background-color: #FFFFFF !important;
-  border: 1.5px solid #D6E4F0 !important;
+  border: 1px solid #D6E4F0 !important;
   border-radius: 12px !important;
   box-shadow: 0 2px 8px rgba(15, 40, 71, 0.04) !important;
   transition: all 0.15s ease-in-out !important;
@@ -3107,8 +3119,9 @@ td, .table-cell {
 }
 
 /* 20.5 Settings Subpages Notice Banners */
-/* Service Flow Toggles read-only banner */
-[data-theme="infinevo"] [class*="bg-amber-500/10"][class*="border-amber-500/20"] {
+/* Service Flow Toggles read-only banner - strictly scoped to the banner div */
+[data-theme="infinevo"] [data-testid="service-flow-readonly-banner"],
+[data-theme="infinevo"] div.rounded-xl[class*="bg-amber-500/10"][class*="border-amber-500/20"] {
   background: linear-gradient(135deg, #FFF8EE 0%, #FEEFDB 100%) !important;
   border: 1px solid #FCD39D !important;
   border-left: 4px solid #F49100 !important;
@@ -3117,8 +3130,44 @@ td, .table-cell {
   font-weight: 500 !important;
 }
 
-[data-theme="infinevo"] [class*="bg-amber-500/10"][class*="border-amber-500/20"] svg {
+[data-theme="infinevo"] [data-testid="service-flow-readonly-banner"] svg,
+[data-theme="infinevo"] div.rounded-xl[class*="bg-amber-500/10"][class*="border-amber-500/20"] svg {
   color: #F49100 !important;
+}
+
+/* Service Flow Toggles Email Tile - Mail Icon Box (Clean Symmetrical 1px Border) */
+[data-theme="infinevo"] [data-testid="service-flow-email-icon"],
+[data-theme="infinevo"] div.w-9.h-9[class*="bg-amber-500/10"] {
+  background: #FFF7ED !important;
+  border: 1px solid #FDBA74 !important;
+  border-left: 1px solid #FDBA74 !important;
+  border-radius: 8px !important;
+}
+[data-theme="infinevo"] [data-testid="service-flow-email-icon"] svg,
+[data-theme="infinevo"] div.w-9.h-9[class*="bg-amber-500/10"] svg {
+  color: #EA580C !important;
+}
+
+/* Service Flow Toggles Email Tile - SETS Badge (High-Contrast Symmetrical Pill, No Left Bar) */
+[data-theme="infinevo"] [data-testid="service-flow-sets-badge"],
+[data-theme="infinevo"] span.sets-badge,
+[data-theme="infinevo"] span[class*="bg-amber-500/10"][class*="border-amber-500/20"] {
+  background: #FEF3C7 !important;
+  background-color: #FEF3C7 !important;
+  border: 1px solid #F59E0B !important;
+  border-left: 1px solid #F59E0B !important;
+  border-radius: 6px !important;
+  color: #92400E !important;
+  font-weight: 800 !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 10px !important;
+  line-height: 1 !important;
+  padding: 3px 6px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  letter-spacing: 0.05em !important;
+  box-shadow: 0 1px 2px rgba(245, 158, 11, 0.12) !important;
 }
 
 /* Widget Token one-time reveal callout */
@@ -4480,3 +4529,270 @@ td, .table-cell {
 [data-theme="infinevo"] div[class*="glass-panel"] div[class*="flex-wrap"] > div[class*="bg-[#1E293B]"] button:hover {
   color: #0F172A !important;
 }
+
+/* ==========================================================================
+   SECTION 22: Dedicated Admin Console (/admin) InfiNevo Theme Fixes
+   ========================================================================== */
+
+/* Dark theme fallbacks / defaults */
+:root {
+  --admin-bg: #0B0F19;
+  --admin-panel: rgba(21, 27, 38, 0.75);
+  --admin-border: #222D3D;
+  --admin-text-primary: #E2E8F0;
+  --admin-text-muted: #94A3B8;
+  --admin-text-dim: #64748B;
+  --admin-green: #10B981;
+  --admin-blue: #3B82F6;
+  --admin-red: #EF4444;
+  --admin-yellow: #F59E0B;
+  --admin-card-shadow: none;
+  --admin-org-bg: linear-gradient(135deg, rgba(16,185,129,0.07) 0%, rgba(59,130,246,0.07) 100%);
+  --admin-stat-label: #64748B;
+  --admin-th-bg: transparent;
+  --admin-th-color: #64748B;
+  --admin-input-bg: rgba(15,20,30,0.6);
+  --admin-modal-bg: #141926;
+  --admin-modal-shadow: 0 24px 64px rgba(0,0,0,0.5);
+  --admin-banner-bg: rgba(59,130,246,0.06);
+  --admin-banner-border: rgba(59,130,246,0.15);
+  --admin-banner-text: #94A3B8;
+}
+
+/* InfiNevo Theme High-Contrast Overrides */
+[data-theme="infinevo"] {
+  --admin-bg: #F0F6FA;
+  --admin-panel: #FFFFFF;
+  --admin-border: #D6E4F0;
+  --admin-text-primary: #0F2847;
+  --admin-text-muted: #334155;
+  --admin-text-dim: #64748B;
+  --admin-green: #059669;
+  --admin-blue: #0F6FC6;
+  --admin-red: #DC2626;
+  --admin-yellow: #D97706;
+  --admin-card-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.03);
+  --admin-org-bg: linear-gradient(135deg, #FFFFFF 0%, #F0F7FF 100%);
+  --admin-stat-label: #475569;
+  --admin-th-bg: #F8FAFD;
+  --admin-th-color: #475569;
+  --admin-input-bg: #F8FAFD;
+  --admin-modal-bg: #FFFFFF;
+  --admin-modal-shadow: 0 24px 64px rgba(15, 40, 71, 0.18);
+  --admin-banner-bg: linear-gradient(135deg, #EBF5FC 0%, #DDF0FC 100%);
+  --admin-banner-border: #A4D2F2;
+  --admin-banner-text: #17406D;
+}
+
+/* 22.1 Org Info Card */
+[data-theme="infinevo"] .admin-org-card {
+  background: linear-gradient(135deg, #FFFFFF 0%, #F0F7FF 100%) !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="infinevo"] .admin-org-card .admin-org-name {
+  color: #0F2847 !important;
+  font-weight: 800 !important;
+}
+
+[data-theme="infinevo"] .admin-org-card .admin-org-type {
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] .admin-org-card .admin-meta-label {
+  color: #64748B !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-org-card .admin-meta-val {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] .admin-org-card .admin-active-pill {
+  background: #ECFDF5 !important;
+  border: 1px solid #A7F3D0 !important;
+  color: #047857 !important;
+  font-weight: 700 !important;
+}
+
+/* 22.2 Stat Cards */
+[data-theme="infinevo"] .admin-stat-card {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="infinevo"] .admin-stat-card .admin-stat-label {
+  color: #475569 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-stat-card .admin-stat-sub {
+  color: #64748B !important;
+}
+
+/* 22.3 Users Table & Dropped Emails Table */
+[data-theme="infinevo"] .admin-table-card {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 111, 198, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.03) !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-table-title {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-table-sub {
+  color: #475569 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-table-header-row {
+  background: #F8FAFD !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+  color: #475569 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-table-row {
+  border-bottom: 1px solid #E2ECF5 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-table-row:hover {
+  background: #F8FAFD !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-user-name {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-user-sub {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-user-email {
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-role-badge {
+  background: #EBF5FC !important;
+  border: 1px solid #BAE6FD !important;
+  color: #0284C7 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-status-active {
+  background: #ECFDF5 !important;
+  border: 1px solid #A7F3D0 !important;
+  color: #047857 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-status-invited {
+  background: #FFF7ED !important;
+  border: 1px solid #FDBA74 !important;
+  color: #C2410C !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card .admin-perm-label {
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card button[aria-label*="Remove"] {
+  background: #FEF2F2 !important;
+  border: 1px solid #FECDD3 !important;
+  color: #DC2626 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] .admin-table-card button[aria-label*="Remove"]:hover {
+  background: #FEE2E2 !important;
+  border-color: #FCA5A5 !important;
+  color: #B91C1C !important;
+}
+
+/* 22.4 Dropped Inbound Emails Refresh Button & Badges */
+[data-theme="infinevo"] #btn-refresh-dropped-emails {
+  background: #FFFFFF !important;
+  border: 1px solid #CBDCEB !important;
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] #btn-refresh-dropped-emails:hover {
+  background: #F0F7FD !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] .admin-drop-reason-badge {
+  background: #FFF7ED !important;
+  border: 1px solid #FDBA74 !important;
+  color: #C2410C !important;
+  font-weight: 700 !important;
+}
+
+/* 22.5 Info Banner */
+[data-theme="infinevo"] .admin-info-banner {
+  background: linear-gradient(135deg, #EBF5FC 0%, #DDF0FC 100%) !important;
+  border: 1px solid #A4D2F2 !important;
+  color: #17406D !important;
+}
+
+[data-theme="infinevo"] .admin-info-banner strong {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] .admin-info-banner a {
+  color: #0F6FC6 !important;
+  font-weight: 700 !important;
+}
+
+/* 22.6 Create User Modal */
+[data-theme="infinevo"] .admin-modal-box {
+  background: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  box-shadow: 0 24px 64px rgba(15, 40, 71, 0.18) !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box h3 {
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box button[onClick] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box .admin-form-label {
+  color: #475569 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box input {
+  background: #F8FAFD !important;
+  border: 1px solid #CBDCEB !important;
+  color: #0F2847 !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box input:focus {
+  border-color: #0F6FC6 !important;
+  box-shadow: 0 0 0 2px rgba(15, 111, 198, 0.15) !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box .admin-perm-box {
+  background: #F8FAFD !important;
+  border: 1px solid #E2ECF5 !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box .admin-perm-box label {
+  color: #334155 !important;
+}
+
+[data-theme="infinevo"] .admin-modal-box button[type="button"] {
+  border: 1px solid #CBDCEB !important;
+  color: #475569 !important;
+  background: #FFFFFF !important;
+}
+

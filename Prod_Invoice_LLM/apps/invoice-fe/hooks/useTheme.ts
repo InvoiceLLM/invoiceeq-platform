@@ -16,11 +16,21 @@ export function useTheme() {
     setTheme(savedTheme);
     document.documentElement.setAttribute("data-theme", savedTheme);
 
+    const applyThemeWithSuppressedTransitions = (mode: ThemeMode) => {
+      document.documentElement.classList.add("theme-switching");
+      document.documentElement.setAttribute("data-theme", mode);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          document.documentElement.classList.remove("theme-switching");
+        });
+      });
+    };
+
     const handleThemeChange = (e: Event) => {
       const customEvent = e as CustomEvent<ThemeMode>;
       if (customEvent.detail) {
         setTheme(customEvent.detail);
-        document.documentElement.setAttribute("data-theme", customEvent.detail);
+        applyThemeWithSuppressedTransitions(customEvent.detail);
       }
     };
 
@@ -30,18 +40,28 @@ export function useTheme() {
     };
   }, []);
 
+  const applyThemeWithSuppressedTransitions = (mode: ThemeMode) => {
+    document.documentElement.classList.add("theme-switching");
+    document.documentElement.setAttribute("data-theme", mode);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.documentElement.classList.remove("theme-switching");
+      });
+    });
+  };
+
   const toggleTheme = () => {
     const nextTheme: ThemeMode = theme === "default" ? "infinevo" : "default";
     setTheme(nextTheme);
     window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
-    document.documentElement.setAttribute("data-theme", nextTheme);
+    applyThemeWithSuppressedTransitions(nextTheme);
     window.dispatchEvent(new CustomEvent("theme-change", { detail: nextTheme }));
   };
 
   const setThemeMode = (mode: ThemeMode) => {
     setTheme(mode);
     window.localStorage.setItem(THEME_STORAGE_KEY, mode);
-    document.documentElement.setAttribute("data-theme", mode);
+    applyThemeWithSuppressedTransitions(mode);
     window.dispatchEvent(new CustomEvent("theme-change", { detail: mode }));
   };
 
