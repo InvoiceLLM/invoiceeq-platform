@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     # 120 s was inside the measured p95 (89 s) and reported live turns as failures.
     # Ending the stream never means the turn failed; see `_still_running_event`.
     CHAT_STREAM_MAX_SECONDS: int = 0
+    # BE Gap 574: seconds for the chat SQL `statement_timeout`. 0 = no timeout, and
+    # that is the shipped default deliberately. The founder ruling of 2026-09-16 is
+    # to measure p50/p95/p99 for `sql.execute` first and set this to p99 + margin --
+    # "No timeout value is to be committed before that measurement." A hardcoded 30s
+    # was removed on review: the recorded p95 is 89,209 ms, so it would have aborted
+    # ordinary queries, and no test could catch it (tests run on SQLite). Set this
+    # together with CHAT_STREAM_MAX_SECONDS above, and keep it the SHORTER of the
+    # two so the database always fails before the stream does.
+    CHAT_SQL_STATEMENT_TIMEOUT_SECONDS: int = 0
     # BE Gap 607 (CH-41): the chat rate limiter, off by default. The founder ruling of
     # 2026-09-16 is "rate limit now, quota later", with the limiter shipped behind a
     # flag "defaulted off so it can be tuned on Dev before it can refuse a real

@@ -2499,10 +2499,29 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     # describe. Check 4 binds rows to this tenant; this binds the query to the invoice table.
     assert_reads_only_allowed_tables(sql_clean, _sql_dialect_name(db_session), tenant_id=tenant_id)
 
-    # Gap 574: Local statement timeout to bound runaway statements on Postgres
-    if _sql_dialect_name(db_session) == "postgresql":
+    # Gap 574: a statement timeout bounds a runaway query on Postgres -- but the
+    # NUMBER is not set here, and that is the whole point.
+    #
+    # This shipped as a hardcoded `'30s'` on `fix/chat-backend-21-gaps` and was
+    # removed on 2026-09-16 review. Founder ruling 2026-09-16 on BE Gap 574: "Pull
+    # p50/p95/p99 for `sql.execute` from `customEvents` over 30 days first, then set
+    # `statement_timeout = p99 + margin` ... No timeout value is to be committed
+    # before that measurement." The audit's own evidence records **p95 SQL latency at
+    # 89,209 ms**, so 30s sat far below the middle of the normal distribution and
+    # would have aborted ordinary customer queries -- invisibly to CI, because the
+    # tests run on SQLite and never reach this branch.
+    #
+    # The mechanism stays wired so setting the measured value is a config change,
+    # not a code change. `0` means no timeout, which is the behaviour that was live
+    # before either branch. The invariant to preserve when it IS set (BE Gap 603):
+    # the database must give up BEFORE the SSE stream does, so the user gets a real
+    # error instead of a phantom timeout over a job that is still running.
+    from config import get_settings as _settings_for_timeout
+
+    _statement_timeout = int(getattr(_settings_for_timeout(), "CHAT_SQL_STATEMENT_TIMEOUT_SECONDS", 0) or 0)
+    if _statement_timeout > 0 and _sql_dialect_name(db_session) == "postgresql":
         try:
-            db_session.execute(text("SET LOCAL statement_timeout = '30s'"))
+            db_session.execute(text(f"SET LOCAL statement_timeout = '{_statement_timeout}s'"))
         except Exception as _timeout_err:
             logger.warning("Could not set statement_timeout: %s", _timeout_err)
 
@@ -7506,16 +7525,28 @@ def _run_query_agent(
     # explicit id, a deictic reference, and a document actually in this session.
     # Anything less and an ordinary question would be silently re-routed.
     if not attachment_id and not attachment_ids and _ATTACHMENT_DEICTIC_PATTERN.search(user_message or ""):
-        # Gap 575: condition deictic document carry-forward so it does not re-attach
-        # when the immediately preceding assistant turn produced SQL/tabular ledger results.
-        prev_sql = get_prior_turn_sql(session_id, db_session)
-        if not prev_sql:
-            carried = session_attachments(session_id, _uuid_or_none(tenant_id) or tenant_id, db_session)
-            if carried:
-                attachment_id = str(carried[-1].id)
-                logger.info(
-                    "Carrying attachment %s forward for session %s (Gap 441)", attachment_id, session_id
-                )
+        # BE Gap 575 was WITHDRAWN on 2026-09-16 review and its gate removed here.
+        #
+        # The gap reported that a deictic word re-attaches an old document to an
+        # ordinary ledger question, on the evidence that `_ATTACHMENT_DEICTIC_PATTERN`
+        # "matches bare `this`, `that`, `these`, `those`". Checked against the pattern
+        # (see its definition): it does not. Every alternative requires a document
+        # noun -- "that document", "the attachment", "the po", "the quotation". None of
+        # the symptom's own examples ("what about that vendor?", "explain this total",
+        # "can you break this down?") match it at all, so the reported failure cannot
+        # occur and the entry was carried unverified from the findings file.
+        #
+        # The gate it added -- skip carry-forward whenever the previous turn produced
+        # SQL -- cost a real case to fix an imaginary one: ask "what does the PO say?"
+        # straight after a ledger query and the attachment the user is plainly
+        # referring to was no longer picked up, which is precisely what Gap 441 exists
+        # to do.
+        carried = session_attachments(session_id, _uuid_or_none(tenant_id) or tenant_id, db_session)
+        if carried:
+            attachment_id = str(carried[-1].id)
+            logger.info(
+                "Carrying attachment %s forward for session %s (Gap 441)", attachment_id, session_id
+            )
 
     if not attachment_id and attachment_ids:
         attachment_id = str(attachment_ids[0])
