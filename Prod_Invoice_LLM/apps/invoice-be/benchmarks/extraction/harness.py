@@ -48,9 +48,10 @@ from __future__ import annotations
 import copy
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from benchmarks.extraction.documents import CLEAN_DOCUMENTS, InvoiceSpec
+from benchmarks.extraction.generic_documents import CLEAN_GENERIC_DOCUMENTS
 from benchmarks.extraction.metrics import (
     CleanOutcome,
     alert_types,
@@ -62,6 +63,44 @@ from benchmarks.extraction.mutations import SeededCase, build_seeded_cases, ocr_
 
 MODE_VERIFY = "verify"
 MODE_LIVE = "live"
+
+
+@runtime_checkable
+class ExtractionSpec(Protocol):
+    """What the clean-set runner needs from a document fixture.
+
+    BE Gap 687: `run_clean_case` and `score_clean_run` were typed to
+    `InvoiceSpec` concretely, so the benchmark could only ever grade invoices --
+    ten document types classified, one with extraction ground truth.
+
+    Structural rather than a `Union[InvoiceSpec, DocumentSpec]` on purpose:
+    adding a third fixture family later needs no change here, only a type that
+    offers these members.
+
+    **How a spec reaches its own schema.** Not through `flow_direction` --
+    `"GENERIC"` is not a value a caller may pass, and
+    `resolve_direction_profile("GENERIC")` raises `UnknownFlowDirectionError`
+    deliberately. `DocumentSpec` is `"INBOUND"` like an inbound invoice, and the
+    generic schema is selected downstream by
+    `resolve_extraction_profile(flow_direction, doc_type)`. So the routing rides
+    on the optional `doc_type` below, which `run_clean_case` forwards into the
+    verification state. That is the whole of the "route scoring by spec type"
+    BE Gap 687 asked for: the routing already existed in the agent, and the
+    harness only had to stop dropping the one field that drives it.
+
+    `doc_type` is optional because `InvoiceSpec` has none -- `getattr(spec,
+    "doc_type", None)` yields `None` there, which reproduces the pre-Gap-687
+    state dict exactly.
+    """
+
+    doc_id: str
+    flow_direction: str
+
+    def render_ocr_text(self) -> str: ...
+
+    def ground_truth(self) -> dict[str, Any]: ...
+
+    def initial_extraction(self) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -86,14 +125,19 @@ def _verify_only(
     extracted: dict[str, Any],
     flow_direction: str,
     ocr_result: Optional[dict[str, Any]],
+    doc_type: Optional[str] = None,
 ) -> tuple[str, list[Any]]:
     """Call the real `verify_node` with a hand-supplied extraction.
 
-    The state dict is the real `ExtractionState` shape. `file_path` is
-    deliberately a name with no "audit" substring in it — `verify_node`'s
-    `legacy_audit_path_shim` short-circuits the entire check set on an inbound
-    path containing that word, which would silently turn every case into a
-    single bare-string alert.
+    The state dict is the real `ExtractionState` shape.
+
+    The `file_path` below used to matter for a second reason: `verify_node`
+    carried a `legacy_audit_path_shim` that short-circuited the entire check set
+    on an inbound path containing "audit", which would silently turn every case
+    into a single bare-string alert. **BE Gap 671 removed that shim** (it was a
+    test trigger live in production), so the name is now only cosmetic — kept
+    because the `.txt` suffix is what makes `run_extraction_agent` skip the PDF
+    fetch in live mode.
     """
     from agents.extraction_agent import verify_node
 
@@ -113,13 +157,24 @@ def _verify_only(
         "dynamic_qa_context": None,
         "flow_direction": flow_direction,
         "tenant_id": "",
+        # BE Gap 687: `verify_node` reads this to resolve the verification
+        # rubric (`resolve_verification_rubric(flow_direction, doc_type)`), which
+        # is what lets a non-invoice document be checked as itself rather than as
+        # an invoice that is missing a total. `None` for an `InvoiceSpec`, which
+        # reproduces the pre-Gap-687 state dict exactly.
+        "doc_type": doc_type,
     }
     result = verify_node(state)  # type: ignore[arg-type]
     return result.get("status", ""), list(result.get("alerts") or [])
 
 
 def _run_live(ocr_text: str, flow_direction: str, tenant_id: str) -> dict[str, Any]:
-    """The real end-to-end graph. `.txt` path so no PDF fetch is attempted."""
+    """The real end-to-end graph. `.txt` path so no PDF fetch is attempted.
+
+    No `doc_type` override: live mode lets the classifier node decide the type
+    from the document, which is the behaviour under test. Passing the spec's own
+    `doc_type` here would grade extraction while hiding a misclassification.
+    """
     from agents.extraction_agent import run_extraction_agent
 
     return run_extraction_agent(
@@ -137,7 +192,7 @@ def _run_live(ocr_text: str, flow_direction: str, tenant_id: str) -> dict[str, A
 # ---------------------------------------------------------------------------
 
 
-def run_clean_case(spec: InvoiceSpec, mode: str, tenant_id: str = "") -> CaseRun:
+def run_clean_case(spec: ExtractionSpec, mode: str, tenant_id: str = "") -> CaseRun:
     started = time.perf_counter()
     run = CaseRun(
         case_id=f"{spec.doc_id}__clean",
@@ -150,7 +205,11 @@ def run_clean_case(spec: InvoiceSpec, mode: str, tenant_id: str = "") -> CaseRun
         if mode == MODE_VERIFY:
             extracted = copy.deepcopy(spec.initial_extraction())
             status, alerts = _verify_only(
-                spec.render_ocr_text(), extracted, spec.flow_direction, None
+                spec.render_ocr_text(),
+                extracted,
+                spec.flow_direction,
+                None,
+                doc_type=getattr(spec, "doc_type", None),
             )
             run.status, run.alerts, run.extracted_data = status, alerts, extracted
         else:
@@ -165,7 +224,7 @@ def run_clean_case(spec: InvoiceSpec, mode: str, tenant_id: str = "") -> CaseRun
     return run
 
 
-def score_clean_run(spec: InvoiceSpec, run: CaseRun, mode: str) -> CleanOutcome:
+def score_clean_run(spec: ExtractionSpec, run: CaseRun, mode: str) -> CleanOutcome:
     """A clean document that raises any alert at all is a false positive.
 
     Field accuracy is only meaningful in live mode — in verify mode the
@@ -273,7 +332,10 @@ def run_benchmark(
 
     result = BenchmarkResult(mode=mode)
 
-    for spec in CLEAN_DOCUMENTS:
+    # BE Gap 687: invoices *and* the non-invoice specs. Both satisfy
+    # `ExtractionSpec`, and each carries the `flow_direction` that routes it to
+    # its own schema, so no branch is needed here.
+    for spec in tuple(CLEAN_DOCUMENTS) + tuple(CLEAN_GENERIC_DOCUMENTS):
         case_id = f"{spec.doc_id}__clean"
         if case_ids and case_id not in case_ids:
             continue

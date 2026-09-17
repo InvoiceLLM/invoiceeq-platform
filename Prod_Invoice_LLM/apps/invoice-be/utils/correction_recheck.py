@@ -25,7 +25,7 @@ from utils.rule_schema import apply_alert_overrides, tolerance_overrides
 from utils.verification_tools import verify_line_items_math, verify_totals_math
 
 #: The fields whose correction can change what the two arithmetic checks see.
-MONEY_FIELDS = ("items", "subtotal", "tax_amount", "grand_total", "discount_amount", "discount_percent")
+MONEY_FIELDS = ("items", "subtotal", "tax_amount", "grand_total", "discount_amount", "discount_percent", "freight_amount")
 
 
 def snapshot_money_fields(invoice: Any) -> dict:
@@ -68,6 +68,7 @@ def _math_alerts(values: dict, tolerances: dict, doc_type: str | None) -> list[d
         values["grand_total"],
         discount_amount=values["discount_amount"],
         discount_percent=values["discount_percent"],
+        freight_amount=values.get("freight_amount"),
         tolerances=tolerances,
     )
     if totals_alert:

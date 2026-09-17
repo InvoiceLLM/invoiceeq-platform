@@ -252,3 +252,81 @@ Until this landed, an invoice could leave the pipeline without ever reaching a t
   - Run `docker compose up -d` to spin up local Azurite (Storage Emulator)/Redis/Postgres/ChromaDB. Upload a mock PDF to the router and check that the Storage Queue worker receives it.
   - Run extraction on test PDFs and inspect generated database alerts.
 
+
+
+---
+
+## Build note — extraction production-readiness, 2026-09-17 (BE Gaps 671, 672, 674, 676, 682, 684)
+
+Six findings from the 2026-09-16 document-extraction audit landed against this pipeline. Recorded
+here because each changed behaviour this spec describes, and because three of them corrected a
+premise in the audit's own gap text.
+
+**BE Gap 671 — filename-keyword shims removed from the production path.** Two development
+triggers were live: `handlers.py` raised on any `file_path` containing `fail`, and `verify_node`
+short-circuited the entire check set on an inbound path containing `audit`, returning a fabricated
+`Math mismatch` without running verification. The second is the consequential one — it produced a
+*plausible wrong answer* on a financial record rather than an error. Both are deleted, and
+`legacy_audit_path_shim` is gone from `_DirectionProfile` entirely. Note this finished a migration
+that was already three-quarters done: `REFERENCE`, `GENERIC` and `OUTBOUND` had each set the flag
+`False` with the reasoning written in-line, and only `INBOUND` still carried it.
+
+**BE Gap 672 — OCR text is now fenced and guarded.** Extraction interpolated raw OCR straight into
+its prompts while the chat path had both a delimiter and an injection instruction. The guard is now
+defined **once**, in `utils/injection_guard.py`, and imported by both agents — lifted rather than
+copied, so the two cannot drift. Every OCR interpolation is wrapped in `<document_content>` tags,
+including the multimodal branch and the `dynamic_qa` pre-analysis prompt. `escape_document_tags`
+strips a forged closing tag case-insensitively, so the fence cannot be broken out of, and injection
+phrasing is logged and emitted as a security incident. **Why this is S0 rather than cosmetic:**
+printing a wrong number puts it *on the document*, where a reviewer comparing record to source sees
+a mismatch; injection makes the model report something the document does not say, so record and
+source agree with each other and both are wrong.
+
+**BE Gap 674 — `freight_amount` added to the schema, the models and the arithmetic.** The totals
+check reconciled `subtotal`, `tax`, `discount` and `round_off` only, so an invoice printing freight
+as its own total-block line raised a false `tax_mismatch` and lost straight-through processing.
+Freight now exists on all three extraction schemas, on `Invoice` and `Document`, and in
+`verify_totals_math`. **The guardrail is the part to preserve:** candidate totals are evaluated both
+with and without freight, so freight already billed inside the line-item subtotal does not convert
+one false alert into another. **Frequency remains unmeasured** — nobody has counted how many live
+invoices print freight outside the subtotal, and that count should precede any further work here.
+
+**BE Gap 676 — the verification retry now says what to re-read.** Both retry branches appended the
+same literal "correct these math/verification issues" block with no alert-type branching, so the
+model commonly returned identical numbers or invented a line item that made the arithmetic close —
+converting a caught error into an uncaught fabrication. One shared `build_extraction_retry_feedback()`
+now serves both branches, carries an explicit prohibition on inventing line items, and maps six
+alert types to targeted guidance. The `tax_mismatch` guidance names freight, so it does not send the
+model hunting an error that Gap 674 already explains.
+
+**BE Gap 682 — the complexity classifier no longer fires on everything.** `COMPLEX` gates
+`dynamic_qa_node`, a second full LLM reasoning call (measured in-code at 24-53 s across two calls).
+The trigger set was the *presence* of a Doc Intelligence field — and `Items` is present on every
+itemised invoice — plus bare `gst`/`vat`/`discount`, so it fired on essentially the whole
+population, which both doubled the cost of an ordinary invoice and left the signal carrying no
+information. Replaced with four deterministic signals (CONVENTIONS hard rule 3): DI `Items` array
+length, DI `TaxDetails` row count (a real multi-tax split, not the presence of tax), DI's own lowest
+field confidence, and retention/holdback/TDS/reverse-charge keywords — the one `dynamic_qa_node`
+question with no structured anchor to read instead. Thresholds are settings, not literals.
+**The COMPLEX rate had never been measured, so the classifier now logs the legacy verdict beside
+the new one on every call** (`complexity_legacy`, `complexity_changed`), making the before/after
+readable from App Insights without a corpus run. `USE_LEGACY_COMPLEXITY_CLASSIFIER` is the rollback.
+
+**BE Gap 684 — extraction records now carry provenance.** `model_deployment`, `prompt_version`,
+`schema_version` and `llm_duration_ms` are nullable columns on `Invoice` and `Document`.
+`prompt_version`/`schema_version` are per-direction values on `_DirectionProfile`, **not** a hash of
+the composed prompt: the composed prompt contains the OCR text, so a hash would be unique per
+document and could never answer which prompt version ran. The handler re-reads all four **after**
+the Stage-2 re-run, so for a trained tenant the stored provenance describes the pass actually
+persisted rather than the discarded first one — which matters while BE Gap 683 is open. Do not
+backfill: `NULL` honestly means "extracted before provenance existed", and a guessed value is worse.
+
+**Sequencing that mattered and should be preserved.** 684 landed before 672, 676 and 682 by design.
+All three change a prompt or the routing, and provenance is what makes a change scopeable
+afterwards — without it there is no way to tell which documents were extracted under which
+behaviour, so no prompt change can be evaluated or rolled back selectively.
+
+**Evidence caveat (hard rule 2).** Every suite behind these six ran on in-memory SQLite or as pure
+functions with a mocked LLM. The two migrations (`a1b2c3d4e684`, `b2c3d4e5f674`) exist as files and
+**have not been applied to any database**, so nothing yet exercises the real columns. No
+Postgres-backed verification of this pipeline is claimed.

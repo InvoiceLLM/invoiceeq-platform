@@ -184,6 +184,7 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 # no DB column even for inbound, it's verify_totals_math-only.
                 invoice.discount_percent = extracted_data.get("discount_percent")
                 invoice.discount_amount = extracted_data.get("discount_amount")
+                invoice.freight_amount = extracted_data.get("freight_amount")
                 invoice.coordinates = coordinates
                 invoice.field_confidence = field_confidence
                 invoice.source_document_json = source_document_json
@@ -223,6 +224,11 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 invoice.references = extracted_data.get("references", [])
                 invoice.addresses = extracted_data.get("addresses", [])
                 invoice.compliance_metadata = extracted_data.get("compliance_metadata", [])
+                # BE Gap 684: extraction provenance
+                invoice.model_deployment = agent_result.get("model_deployment")
+                invoice.prompt_version = agent_result.get("prompt_version")
+                invoice.schema_version = agent_result.get("schema_version")
+                invoice.llm_duration_ms = agent_result.get("llm_duration_ms")
 
                 session.add(invoice)
                 session.commit()

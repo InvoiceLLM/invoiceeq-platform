@@ -61,10 +61,10 @@ _DATE_FORMATS_RE = (
 
 _MONEY_FIELDS = frozenset(
     {"subtotal", "tax_amount", "grand_total", "round_off", "discount_amount",
-     "quantity", "unit_price", "amount"}
+     "quantity", "unit_price", "amount", "freight_amount"}
 )
-_DATE_FIELDS = frozenset({"invoice_date", "due_date"})
-_NAME_FIELDS = frozenset({"vendor_name", "customer_name"})
+_DATE_FIELDS = frozenset({"invoice_date", "due_date", "doc_date", "valid_until"})
+_NAME_FIELDS = frozenset({"vendor_name", "customer_name", "party_name", "counterparty_name"})
 
 
 def _normalise_name(value: str) -> str:
@@ -88,6 +88,10 @@ def values_match(field_name: str, expected: Any, actual: Any) -> bool:
         return True
     if expected is None or actual is None:
         return False
+    if isinstance(expected, (list, tuple)) and isinstance(actual, (list, tuple)):
+        exp_list = sorted(str(x).strip().lower() for x in expected)
+        act_list = sorted(str(x).strip().lower() for x in actual)
+        return exp_list == act_list
     base = field_name.split(".")[-1]
     if base in _MONEY_FIELDS:
         try:

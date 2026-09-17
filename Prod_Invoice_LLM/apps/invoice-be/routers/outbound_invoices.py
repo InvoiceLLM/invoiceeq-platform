@@ -40,6 +40,7 @@ from services.billing_quota import charge_free_quota, count_billable_uploads
 from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
 )
@@ -273,7 +274,7 @@ async def upload_outbound_invoice(
     # refused file never burns quota (Gap 343's ordering rule).
     try:
         normalized = normalize_upload(fname, file_bytes)
-    except (UnsupportedUploadError, ImageTooLargeError) as exc:
+    except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
     fname = normalized.pdf_filename
     file_bytes = normalized.pdf_bytes

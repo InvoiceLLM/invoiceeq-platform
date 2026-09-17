@@ -55,6 +55,7 @@ from models import (
 )
 from services.file_intake import (
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
 )
@@ -272,7 +273,7 @@ def run_sync(
             # re-downloaded later hashes the same and dedup Layer 2 still fires.
             try:
                 normalized = normalize_upload(file_name, file_bytes)
-            except (UnsupportedUploadError, ImageTooLargeError) as norm_exc:
+            except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as norm_exc:
                 logger.warning(
                     "Autopilot: refusing %s — %s", file_name, norm_exc.detail
                 )

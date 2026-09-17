@@ -46,6 +46,7 @@ import io
 from services.storage import download_pdf_from_storage
 from services.file_intake import (
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
 )
@@ -460,6 +461,10 @@ def _persist_non_invoice_document(
     doc_attributes: dict | None,
     doc_type_confidence: float | None,
     source_document_json: dict | None,
+    model_deployment: str | None = None,
+    prompt_version: str | None = None,
+    schema_version: str | None = None,
+    llm_duration_ms: int | None = None,
 ) -> Document:
     """Feature 27 (G9 / E10): write the `documents` row and delete the placeholder
     `invoice` row **in one transaction**.
@@ -527,6 +532,7 @@ def _persist_non_invoice_document(
         subtotal=extracted_data.get("subtotal"),
         tax_amount=extracted_data.get("tax_amount"),
         discount_amount=extracted_data.get("discount_amount"),
+        freight_amount=extracted_data.get("freight_amount"),
         grand_total=extracted_data.get("grand_total"),
         items=items,
         taxes=extracted_data.get("taxes") or [],
@@ -540,6 +546,11 @@ def _persist_non_invoice_document(
         sa_alerts=with_alert_ids(alerts),  # BE Gap 566
         source_document_json=source_document_json,
         completed_at=datetime.utcnow(),
+        # BE Gap 684: extraction provenance
+        model_deployment=model_deployment,
+        prompt_version=prompt_version,
+        schema_version=schema_version,
+        llm_duration_ms=llm_duration_ms,
     )
     session.add(document)
 
@@ -748,7 +759,7 @@ def handle_import_connector_file(
     # bytes above are already a PDF and pass through unchanged.
     try:
         normalized = normalize_upload(f"connector_{provider}_{file_id}", file_bytes)
-    except (UnsupportedUploadError, ImageTooLargeError) as norm_exc:
+    except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as norm_exc:
         raise RuntimeError(
             f"Connector import from '{provider}' file_id={file_id} refused: {norm_exc.detail}"
         ) from norm_exc
@@ -961,11 +972,6 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         # 3. Update status: extracting structures (agent processing)
         _publish_sse_events(batch_id, {"status": "EXTRACTING_DATA", "message": "Extracting structured fields using LLM..."})
         
-        # Test environment overrides triggered by keywords in file_path
-
-        if "fail" in file_path.lower():
-            raise Exception("Mock processing failure triggered by file name keyword.")
-        
         # ── Two-stage rule resolution (Task 10.8) ──────────────────────────────
         # Stage 1: apply the tenant's Global template (vendor-agnostic rules) on the
         # first pass, before we know the vendor.
@@ -989,6 +995,11 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         doc_type_evidence = agent_result.get("doc_type_evidence")
         doc_attributes = agent_result.get("doc_attributes")
         doc_type_confidence = agent_result.get("doc_type_confidence")
+        # BE Gap 684: extraction provenance
+        model_deployment = agent_result.get("model_deployment")
+        prompt_version = agent_result.get("prompt_version")
+        schema_version = agent_result.get("schema_version")
+        llm_duration_ms = agent_result.get("llm_duration_ms")
 
         # Stage 2: now that the vendor is known, merge Global + vendor-specific
         # constraints (vendor wins on conflict) and re-run if a vendor template exists.
@@ -1016,6 +1027,11 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 doc_type_evidence = agent_result.get("doc_type_evidence")
                 doc_attributes = agent_result.get("doc_attributes")
                 doc_type_confidence = agent_result.get("doc_type_confidence")
+                # BE Gap 684: record pass 2 provenance (the pass that produced the persisted result)
+                model_deployment = agent_result.get("model_deployment")
+                prompt_version = agent_result.get("prompt_version")
+                schema_version = agent_result.get("schema_version")
+                llm_duration_ms = agent_result.get("llm_duration_ms")
 
 
         # Update invoice record in the database
@@ -1053,6 +1069,10 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     doc_attributes=doc_attributes,
                     doc_type_confidence=doc_type_confidence,
                     source_document_json=source_document_json,
+                    model_deployment=model_deployment,
+                    prompt_version=prompt_version,
+                    schema_version=schema_version,
+                    llm_duration_ms=llm_duration_ms,
                 )
 
                 # Embed into the SIBLING collection (§5 step 9 / G10), never the
@@ -1218,11 +1238,17 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.doc_type = doc_type
                 invoice.doc_type_evidence = doc_type_evidence
                 invoice.doc_attributes = doc_attributes
+                # BE Gap 684: extraction provenance
+                invoice.model_deployment = model_deployment
+                invoice.prompt_version = prompt_version
+                invoice.schema_version = schema_version
+                invoice.llm_duration_ms = llm_duration_ms
                 invoice.field_confidence = field_confidence
                 invoice.source_document_json = source_document_json
                 invoice.currency = extracted_data.get("currency")
                 invoice.discount_percent = extracted_data.get("discount_percent")
                 invoice.discount_amount = extracted_data.get("discount_amount")
+                invoice.freight_amount = extracted_data.get("freight_amount")
                 invoice.taxes = extracted_data.get("taxes", [])
                 invoice.discounts = extracted_data.get("discounts", [])
                 invoice.deductions = extracted_data.get("deductions", [])

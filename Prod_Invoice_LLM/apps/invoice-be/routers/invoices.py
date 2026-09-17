@@ -42,6 +42,7 @@ from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ACCEPTED_UPLOAD_SUFFIXES,
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
 )
@@ -411,7 +412,7 @@ async def upload_invoices(
             )
         try:
             normalized = normalize_upload(fname, file_bytes)
-        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+        except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=exc.detail,
@@ -529,7 +530,7 @@ async def start_directory_watcher(
             raw_bytes = f.read()
         try:
             normalized = normalize_upload(filename, raw_bytes)
-        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+        except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=exc.detail,

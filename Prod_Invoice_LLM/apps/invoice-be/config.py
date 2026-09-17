@@ -804,10 +804,45 @@ class Settings(BaseSettings):
     # no link to follow. For a local run that should not touch Azure at all.
     BENCHMARK_ARTIFACT_UPLOAD: bool = True
 
-    # Feature 24 (Ops Digest Agent) declared seven OPS_DIGEST_* settings here.
-    # The feature was superseded as over-scoped and deleted 2026-08-25 (Gap 311);
-    # `extra="ignore"` below means a stale OPS_DIGEST_* line left in someone's
-    # local `.env` is silently dropped rather than raising at startup.
+    # BE Gap 681 (EX-24): Maximum pages allowed for uploaded PDFs (and converted images).
+    # Established from corpus measurement (68 PDFs scanned, max 11 pages).
+    # 50 provides ~4.5x headroom over our largest invoice fixture while capping large uploads/attacks.
+    MAX_PDF_PAGES: int = 50
+
+    # BE Gap 681: Shadow mode for PDF page ceiling. When True, documents exceeding
+    # MAX_PDF_PAGES log a warning with the actual count and tenant/file without raising.
+    SHADOW_MODE_MAX_PDF_PAGES: bool = False
+
+    # ── BE Gap 682 (EX-22): complexity-classifier thresholds ──────────────────
+    # COMPLEX gates `dynamic_qa_node`, a second full LLM reasoning call, so these
+    # decide who pays for a pre-analysis pass. The previous classifier triggered
+    # on the *presence* of a Doc Intelligence field (`Items` is on every itemised
+    # invoice) and on bare `gst`/`vat`/`discount`, so it fired on essentially the
+    # whole population; see the note at the top of `services/invoice_classifier.py`.
+    #
+    # These are settings rather than literals because the right values come from
+    # the live corpus and the COMPLEX rate has never been measured. Until it has,
+    # `classify_invoice_complexity` logs the legacy verdict beside the new one on
+    # every call (`complexity_legacy`, `complexity_changed`), so the before/after
+    # can be read out of App Insights and these numbers tuned without a deploy.
+
+    # Line-item rows at or above which the table's structure is worth pre-reading.
+    # Provisional: the largest invoice fixture in the repo carries well under 15.
+    COMPLEX_MIN_LINE_ITEMS: int = 15
+
+    # Rows in Doc Intelligence's own `TaxDetails` breakdown at or above which the
+    # document has a genuine multi-tax split (CGST/SGST, two VAT rates, a reverse
+    # charge line beside a standard one). One tax row is an ordinary invoice.
+    COMPLEX_MIN_TAX_ENTRIES: int = 2
+
+    # Lowest DI field confidence below which the layout is treated as difficult.
+    # DI's own confidence is a better difficulty proxy than any keyword because it
+    # is computed from the document's structure rather than its vocabulary.
+    COMPLEX_DI_CONFIDENCE_FLOOR: float = 0.70
+
+    # BE Gap 682 rollback switch. True restores the pre-Gap-682 field-presence and
+    # tax-keyword triggers without a deploy, if the narrowed classifier misbehaves.
+    USE_LEGACY_COMPLEXITY_CLASSIFIER: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

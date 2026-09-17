@@ -2,21 +2,19 @@ import pytest
 from unittest.mock import patch
 from uuid import uuid4
 from datetime import date
-from sqlmodel import SQLModel, create_engine, Session
-from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, Session
 
 from main import app
 from dependencies import get_db_session, MOCK_TENANT_ID
 from models import Invoice
 from queue_worker.handlers import handle_process_invoice
+from tests._postgres_test_engine import make_test_engine
 
-# Setup isolated in-memory test database session
-sqlite_url = "sqlite:///:memory:"
-engine = create_engine(
-    sqlite_url,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
+# BE Gap 685: runs against `TEST_DATABASE_URL` when it is set (localhost +
+# "test" in the database name, per the Gap 525 guard), else in-memory SQLite.
+# Nothing in CI sets that variable, so an unattended run still takes the SQLite
+# branch -- see the module docstring in `tests/_postgres_test_engine.py`.
+engine = make_test_engine()
 
 @pytest.fixture(name="db_session")
 def db_session_fixture():

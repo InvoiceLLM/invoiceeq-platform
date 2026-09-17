@@ -3,25 +3,28 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel
 
 from models import AuditLog
 from services.extraction_quality_rollup import (
     alert_precision_rollup,
     field_correction_rollup,
 )
+from tests._postgres_test_engine import make_test_engine
 
 
 @pytest.fixture
 def db_session():
-    engine = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    # BE Gap 685: honours `TEST_DATABASE_URL` (Gap 525 guard) when set, else
+    # in-memory SQLite. `drop_all` was missing here, so on a shared Postgres
+    # database rows leaked between tests -- these rollups aggregate over every
+    # `AuditLog` row for a tenant, so a leaked row silently changes a rate.
+    engine = make_test_engine()
     SQLModel.metadata.create_all(engine)
     session = Session(engine)
     yield session
     session.close()
+    SQLModel.metadata.drop_all(engine)
 
 
 def _resolve_log(tenant_id, action="RESOLVE_INVOICE", details=None, timestamp=None):

@@ -22,6 +22,7 @@ from services.storage import upload_pdf_to_blob_storage
 from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
     sniff_format,
@@ -534,7 +535,7 @@ async def email_mailintegration_webhook(
             # branches below hand a PDF to storage/hashing exactly as before.
             try:
                 normalized = normalize_upload(source_filename, raw_bytes)
-            except (UnsupportedUploadError, ImageTooLargeError) as norm_exc:
+            except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as norm_exc:
                 record_dropped_email(
                     db_session,
                     reason=REASON_INGEST_REJECTED,
