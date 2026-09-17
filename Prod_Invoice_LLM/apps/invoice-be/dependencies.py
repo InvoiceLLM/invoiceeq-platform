@@ -1362,7 +1362,7 @@ require_can_load_or_api_key = require_permission_or_api_key("can_load")
 def require_actions_scope_or_human(
     context: TenantContext = Depends(get_tenant_or_api_key_context),
 ) -> TenantContext:
-    """Admit human users of any permission level, but require actions scope for API keys (Gap 573)."""
+    """Admit human users of any permission level, but require actions scope for API keys (BE Gap 573)."""
     if context.auth_method == "api_key":
         if context.key_scope != KEY_SCOPE_ACTIONS:
             raise HTTPException(

@@ -36,7 +36,7 @@ from services.chat_queue import (
 )
 from services.widget_tokens import issue_widget_token
 
-# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard
+# BE Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse

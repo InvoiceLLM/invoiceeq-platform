@@ -48,7 +48,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import config
 from models import ChatAttachment, ChatSession, Invoice
 
-# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+# BE Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse

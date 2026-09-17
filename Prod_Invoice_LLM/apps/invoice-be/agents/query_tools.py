@@ -97,7 +97,7 @@ def parse_results_table(markdown: str) -> Optional[tuple[list[str], list[list[st
     if len(lines) < 3:
         return None
 
-    # Merge fix, 2026-09-16 (BE Gap 581 x this parser). Gap 581 made the zero-row
+    # Merge fix, 2026-09-16 (BE Gap 581 x this parser). BE Gap 581 made the zero-row
     # category recovery prepend a one-line relaxation note to the table it returns,
     # and that note became `db_result`. This function read `lines[0]` as the header,
     # so it saw the note, failed the separator check and returned None -- which

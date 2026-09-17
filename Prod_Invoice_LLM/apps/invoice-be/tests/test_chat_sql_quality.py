@@ -37,7 +37,7 @@ from agents.query_agent import (
 )
 from agents.query_tools import parse_results_table
 
-# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+# BE Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse
@@ -70,7 +70,7 @@ def db_session_fixture():
 
 
 def test_postgres_test_port_localhost_guard_gap570():
-    """Gap 570 / Gap 525: the fixture drops every table after each test, so TEST_DATABASE_URL is accepted only for a
+    """BE Gap 570 / Gap 525: the fixture drops every table after each test, so TEST_DATABASE_URL is accepted only for a
     local throwaway database whose name says 'test'. The dev database on localhost is refused too."""
     from urllib.parse import urlparse
 

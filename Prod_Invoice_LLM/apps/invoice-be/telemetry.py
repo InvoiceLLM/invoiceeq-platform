@@ -2171,7 +2171,7 @@ def track_security_incident(
     tenant_id: str = "",
     details: Optional[dict[str, Any]] = None,
 ) -> None:
-    """Gap 610: emit structured telemetry when a security guard or injection check triggers."""
+    """BE Gap 610: emit structured telemetry when a security guard or injection check triggers."""
     props: dict[str, Any] = {
         "tenant_id": str(tenant_id),
         "incident_type": incident_type,

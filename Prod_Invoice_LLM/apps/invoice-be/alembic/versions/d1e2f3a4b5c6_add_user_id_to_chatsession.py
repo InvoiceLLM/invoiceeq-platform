@@ -1,4 +1,4 @@
-"""Gap 572 (CH-5): Add user_id to ChatSession for user-level chat isolation.
+"""BE Gap 572 (CH-5): Add user_id to ChatSession for user-level chat isolation.
 
 Revision ID: d1e2f3a4b5c6
 Revises: c553d559e0a1

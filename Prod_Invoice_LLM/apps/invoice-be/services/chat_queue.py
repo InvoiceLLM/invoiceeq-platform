@@ -24,7 +24,7 @@ CHAT_TENANT_INFLIGHT_PREFIX = "chat_inflight:"
 # Prevents single tenant bursts from monopolizing worker threads or triggering Azure OpenAI 429s
 PER_TENANT_MAX_ACTIVE_CHAT = 3
 JOB_STATUS_TTL_SECONDS = 3600  # 1 hour TTL for cached job outcomes
-CHAT_INFLIGHT_LEASE_TTL_SECONDS = 300  # Gap 605: 5 minutes self-healing lease TTL for tenant concurrency slots
+CHAT_INFLIGHT_LEASE_TTL_SECONDS = 300  # BE Gap 605: 5 minutes self-healing lease TTL for tenant concurrency slots
 
 # Gap 364: how long the caller is told to wait before retrying a rejected turn.
 # Lives here rather than in the router because the ceiling it belongs to lives
@@ -32,7 +32,7 @@ CHAT_INFLIGHT_LEASE_TTL_SECONDS = 300  # Gap 605: 5 minutes self-healing lease T
 # own.
 CHAT_CAPACITY_RETRY_AFTER_SECONDS = 5
 
-# Gap 365 / Gap 587: Per-session lock constants
+# Gap 365 / BE Gap 587: Per-session lock constants
 #: BE Gap 600 (CH-33): one runner per queued turn. Held only for the duration of
 #: the turn -- `_execute()` releases it in a `finally` -- with the TTL as the
 #: backstop for a process that dies without unwinding, never as the normal path.
@@ -46,7 +46,7 @@ CHAT_SESSION_LOCK_POLL_SECONDS = 0.1
 
 
 class ChatSessionLockedError(Exception):
-    """Gap 587 (CH-20): A turn is already running in this chat session.
+    """BE Gap 587 (CH-20): A turn is already running in this chat session.
 
     Founder ruling 2026-09-16: return 409 immediately on lock contention.
     A second turn arriving while the session lock is held is refused with
@@ -67,18 +67,25 @@ class ChatSessionLockedError(Exception):
 class ChatQueueUnavailableError(Exception):
     """BE Gap 601: Redis is unconfigured or unreachable and queueing cannot proceed.
 
-    **Defined but not raised on this branch, deliberately.** `fix/chat-backend-21-gaps`
-    answered Gap 601 by refusing every chat turn while Redis is down; this branch
-    answers it in `enqueue_chat_job()` by counting active `queued`/`processing`
-    turns in Postgres and enforcing `PER_TENANT_MAX_ACTIVE_CHAT` from there. Both
-    fail closed on the ceiling -- the difference is availability: a Redis outage
-    degrades chat here rather than stopping it, and the Gap 605 lease and
-    self-healing logic that lives in the same block has nowhere to go under the
-    other shape.
+    **Defined but never raised. Kept as the unused half of a settled decision.**
 
-    Kept because `routers/chat.py` imports and handles it, so the 503 path exists
-    the moment anyone decides the stricter reading is the right one. That is a
-    founder call, not a merge call -- flagged at merge time rather than settled here.
+    BE Gap 601 was fixed twice, in parallel, by the two halves of this branch. One
+    half refused every chat turn with an HTTP 503 while Redis was down. The other
+    counts active `queued`/`processing` turns in Postgres and enforces
+    `PER_TENANT_MAX_ACTIVE_CHAT` from there, so a Redis outage degrades chat rather
+    than stopping it. The merge kept the second shape, for a mechanical reason as
+    well as a preference: BE Gap 605's lease and self-healing logic lives in the
+    same block and has nowhere to go under the first.
+
+    **Founder ruling 2026-09-17: degrade, do not refuse.** Availability wins. A
+    Redis outage must not take chat down, and the residual window this leaves --
+    `_enforce_db_ceiling_fail_closed()` skipping the ceiling when Postgres is
+    unreachable *as well* -- is a state in which the application is already down,
+    so an unenforced chat ceiling is not the failure anyone is looking at.
+
+    This class and its handler in `routers/chat.py` are left in place so the 503
+    path is one `raise` away should that ruling ever be revisited. Nothing raises
+    it today, and nothing should without a new ruling.
     """
 
 
@@ -255,7 +262,7 @@ def _enforce_db_ceiling_fail_closed(tenant_id, *, db_session=None, user_msg_id=N
     session is available the check cannot run and the turn proceeds, exactly as
     before -- this is a ceiling, not an authorisation gate.
     """
-    # Gap 601 (CH-34): the ceiling, read from Postgres when Redis cannot hold it.
+    # BE Gap 601 (CH-34): the ceiling, read from Postgres when Redis cannot hold it.
     session_to_close = None
     try:
         cur_session = db_session
@@ -320,6 +327,13 @@ def _enforce_db_ceiling_fail_closed(tenant_id, *, db_session=None, user_msg_id=N
         # Redis has just failed, that is not far-fetched. Letting the error out turns a
         # degraded enqueue into a 500. This is a ceiling, not an authorisation gate, so
         # it declines to LIMIT rather than declining to serve.
+        #
+        # This is the one window in which BE Gap 601's ceiling is not enforced at all,
+        # and it is deliberate: **founder ruling 2026-09-17, degrade over refuse** (see
+        # `ChatQueueUnavailableError`). Reaching here means Redis AND Postgres are both
+        # unreachable, at which point chat is the least of it. The named boundary of
+        # this fix: it restores the ceiling when Redis alone is gone, not when the
+        # whole data tier is.
         logger.warning(
             "Fail-closed chat ceiling could not be evaluated for tenant %s; allowing the turn",
             tenant_id, exc_info=True,
@@ -361,11 +375,11 @@ class ChatQueueService:
         so the "fair-share concurrency limiter" enforced no limit at all. Same
         class of defect as Gap 352: a declared meter that did not meter.
 
-        Gap 605 / 601: Slot reservations now use a lease model with TTL and
+        BE Gap 605 / 601: Slot reservations now use a lease model with TTL and
         per-job tracking (`chat_inflight:{tenant_id}:{job_id}`). If worker
         pods crash without graceful release, slots self-heal when the TTL expires.
         When Redis is unreachable, the concurrency ceiling fails closed by
-        verifying in-flight messages against the database (Gap 601).
+        verifying in-flight messages against the database (BE Gap 601).
 
         Order matters here. The slot is reserved (INCR) and checked *first*, so
         a rejected turn leaves nothing behind at all -- no status blob for a job
@@ -415,7 +429,7 @@ class ChatQueueService:
                 active = r.incr(inflight_key)
                 slot_reserved = True
 
-                # Gap 605: Set safety TTL on tenant inflight key so crashes self-heal
+                # BE Gap 605: Set safety TTL on tenant inflight key so crashes self-heal
                 if hasattr(r, "expire"):
                     try:
                         r.expire(inflight_key, CHAT_INFLIGHT_LEASE_TTL_SECONDS)
@@ -428,7 +442,7 @@ class ChatQueueService:
                     active_count = 0
 
                 if active_count > PER_TENANT_MAX_ACTIVE_CHAT:
-                    # Gap 605 self-healing: check if counter was orphaned by crashed workers
+                    # BE Gap 605 self-healing: check if counter was orphaned by crashed workers
                     actual_active = None
                     if hasattr(r, "scan_iter"):
                         try:
@@ -473,7 +487,7 @@ class ChatQueueService:
                     ex=JOB_STATUS_TTL_SECONDS,
                 )
 
-                # Gap 605: Per-job lease key with TTL for accepted jobs
+                # BE Gap 605: Per-job lease key with TTL for accepted jobs
                 job_lease_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_id}:{job_id}"
                 try:
                     r.set(job_lease_key, "1", ex=CHAT_INFLIGHT_LEASE_TTL_SECONDS)
@@ -695,7 +709,7 @@ class ChatQueueService:
                 channel = f"{CHAT_JOB_CHANNEL_PREFIX}{job_id}"
                 r.publish(channel, json.dumps(final_data))
 
-                # 3. Release tenant concurrency slot and per-job lease (Gap 605)
+                # 3. Release tenant concurrency slot and per-job lease (BE Gap 605)
                 ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
             except Exception as e:
                 logger.error("Error finalizing chat job %s in Redis: %s", job_id, e)
@@ -783,14 +797,14 @@ class ChatQueueService:
                 channel = f"{CHAT_JOB_CHANNEL_PREFIX}{job_id}"
                 r.publish(channel, json.dumps(fail_data))
 
-                # Release tenant concurrency slot and per-job lease (Gap 605)
+                # Release tenant concurrency slot and per-job lease (BE Gap 605)
                 ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
             except Exception as e:
                 logger.error("Error failing chat job %s in Redis: %s", job_id, e)
 
     @staticmethod
     def release_tenant_slot(tenant_id: str, client: redis.Redis | None = None, job_id: str | None = None) -> None:
-        """Safely decrements the tenant in-flight counter (clamped at >= 0) and deletes per-job lease (Gap 605)."""
+        """Safely decrements the tenant in-flight counter (clamped at >= 0) and deletes per-job lease (BE Gap 605)."""
         r = client or get_redis_client()
         if not r:
             return

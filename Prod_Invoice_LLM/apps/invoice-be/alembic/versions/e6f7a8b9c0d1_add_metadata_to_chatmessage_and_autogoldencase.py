@@ -4,8 +4,8 @@ Revision ID: e6f7a8b9c0d1
 Revises: c553d559e0a1
 Create Date: 2026-09-16
 
-Gap 596: Persist turn_metadata on ChatMessage (route, model, token usage, status).
-Gap 598: Persist generated_sql, citations, result_invoice_ids, and turn_metadata on AutoGoldenCase.
+BE Gap 596: Persist turn_metadata on ChatMessage (route, model, token usage, status).
+BE Gap 598: Persist generated_sql, citations, result_invoice_ids, and turn_metadata on AutoGoldenCase.
 
 Dev add-only rule compliant: all columns are strictly nullable with no destructive backfills.
 """
@@ -32,13 +32,13 @@ JSON_VARIANT = sa.JSON().with_variant(JSONB, "postgresql")
 
 
 def upgrade() -> None:
-    # Gap 596: ChatMessage.turn_metadata
+    # BE Gap 596: ChatMessage.turn_metadata
     op.add_column(
         "chatmessage",
         sa.Column("turn_metadata", JSON_VARIANT, nullable=True),
     )
 
-    # Gap 598: AutoGoldenCase columns
+    # BE Gap 598: AutoGoldenCase columns
     op.add_column(
         "auto_golden_cases",
         sa.Column("generated_sql", sa.Text(), nullable=True),

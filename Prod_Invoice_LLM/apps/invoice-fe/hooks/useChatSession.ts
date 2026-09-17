@@ -869,7 +869,7 @@ export function useChatSession(): UseChatSessionReturn {
               );
               cleanupStream();
               setIsSending(false);
-            } else if (statusData.status === "failed" || attempts >= maxAttempts) {
+            } else if (statusData.status === "failed") {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === pId
@@ -878,9 +878,32 @@ export function useChatSession(): UseChatSessionReturn {
                         status: "failed",
                         content:
                           statusData.error ||
-                          // BE Gap 603: never "retry" on a timeout -- the job may
-                          // still be running and a resend duplicates it.
+                          "Something went wrong while processing your request.",
+                      }
+                    : m
+                )
+              );
+              cleanupStream();
+              setIsSending(false);
+            } else if (attempts >= maxAttempts) {
+              // BE Gap 603 (CH-36): giving up on the poll is NOT the job failing.
+              // These two used to share one branch, so a 120s poll timeout marked
+              // the turn `failed`, which `MessageBubble` renders as a red "Query
+              // Failed" card. The user reads that as a dead turn and re-asks; the
+              // background job has no cancellation token, so the expensive query
+              // then runs twice -- the exact duplicate this gap exists to prevent.
+              // Closing it on the SSE path alone left it open here.
+              // Same treatment as the `still_running` SSE event above: stay
+              // `processing`, say reload, offer nothing to retry.
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === pId
+                    ? {
+                        ...m,
+                        status: "processing",
+                        content:
                           "Still preparing your answer. Reload this conversation in a moment to see it.",
+                        error_message: undefined,
                       }
                     : m
                 )

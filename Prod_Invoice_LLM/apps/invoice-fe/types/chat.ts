@@ -104,11 +104,19 @@ export interface ChatJobResponse {
 
 export interface ChatStreamEvent {
   job_id: string;
-  status: ChatJobStatus;
+  // BE Gap 603 (CH-36): `still_running` is emitted by `_still_running_event()` when
+  // the SSE stream times out but the job is alive. It is deliberately NOT added to
+  // `ChatJobStatus`: that union is also a `ChatMessage.status`, and a message is
+  // never persisted as "still_running" -- the hook maps this event onto the
+  // "processing" message state. Widening `ChatJobStatus` instead would have let
+  // the value leak into every message-shaped type it feeds.
+  status: ChatJobStatus | "still_running";
   step?: string;
   details?: string | { message?: string; [key: string]: any };
   result?: ChatMessage;
   error?: string;
+  // BE Gap 603: the human-readable line carried by a `still_running` event.
+  message?: string;
   timestamp?: string;
 }
 

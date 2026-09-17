@@ -1,11 +1,11 @@
-"""BE Gap 605 (CH-39) & Gap 601 (CH-34): Concurrency slot lease with TTL, self-healing, and reaper tests.
+"""BE Gap 605 (CH-39) & BE Gap 601 (CH-34): Concurrency slot lease with TTL, self-healing, and reaper tests.
 
 Verifies:
 1. `enqueue_chat_job` sets safety TTL on the tenant inflight counter and creates a per-job lease with TTL.
 2. `release_tenant_slot` deletes the per-job lease when job_id is provided.
 3. Counter self-healing: if the integer counter is desynced/orphaned past ceiling due to crashes,
    live lease scan heals the counter and permits new turns under the ceiling.
-4. Gap 601 Fail-Closed: When Redis is absent/unreachable, concurrency limit is enforced against
+4. BE Gap 601 Fail-Closed: When Redis is absent/unreachable, concurrency limit is enforced against
    database queued/processing rows, raising ChatQueueCapacityError if over capacity.
 5. Background Reaper: `reap_stuck_chat_jobs` marks messages stuck in 'queued' or 'processing' older
    than max_age_seconds as 'failed', publishes Redis failure event, and releases tenant slots.
@@ -31,7 +31,7 @@ from services.chat_queue import (
 )
 from scripts.sweep_stuck_chat_turns import reap_stuck_chat_jobs
 
-# Gap 570 / Gap 525: PostgreSQL test fixture with strict localhost and db-name security guard
+# BE Gap 570 / Gap 525: PostgreSQL test fixture with strict localhost and db-name security guard
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse
@@ -71,7 +71,7 @@ def db_session_fixture():
 
 
 class MockLeaseRedis:
-    """Mock Redis tracking counters, keys, and expiration TTLs for Gap 605 tests."""
+    """Mock Redis tracking counters, keys, and expiration TTLs for BE Gap 605 tests."""
 
     def __init__(self):
         self.counters: dict[str, int] = {}
@@ -129,7 +129,7 @@ class MockLeaseRedis:
 
 
 def test_enqueue_sets_ttl_and_per_job_lease():
-    """Gap 605: Enqueue sets safety TTL on inflight counter and records per-job lease."""
+    """BE Gap 605: Enqueue sets safety TTL on inflight counter and records per-job lease."""
     r = MockLeaseRedis()
     tenant_str = str(TENANT_ID)
     job_id = "test-job-lease-001"
@@ -158,7 +158,7 @@ def test_enqueue_sets_ttl_and_per_job_lease():
 
 
 def test_release_tenant_slot_cleans_up_job_lease():
-    """Gap 605: Releasing slot with job_id removes the per-job lease."""
+    """BE Gap 605: Releasing slot with job_id removes the per-job lease."""
     r = MockLeaseRedis()
     tenant_str = str(TENANT_ID)
     job_id = "test-job-lease-002"
@@ -182,7 +182,7 @@ def test_release_tenant_slot_cleans_up_job_lease():
 
 
 def test_self_healing_counter_recovers_from_crashes():
-    """Gap 605: If counter is desynced above ceiling by crashes without live leases, it self-heals."""
+    """BE Gap 605: If counter is desynced above ceiling by crashes without live leases, it self-heals."""
     r = MockLeaseRedis()
     tenant_str = str(TENANT_ID)
     inflight_key = f"{CHAT_TENANT_INFLIGHT_PREFIX}{tenant_str}"
@@ -209,7 +209,7 @@ def test_self_healing_counter_recovers_from_crashes():
 
 
 def test_gap601_fail_closed_without_redis(db_session):
-    """Gap 601: When Redis is unavailable, concurrency ceiling is enforced via database."""
+    """BE Gap 601: When Redis is unavailable, concurrency ceiling is enforced via database."""
     session_id = uuid4()
     s = ChatSession(id=session_id, tenant_id=TENANT_ID, title="Session 1")
     db_session.add(s)
@@ -243,7 +243,7 @@ def test_gap601_fail_closed_without_redis(db_session):
 
 
 def test_reaper_sweeps_stuck_chat_turns(db_session):
-    """Gap 605: Background reaper transitions stuck queued/processing messages to failed and frees slots."""
+    """BE Gap 605: Background reaper transitions stuck queued/processing messages to failed and frees slots."""
     session_id = uuid4()
     s = ChatSession(id=session_id, tenant_id=TENANT_ID, title="Session Reaper")
     db_session.add(s)
@@ -325,7 +325,7 @@ def test_reaper_sweeps_stuck_chat_turns(db_session):
 
 
 def test_reaper_dry_run_leaves_rows_untouched(db_session):
-    """Gap 605: Dry run mode reports stuck jobs without modifying database."""
+    """BE Gap 605: Dry run mode reports stuck jobs without modifying database."""
     session_id = uuid4()
     s = ChatSession(id=session_id, tenant_id=TENANT_ID, title="Session Dry Run")
     db_session.add(s)

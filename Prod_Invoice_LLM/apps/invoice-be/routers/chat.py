@@ -1526,7 +1526,7 @@ def _promote_to_eval_bank(message, payload, db_session: Session, tenant_context)
                 reported_answer=(message.content or "")[:8000] or None,
                 reason=payload.reason,
                 note=(payload.note or "").strip()[:2000] or None,
-                # Gap 598: copy SQL, citations, invoice IDs, and metadata into eval bank
+                # BE Gap 598: copy SQL, citations, invoice IDs, and metadata into eval bank
                 generated_sql=message.generated_sql,
                 citations=message.citations or [],
                 result_invoice_ids=message.result_invoice_ids or [],

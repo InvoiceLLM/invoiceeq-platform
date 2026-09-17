@@ -36,7 +36,7 @@ from dependencies import (
 from services.chat_queue import ChatQueueService
 from queue_worker.handlers import handle_process_chat_job
 
-# Gap 570 / Gap 525: PostgreSQL test fixture with strict localhost and db-name security guard
+# BE Gap 570 / Gap 525: PostgreSQL test fixture with strict localhost and db-name security guard
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse
@@ -169,7 +169,7 @@ def test_post_message_skips_local_pool_when_enqueued_to_redis(db_session):
         )
         assert res.status_code == 202
         assert mock_enqueue.called
-        # The critical assertion for Gap 600: local pool submit MUST NOT be called!
+        # The critical assertion for BE Gap 600: local pool submit MUST NOT be called!
         assert not mock_pool_submit.called, "Local pool must not be submitted to when Redis enqueue succeeded"
 
 

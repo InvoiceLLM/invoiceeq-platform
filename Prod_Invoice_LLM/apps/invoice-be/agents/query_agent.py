@@ -330,7 +330,7 @@ class SQLGenerationSchema(BaseModel):
     sql: Optional[str] = Field(default=None, description="The exact read-only SELECT SQL statement to execute. Must filter strictly by tenant_id. Set to null if the query requires unsupported columns or filters.")
     explanation_or_error: Optional[str] = Field(default=None, description="A brief explanation of the query if sql is not null, or explain why the query cannot be answered if sql is null.")
 
-# Gap 182 / Gap 578: tried first, before ever calling an LLM.
+# Gap 182 / BE Gap 578: tried first, before ever calling an LLM.
 # Bare generic words ("date", "status", "vendor", "currency", "total") were removed from
 # the bare fast-path so questions like "what date is in the termination clause?" do not
 # erroneously short-circuit to SQL. They now require structured context indicators or aggregation verbs.
@@ -779,7 +779,7 @@ def _chat_summary_llm():
 
 
 def escape_prompt_delimiters(text: str) -> str:
-    """Neutralize marker delimiters in untrusted user/document text (Gap 609)."""
+    """Neutralize marker delimiters in untrusted user/document text (BE Gap 609)."""
     if not text:
         return ""
     return text.replace("<<<", "«««").replace(">>>", "»»»")
@@ -791,7 +791,7 @@ def classify_query(query: str, tenant_id: str = "") -> str:
     `tenant_id` is Feature 23 Phase 1 telemetry attribution only -- it is never
     read by, and can never change, the classification itself.
 
-    Gap 182 / Gap 578: keyword match tried first, free and instant -- only falls
+    Gap 182 / BE Gap 578: keyword match tried first, free and instant -- only falls
     through to the LLM when neither keyword set confidently matches. Bare generic
     keywords ("date", "status", "vendor", "currency", "total") were removed from
     the bare fast path and require co-occurrence with an invoice reference.
@@ -800,7 +800,7 @@ def classify_query(query: str, tenant_id: str = "") -> str:
     if any(re.search(rf"\b{re.escape(kw.strip())}\b", q) for kw in _SQL_KEYWORDS):
         return "SQL"
 
-    # Gap 578: generic column keywords only route to SQL when co-occurring with an invoice indicator
+    # BE Gap 578: generic column keywords only route to SQL when co-occurring with an invoice indicator
     has_column_kw = any(re.search(rf"\b{re.escape(kw)}\b", q) for kw in ("date", "status", "vendor", "currency", "total", "spent", "count"))
     has_invoice_ref = any(re.search(rf"\b{re.escape(ind)}\b", q) for ind in ("invoice", "invoices", "bill", "bills", "spend", "payment", "ledger"))
     if has_column_kw and has_invoice_ref:
@@ -1465,13 +1465,13 @@ def recover_missed_category_match(
             flow_direction=_direction_in_generated_sql(generated_sql or ""),
         )
         if res:
-            # Gap 581: state constraint relaxation deterministically
+            # BE Gap 581: state constraint relaxation deterministically
             disclaimer = "_Note: No exact records matched all constraints. Showing closest category matches across all periods:_\n\n"
             return disclaimer + res
         return None
     except Exception as e:
         logger.warning("Category-match fallback failed (non-fatal): %s", e)
-        # Gap 583: caller owns transaction boundaries; do not rollback here
+        # BE Gap 583: caller owns transaction boundaries; do not rollback here
         return None
 
 
@@ -1567,7 +1567,7 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
     DISTINCT -- it multiplies rows per invoice but never changes which invoices
     match -- while a join to anything else still bails exactly as before.
     """
-    # Gap 581: Check if the original SQL carries HAVING predicates
+    # BE Gap 581: Check if the original SQL carries HAVING predicates
     has_having = re.search(r"\bhaving\b", sql, re.IGNORECASE) is not None
     if has_having:
         try:
@@ -1619,7 +1619,7 @@ def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_sessio
         return [invoice_id for invoice_id in harvested if invoice_id]
     except Exception as e:
         logger.warning("Result-set snapshot companion query failed (non-fatal): %s", e)
-        # Gap 583: caller owns transaction boundaries; do not rollback here
+        # BE Gap 583: caller owns transaction boundaries; do not rollback here
         return []
 
 
@@ -2397,7 +2397,7 @@ def assert_tenant_isolation_on_ast(sql_clean: str, tenant_id: str, dialect_name:
 #: so it is enforced here in code, not left to the prompt line that says other tables do not exist.
 _CHAT_SQL_READABLE_TABLES = frozenset({"invoice"})
 
-#: Gap 574: Forbidden SQL functions that must never be executed by chat SQL
+#: BE Gap 574: Forbidden SQL functions that must never be executed by chat SQL
 _CHAT_SQL_FORBIDDEN_FUNCTIONS = frozenset({
     "pg_sleep", "pg_read_file", "pg_ls_dir", "pg_read_binary_file",
     "query_to_xml", "pg_stat_file", "system", "exec", "eval",
@@ -2407,7 +2407,7 @@ _CHAT_SQL_FORBIDDEN_FUNCTIONS = frozenset({
 
 def assert_reads_only_allowed_tables(sql_clean: str, dialect_name: str, tenant_id: str = "") -> None:
     """Reject any statement that reads a table outside `_CHAT_SQL_READABLE_TABLES`
-    or calls a forbidden function (Gap 574).
+    or calls a forbidden function (BE Gap 574).
     """
     import sqlglot
     import sqlglot.expressions as sg_exp
@@ -2499,7 +2499,7 @@ def execute_generated_sql(sql: str, tenant_id: str, db_session, snapshot: list |
     # describe. Check 4 binds rows to this tenant; this binds the query to the invoice table.
     assert_reads_only_allowed_tables(sql_clean, _sql_dialect_name(db_session), tenant_id=tenant_id)
 
-    # Gap 574: a statement timeout bounds a runaway query on Postgres -- but the
+    # BE Gap 574: a statement timeout bounds a runaway query on Postgres -- but the
     # NUMBER is not set here, and that is the whole point.
     #
     # This shipped as a hardcoded `'30s'` on `fix/chat-backend-21-gaps` and was
@@ -3261,7 +3261,7 @@ def _get_tenant_stats_summary(tenant_id: str, db_session) -> str:
             return cached
     except Exception as e:
         logger.warning("Tenant stats cache lookup failed for %s: %s", tenant_id, e)
-        # Gap 611: In-process fallback cache (60s TTL) avoids 3 DB table scans per turn during Redis degradation
+        # BE Gap 611: In-process fallback cache (60s TTL) avoids 3 DB table scans per turn during Redis degradation
         cached_tuple = _IN_PROCESS_STATS_CACHE.get(str(tenant_id))
         if cached_tuple:
             import time
@@ -3374,7 +3374,7 @@ def get_prior_turn_sql(session_id: str, db_session) -> str | None:
         return None
 
     try:
-        # Gap 584: query immediately preceding assistant message without filtering on generated_sql.is_not(None).
+        # BE Gap 584: query immediately preceding assistant message without filtering on generated_sql.is_not(None).
         # Only if that consecutive prior turn had generated_sql, return it; otherwise return None.
         prior = db_session.exec(
             select(ChatMessage)
@@ -3461,7 +3461,7 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
         selected_messages.reverse()
         window = "".join(selected_messages)
 
-        # Gap 437 / Gap 582: rolling history summary updated incrementally as new turns roll off
+        # Gap 437 / BE Gap 582: rolling history summary updated incrementally as new turns roll off
         dropped = messages[len(selected_messages):]
         if dropped:
             try:
@@ -3474,7 +3474,7 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
                         chat_session.history_summary = new_summary
                         db_session.add(chat_session)
                         db_session.flush()
-                        # Gap 583: caller owns transaction boundaries; flush without committing
+                        # BE Gap 583: caller owns transaction boundaries; flush without committing
                     if chat_session.history_summary:
                         window = (
                             "EARLIER IN THIS CONVERSATION (condensed):\n"
@@ -3482,7 +3482,7 @@ def get_chat_history(session_id: str, db_session, max_tokens: int = 3000) -> str
                         )
             except Exception as e:  # a summary is a nicety; the window is the contract
                 logger.warning("Rolling history summary failed for session %s: %s", session_id, e)
-                # Gap 583: caller owns transaction boundaries; do not rollback here
+                # BE Gap 583: caller owns transaction boundaries; do not rollback here
 
         return window
     except Exception as e:
@@ -5906,7 +5906,7 @@ def _run_attached_document_turn(
         attachment.candidate_invoice_ids = [str(inv.id) for inv in candidates]
         db_session.add(attachment)
         db_session.flush()
-        # Gap 583: caller owns transaction boundaries; flush without committing
+        # BE Gap 583: caller owns transaction boundaries; flush without committing
 
         payload = build_confirmation_payload(
             attachment_id=str(attachment.id),
@@ -6101,7 +6101,7 @@ def update_session_focus(session_id: str, db_session, result: dict) -> None:
         chat_session = db_session.get(ChatSession, UUID(str(session_id)))
         if chat_session is None:
             return
-        # Gap 586: clear focus if turn errored, failed, was declined, or explicitly cleared
+        # BE Gap 586: clear focus if turn errored, failed, was declined, or explicitly cleared
         if (
             result.get("status") in ("error", "failed")
             or result.get("stop_reason") in ("declined", "error")
@@ -6133,7 +6133,7 @@ def update_session_focus(session_id: str, db_session, result: dict) -> None:
         chat_session.focus = snapshot
         db_session.add(chat_session)
         db_session.flush()
-        # Gap 583: caller owns transaction boundaries; flush without committing
+        # BE Gap 583: caller owns transaction boundaries; flush without committing
     except Exception as e:
         logger.warning("Session focus update failed for session %s: %s", session_id, e)
 
@@ -7587,7 +7587,7 @@ def _run_query_agent(
             )
             turn.status = telemetry.TURN_STATUS_CACHE_HIT
             turn.route = "cached"
-            # Gap 586: update session focus on cache hit
+            # BE Gap 586: update session focus on cache hit
             update_session_focus(session_id, db_session, attachment_cached)
             return attachment_cached
 
@@ -7671,7 +7671,7 @@ def _run_query_agent(
         cached["content"] = redact_query_internals(cached.get("content"), tenant_id)
         progress("cached_answer")
         progress("answer_ready")
-        # Gap 586: update session focus on cache hit
+        # BE Gap 586: update session focus on cache hit
         update_session_focus(session_id, db_session, cached)
         return cached
 
@@ -8370,7 +8370,7 @@ Conversation History:
 """
         progress("composing_answer", route="CHAT")
         try:
-            # Gap 593: conversational turns and small talk run on the fast summary
+            # BE Gap 593: conversational turns and small talk run on the fast summary
             # model rather than burning expensive primary reasoning quota.
             chat_llm = _chat_summary_llm()
             # Feature 23 Phase 1
@@ -8466,7 +8466,7 @@ Conversation History:
         "generated_sql": generated_sql,
         "citations": citations,
         "result_invoice_ids": result_invoice_ids[:MAX_SNAPSHOT_INVOICE_IDS],
-        # Gap 596: persist turn_metadata (route, model, tokens, status)
+        # BE Gap 596: persist turn_metadata (route, model, tokens, status)
         "turn_metadata": {
             "route": route,
             "model": getattr(turn, "model_deployment", None) or getattr(turn, "model", None) or "default",

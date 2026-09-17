@@ -1,4 +1,4 @@
-"""Gap 605 (CH-39): Sweep and reap stuck or orphaned chat turns.
+"""BE Gap 605 (CH-39): Sweep and reap stuck or orphaned chat turns.
 
 Usage:
     uv run python scripts/sweep_stuck_chat_turns.py [--dry-run] [--max-age-seconds 300]
@@ -34,7 +34,7 @@ def reap_stuck_chat_jobs(
 ) -> dict:
     """Finds ChatMessage rows stuck in 'queued' or 'processing' older than
     `max_age_seconds`, transitions them to 'failed', and releases their
-    concurrency slots in Redis (Gap 605)."""
+    concurrency slots in Redis (BE Gap 605)."""
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(seconds=max_age_seconds)
 

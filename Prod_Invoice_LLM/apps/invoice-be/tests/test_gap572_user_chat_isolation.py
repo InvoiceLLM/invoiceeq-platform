@@ -30,7 +30,7 @@ from dependencies import (
 )
 from routers.chat_attachments import _require_owned_session
 
-# Gap 570 / Gap 525: PostgreSQL test fixture with strict localhost and db-name security guard
+# BE Gap 570 / Gap 525: PostgreSQL test fixture with strict localhost and db-name security guard
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse

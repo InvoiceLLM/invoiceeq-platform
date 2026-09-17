@@ -19,7 +19,7 @@ from services.chat_queue import (
 )
 from queue_worker.handlers import handle_process_chat_job
 
-# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+# BE Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
 postgres_test_url = os.getenv("TEST_DATABASE_URL")
 if postgres_test_url:
     from urllib.parse import urlparse as _urlparse
@@ -913,7 +913,7 @@ def test_an_accepted_turn_is_unaffected_by_the_new_limiter(db_session):
         )
 
     assert res.status_code == 202
-    # Gap 600 (CH-33): Redis enqueue succeeded, so local pool.submit is skipped to prevent double execution
+    # BE Gap 600 (CH-33): Redis enqueue succeeded, so local pool.submit is skipped to prevent double execution
     assert not pool.submit.called
     assert len(r.queue) == 1
     assert r.counters[f"{CHAT_TENANT_INFLIGHT_PREFIX}{MOCK_TENANT_ID}"] == 1

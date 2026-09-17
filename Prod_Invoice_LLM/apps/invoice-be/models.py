@@ -493,7 +493,7 @@ class ChatMessage(SQLModel, table=True):
     attachment_payload: dict | None = Field(
         default=None, sa_column=Column(JSON_VARIANT, nullable=True)
     )
-    # Gap 596: Persist route, model deployment, prompt version hash, and token counts
+    # BE Gap 596: Persist route, model deployment, prompt version hash, and token counts
     turn_metadata: dict | None = Field(
         default=None, sa_column=Column(JSON_VARIANT, nullable=True)
     )
@@ -826,7 +826,7 @@ class AutoGoldenCase(SQLModel, table=True):
     source: str = Field(default="auto:thumbs_down", max_length=64, index=True)
     active: bool = Field(default=True, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    # Gap 598: Persist generated_sql, citations, result_invoice_ids, and turn_metadata
+    # BE Gap 598: Persist generated_sql, citations, result_invoice_ids, and turn_metadata
     generated_sql: str | None = Field(default=None)
     citations: list = Field(default=[], sa_column=Column(JSON_VARIANT))
     result_invoice_ids: list = Field(default=[], sa_column=Column(JSON_VARIANT))

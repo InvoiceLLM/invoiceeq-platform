@@ -212,7 +212,7 @@ def test_a_self_contained_question_still_uses_the_cache(monkeypatch):
 
 
 def test_cache_invalidation_uses_scan_iter_gap604(monkeypatch):
-    """Gap 604: Invalidation uses non-blocking scan_iter instead of blocking keys()."""
+    """BE Gap 604: Invalidation uses non-blocking scan_iter instead of blocking keys()."""
     from routers.chat import _invalidate_chat_answer_cache
     import redis
 
@@ -240,7 +240,7 @@ def test_cache_invalidation_uses_scan_iter_gap604(monkeypatch):
 
 
 def test_failed_or_declined_turn_clears_focus_gap586():
-    """Gap 586: An errored or declined turn clears stale session focus."""
+    """BE Gap 586: An errored or declined turn clears stale session focus."""
     from uuid import uuid4
     from sqlmodel import SQLModel, Session, create_engine
     from models import ChatSession

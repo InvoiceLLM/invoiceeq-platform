@@ -56,7 +56,7 @@ from services.widget_tokens import (
     revoke_widget_token,
 )
 
-# Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
+# BE Gap 570 / Gap 525: Allow running against Postgres with strict localhost guard to prevent purging non-local data
 import os
 
 postgres_test_url = os.getenv("TEST_DATABASE_URL")

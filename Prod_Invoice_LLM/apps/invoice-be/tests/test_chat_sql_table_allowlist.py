@@ -120,7 +120,7 @@ def test_a_webhook_secret_and_audit_history_cannot_be_read_through_chat_sql():
 
 
 def test_forbidden_functions_are_refused_gap574():
-    """Gap 574: pg_sleep, pg_read_file and other administrative functions are rejected."""
+    """BE Gap 574: pg_sleep, pg_read_file and other administrative functions are rejected."""
     tenant = uuid4()
     for func_sql in [
         f"SELECT pg_sleep(30), id FROM invoice WHERE tenant_id = '{tenant}'",
