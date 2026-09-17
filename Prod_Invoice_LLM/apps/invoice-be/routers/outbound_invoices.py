@@ -44,7 +44,7 @@ from services.file_intake import (
     UnsupportedUploadError,
     normalize_upload,
 )
-from services.storage import upload_pdf_to_blob_storage
+from services.storage import upload_pdf_to_blob_storage, StorageUploadError
 from services.staff_notify import notify_auditor_action
 from services.invoice_visibility import invoice_not_deleted
 from azure.storage.queue import QueueClient
@@ -152,6 +152,12 @@ async def _store_and_enqueue_outbound(
     try:
         file_path = await run_in_threadpool(
             upload_pdf_to_blob_storage, pdf_bytes, str(context.tenant_id), str(invoice_id)
+        )
+    except StorageUploadError as e:
+        logger.error("Storage upload failed for outbound invoice %s (%s): %s", invoice_id, filename, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is temporarily unavailable. Nothing was saved. Try again.",
         )
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to store file {filename}: {str(e)}")

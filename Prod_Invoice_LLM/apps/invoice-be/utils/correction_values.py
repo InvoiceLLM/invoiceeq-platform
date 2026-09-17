@@ -17,7 +17,16 @@ _CURRENCY_CODE = re.compile(r"^[A-Za-z]{3}\s+|\s+[A-Za-z]{3}$")
 # Western (1,250,000.50) or Indian (12,50,000.50) grouping; anything else with a comma is refused.
 _GROUPED_NUMBER = re.compile(r"[+-]?\d{1,3}(,\d{2,3})*(\.\d+)?")
 _NUMERIC_DATE = re.compile(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})")
-_WORD_DATE_FORMATS = ("%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y", "%d-%b-%Y")
+# BE Gap 670: the worker reads printed document dates with this same parser, so the
+# forms below are additive -- nothing that was refused before is now guessed.
+_YEAR_FIRST_DATE = re.compile(r"(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})")
+_TRAILING_TIME = re.compile(r"\s+\d{1,2}:\d{2}(:\d{2})?(\s*[AaPp][Mm])?$")
+_ORDINAL_DAY = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE)
+_SEPT = re.compile(r"\bsept\b", re.IGNORECASE)
+_WORD_DATE_FORMATS = (
+    "%d %b %Y", "%d %B %Y", "%b %d %Y", "%B %d %Y",
+    "%d-%b-%Y", "%d-%B-%Y", "%b-%d-%Y", "%B-%d-%Y",
+)
 
 
 def is_blank(raw_value: Any) -> bool:
@@ -66,6 +75,11 @@ def parse_date(raw_value: Any) -> date:
         return date.fromisoformat(text.split("T")[0].split(" ")[0])
     except ValueError:
         pass
+    # BE Gap 670: a time printed after the date ("15/09/2026 10:30") is not part of it.
+    text = _TRAILING_TIME.sub("", text)
+    year_first = _YEAR_FIRST_DATE.fullmatch(text)
+    if year_first:
+        return date(int(year_first[1]), int(year_first[2]), int(year_first[3]))
     numeric = _NUMERIC_DATE.fullmatch(text)
     if numeric:
         first, second, year = int(numeric[1]), int(numeric[2]), int(numeric[3])
@@ -76,7 +90,9 @@ def parse_date(raw_value: Any) -> date:
         if first == second:
             return date(year, first, second)
         raise ValueError(f"'{text}' could be day/month or month/day — use YYYY-MM-DD")
-    words = text.replace(",", "")
+    # BE Gap 670: "15th September, 2026", "15 Sept 2026" -- the ordinal and the four-letter
+    # abbreviation carry nothing once the day and month are read.
+    words = " ".join(_SEPT.sub("Sep", _ORDINAL_DAY.sub(r"\1", text.replace(",", " "))).split())
     for fmt in _WORD_DATE_FORMATS:
         try:
             return datetime.strptime(words, fmt).date()

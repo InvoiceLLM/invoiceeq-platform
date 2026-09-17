@@ -19,6 +19,8 @@ from agents.extraction_agent import run_extraction_agent
 from services.document_type_classifier import DOC_TYPE_FAMILY, MONEY_FAMILY
 from utils.rule_schema import merge_constraints
 from utils.alert_ids import with_alert_ids
+from utils.extracted_dates import parse_extracted_date  # BE Gap 670
+from telemetry import track_extraction_pipeline_turn  # BE Gap 686
 
 
 logger = logging.getLogger(__name__)
@@ -252,6 +254,10 @@ def _run_ocr(file_path: str, settings: Settings):
     confidence_dict = {}
     tax_details_sum = None
     source_document_json = None
+    # BE Gap 683 review fix: initialised here, not inside the `documents`/`fields` branch
+    # below -- a document Document Intelligence returns no fields for used to reach the
+    # return statement with this name unbound (UnboundLocalError -> invoice FAILED).
+    vendor_name_detected = None
 
     # Gap 330: Document Intelligence returns bounding_regions.polygon in the
     # page's own physical unit (inches for prebuilt-invoice, per
@@ -336,12 +342,21 @@ def _run_ocr(file_path: str, settings: Settings):
                 except Exception as e:
                     logger.warning("Failed to sum Doc Intelligence TaxDetails for %s: %s", file_path, e)
 
+            # BE Gap 683: Extract pre-detected vendor name from Document Intelligence fields
+            if "VendorName" in doc.fields:
+                vn_field = doc.fields["VendorName"]
+                if hasattr(vn_field, "value") and vn_field.value:
+                    vendor_name_detected = str(vn_field.value)
+                elif hasattr(vn_field, "content") and vn_field.content:
+                    vendor_name_detected = str(vn_field.content)
+
     return {
         "content": result.content or "",
         "coordinates": coordinates_list,
         "field_confidence": confidence_dict,
         "tax_details_sum": tax_details_sum,
         "source_document_json": source_document_json,
+        "vendor_name": vendor_name_detected,
     }
 
 
@@ -430,24 +445,16 @@ def _routes_to_documents_table(doc_type: str | None) -> bool:
     return family != MONEY_FAMILY
 
 
-def _parse_doc_date(value) -> Optional[date]:
-    """Best-effort ISO date parse for `Document.doc_date` / `.valid_until`.
+def _parse_doc_date(value, field_name: str = "doc_date", alerts: list | None = None) -> Optional[date]:
+    """Parse printed date for `Document` or `Invoice` fields using `parse_extracted_date`.
 
-    Same shape as the inline date handling on the invoice branch below: the
-    generic schema returns dates as free-text strings because a document may
-    legitimately print one in any regional format, and a value we cannot parse
-    is left NULL rather than guessed at. A guessed date on a contract's
-    `valid_until` is a plausible wrong answer, which is the class E9 exists to
-    prevent.
+    Ambiguous or unreadable dates append an alert to `alerts` (if provided) and
+    return None rather than guessing at day/month.
     """
-    if not value:
-        return None
-    try:
-        date_str = str(value).split("T")[0].split(" ")[0].strip()
-        return datetime.strptime(date_str, "%Y-%m-%d").date()
-    except Exception as de:
-        logger.warning("Could not parse document date %s: %s", value, de)
-        return None
+    parsed_dt, date_alert = parse_extracted_date(value, field_name)
+    if date_alert is not None and alerts is not None:
+        alerts.append(date_alert)
+    return parsed_dt
 
 
 def _persist_non_invoice_document(
@@ -522,8 +529,8 @@ def _persist_non_invoice_document(
         doc_number=extracted_data.get("doc_number"),
         po_number=extracted_data.get("po_number"),
         reference_numbers=extracted_data.get("reference_numbers") or [],
-        doc_date=_parse_doc_date(extracted_data.get("doc_date")),
-        valid_until=_parse_doc_date(extracted_data.get("valid_until")),
+        doc_date=_parse_doc_date(extracted_data.get("doc_date"), "doc_date", alerts=alerts),
+        valid_until=_parse_doc_date(extracted_data.get("valid_until"), "valid_until", alerts=alerts),
         currency=extracted_data.get("currency"),
         # `.get()` with no `or 0` anywhere on these five: a delivery note that
         # prints no prices must keep them NULL. Coercing absence to zero is the
@@ -586,12 +593,16 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
     only the prompt-relevant ones. Rendering here would have silently stripped
     every non-prompt rule before it ever reached verification.
 
-    Gap 549: matches templates via exact match, normalized vendor name, or
-    canonical vendor alias lookup from services/vendor_master.
+    BE Gap 675: matches INBOUND templates by exact name, then normalized name (legal
+    suffixes and punctuation removed), then a CONFIRMED vendor_master alias. Every
+    lookup logs how it matched, or that it missed.
+
+    Deliberately NO fuzzy/similarity match (review 2026-09-17): applying one vendor's
+    trained rules to another vendor whose name merely looks similar is a silent wrong
+    extraction, the same class vendor_master refuses by never auto-binding an
+    unconfirmed alias. A near-miss name is surfaced as a miss so the tenant can confirm
+    the alias instead.
     """
-    # BE Gap 568: inbound extraction reads INBOUND templates only. Since Feature 7.1 a tenant can
-    # hold one Global row per direction; without this filter a tenant whose only Global template
-    # was OUTBOUND had those rules applied to its inbound invoices.
     stmt = select(ExtractionTemplate).where(
         ExtractionTemplate.tenant_id == UUID(tenant_id),
         ExtractionTemplate.flow_direction == "INBOUND",
@@ -606,35 +617,62 @@ def _get_template_rules(session: Session, tenant_id: str, vendor_name: str | Non
     # 1. Exact match on vendor_name
     tpl = session.exec(stmt.where(ExtractionTemplate.vendor_name == vendor_name)).first()
     if tpl and isinstance(tpl.rules, dict):
+        logger.info("Matched vendor template for '%s' (exact match, tenant: %s)", vendor_name, tenant_id)
         return list(tpl.rules.get("constraints", []) or [])
 
-    # 2. Normalized vendor name match and vendor_master alias resolution (Gap 549)
-    try:
-        from services.vendor_master import normalise_vendor_name, resolve_vendor
-        norm_input = normalise_vendor_name(vendor_name)
-        if norm_input:
-            tenant_templates = session.exec(
-                select(ExtractionTemplate).where(
-                    ExtractionTemplate.tenant_id == UUID(tenant_id),
-                    ExtractionTemplate.vendor_name.is_not(None),
-                )
-            ).all()
-            for t in tenant_templates:
-                if normalise_vendor_name(t.vendor_name) == norm_input:
-                    if isinstance(t.rules, dict):
-                        return list(t.rules.get("constraints", []) or [])
+    # 2. Normalized vendor name, then confirmed vendor_master alias (BE Gap 675)
+    from services.vendor_master import normalise_vendor_name, resolve_vendor
 
-            # Check resolved canonical vendor
-            res = resolve_vendor(vendor_name, UUID(tenant_id), session)
-            if res.is_bound and res.vendor:
-                canonical_norm = normalise_vendor_name(res.vendor.canonical_name)
-                for t in tenant_templates:
-                    if normalise_vendor_name(t.vendor_name) == canonical_norm:
-                        if isinstance(t.rules, dict):
-                            return list(t.rules.get("constraints", []) or [])
-    except Exception as e:
-        logger.debug("Vendor alias lookup in _get_template_rules failed: %s", e)
+    def _pick(templates: list, key: str, how: str):
+        matches = [t for t in templates if normalise_vendor_name(t.vendor_name) == key]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            logger.warning(
+                "BE Gap 675: %d INBOUND templates normalise to '%s' for tenant %s (%s); using the most "
+                "recently updated. Merge or rename them.",
+                len(matches), key, tenant_id, ", ".join(repr(t.vendor_name) for t in matches),
+            )
+        chosen = matches[0]
+        logger.info("Matched vendor template for '%s' -> '%s' (%s, tenant: %s)", vendor_name, chosen.vendor_name, how, tenant_id)
+        return chosen
 
+    norm_input = normalise_vendor_name(vendor_name)
+    if norm_input:
+        # INBOUND only (BE Gap 568) and newest first, so a duplicate resolves the same way every time.
+        tenant_templates = session.exec(
+            select(ExtractionTemplate)
+            .where(
+                ExtractionTemplate.tenant_id == UUID(tenant_id),
+                ExtractionTemplate.flow_direction == "INBOUND",
+                ExtractionTemplate.vendor_name.is_not(None),
+            )
+            .order_by(ExtractionTemplate.updated_at.desc(), ExtractionTemplate.id)
+        ).all()
+
+        # 2a. Normalized match (strips legal suffixes: Ltd, Pvt Ltd, Inc, etc.)
+        chosen = _pick(tenant_templates, norm_input, "normalized match")
+
+        # 2b. A CONFIRMED alias in vendor_master (resolve_vendor never binds an unconfirmed one)
+        if chosen is None:
+            try:
+                res = resolve_vendor(vendor_name, UUID(tenant_id), session)
+                if res.is_bound and res.vendor:
+                    chosen = _pick(
+                        tenant_templates,
+                        normalise_vendor_name(res.vendor.canonical_name),
+                        f"confirmed alias of '{res.vendor.canonical_name}'",
+                    )
+            except Exception as e:
+                logger.warning("Vendor alias lookup in _get_template_rules failed for '%s': %s", vendor_name, e, exc_info=True)
+
+        if chosen is not None and isinstance(chosen.rules, dict):
+            return list(chosen.rules.get("constraints", []) or [])
+
+    logger.info(
+        "No vendor template matched for extracted vendor '%s' (normalized: '%s', tenant: %s)",
+        vendor_name, norm_input, tenant_id,
+    )
     return []
 
 
@@ -768,38 +806,17 @@ def handle_import_connector_file(
     direction_prefix = "outbound" if direction == "outbound" else "inbound"
     blob_path = f"tenants/{tenant_id}/{direction_prefix}/{batch_id}/{file_name}"
 
-    uploaded_path = None
-    container_name = "invoices"
-
-    if settings.AZURE_STORAGE_CONNECTION_STRING and "your_azure_storage" not in settings.AZURE_STORAGE_CONNECTION_STRING:
-        try:
-            from azure.storage.blob import BlobServiceClient
-            blob_service = BlobServiceClient.from_connection_string(
-                settings.AZURE_STORAGE_CONNECTION_STRING
-            )
-            container_client = blob_service.get_container_client(container_name)
-            try:
-                container_client.create_container()
-            except Exception:
-                pass
-                
-            blob_client = blob_service.get_blob_client(container=container_name, blob=blob_path)
-            blob_client.upload_blob(file_bytes, overwrite=True)
-            uploaded_path = f"azure://{container_name}/{blob_path}"
-            logger.info(
-                "Connector import uploaded to Azure: provider=%s file_id=%s direction=%s path=%s",
-                provider, file_id, direction, uploaded_path,
-            )
-        except Exception as e:
-            logger.warning("Connector import blob upload to Azure failed, falling back to local: %s", e)
-
-    if not uploaded_path:
-        local_path = os.path.join(LOCAL_STORAGE_DIR, tenant_id, direction_prefix, batch_id, file_name)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        logger.info("Writing connector PDF file locally for offline fallback: %s", local_path)
-        with open(local_path, "wb") as f:
-            f.write(file_bytes)
-        uploaded_path = local_path
+    from services.storage import upload_pdf_to_blob_storage, StorageUploadError
+    try:
+        uploaded_path = upload_pdf_to_blob_storage(
+            file_bytes, tenant_id, f"{batch_id}_{file_name}", custom_blob_path=blob_path
+        )
+    except StorageUploadError as storage_err:
+        logger.error(
+            "Connector import failed to upload to blob storage: provider=%s file_id=%s error=%s",
+            provider, file_id, storage_err,
+        )
+        raise
 
     # Gap 179: inbound connector import used to enqueue process_invoice without
     # creating an Invoice row. handle_process_invoice only updates when
@@ -896,6 +913,22 @@ def handle_import_connector_file(
     }
 
 
+def _extract_predetected_vendor(ocr_result: dict | str | None) -> str | None:
+    """BE Gap 683: Pre-detect vendor name from OCR output to avoid redundant LLM passes."""
+    if not isinstance(ocr_result, dict):
+        return None
+    if ocr_result.get("vendor_name"):
+        return str(ocr_result["vendor_name"]).strip() or None
+    source_json = ocr_result.get("source_document_json")
+    if isinstance(source_json, dict):
+        v_entry = source_json.get("VendorName")
+        if isinstance(v_entry, dict):
+            val = v_entry.get("value") or v_entry.get("content")
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        elif isinstance(v_entry, str) and v_entry.strip():
+            return v_entry.strip()
+    return None
 
 
 def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dict:
@@ -905,6 +938,12 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
     2. Sends progress updates to client via SSE.
     3. Triggers multi-modal extraction/verification (agent block placeholder).
     """
+    pipeline_start = time.perf_counter()  # BE Gap 686
+    ocr_latency_ms = 0.0
+    llm_latency_ms = 0.0
+    db_persist_latency_ms = 0.0
+    chroma_latency_ms = 0.0
+
     settings = get_settings()
 
     # Gap 540: skip extraction if invoice was already finalized by an auditor.
@@ -956,7 +995,9 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
 
     try:
         # 2. Extract raw layout text and metadata
+        _ocr_start = time.perf_counter()
         ocr_result = _run_ocr(file_path, settings)
+        ocr_latency_ms = (time.perf_counter() - _ocr_start) * 1000.0  # BE Gap 686
         on_log("OCR complete.")
         if isinstance(ocr_result, dict):
             _extracted_text = ocr_result["content"]
@@ -972,15 +1013,36 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         # 3. Update status: extracting structures (agent processing)
         _publish_sse_events(batch_id, {"status": "EXTRACTING_DATA", "message": "Extracting structured fields using LLM..."})
         
-        # ── Two-stage rule resolution (Task 10.8) ──────────────────────────────
-        # Stage 1: apply the tenant's Global template (vendor-agnostic rules) on the
-        # first pass, before we know the vendor.
+        # ── Two-stage rule resolution (Task 10.8) & BE Gap 683 ───────────────
+        # If the vendor name was pre-detected from OCR, we can merge Global + vendor rules
+        # directly in Pass 1, avoiding the redundant first extraction pass entirely!
         with Session(engine) as session:
             global_constraints = _get_template_rules(session, tenant_id, None)
 
-        first_pass_rules = {"constraints": global_constraints} if global_constraints else None
+        predetected_vendor = _extract_predetected_vendor(ocr_result)
+        predetected_constraints = []
+        if predetected_vendor:
+            with Session(engine) as session:
+                predetected_constraints = _get_template_rules(session, tenant_id, predetected_vendor)
+
+        if predetected_constraints:
+            initial_constraints = _merge_constraints(global_constraints, predetected_constraints)
+            rules_for_run = {"constraints": initial_constraints}
+            ran_merged_upfront = True
+            logger.info(
+                "BE Gap 683: OCR pre-detected vendor '%s' with %d trained constraints. "
+                "Merged rules upfront into single extraction pass.",
+                predetected_vendor, len(predetected_constraints),
+            )
+            on_log(f"Pre-detected vendor {predetected_vendor}; applying trained rules upfront...")
+        else:
+            initial_constraints = global_constraints
+            rules_for_run = {"constraints": initial_constraints} if initial_constraints else None
+            ran_merged_upfront = False
+
+        _llm_start = time.perf_counter()  # BE Gap 686
         agent_result = run_extraction_agent(
-            file_path, _extracted_text, tenant_id, rules=first_pass_rules, ocr_result=ocr_result, on_log=on_log
+            file_path, _extracted_text, tenant_id, rules=rules_for_run, ocr_result=ocr_result, on_log=on_log
         )
         status = agent_result["status"]
         alerts = agent_result["alerts"]
@@ -1001,13 +1063,42 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
         schema_version = agent_result.get("schema_version")
         llm_duration_ms = agent_result.get("llm_duration_ms")
 
-        # Stage 2: now that the vendor is known, merge Global + vendor-specific
-        # constraints (vendor wins on conflict) and re-run if a vendor template exists.
+        # Stage 2: now that the vendor is known, re-run only if vendor rules were not already applied
         vendor_name = extracted_data.get("vendor_name")
-        if vendor_name:
+        if vendor_name and ran_merged_upfront:
+            # BE Gap 683 review fix: Document Intelligence's VendorName can be the wrong party.
+            with Session(engine) as session:
+                extracted_constraints = _get_template_rules(session, tenant_id, vendor_name)
+            if extracted_constraints != predetected_constraints:
+                logger.warning(
+                    "BE Gap 683: pre-detected vendor '%s' but extraction read '%s' with different trained "
+                    "rules; re-running with the extracted vendor's rules.",
+                    predetected_vendor, vendor_name,
+                )
+                ran_merged_upfront = False
+        if vendor_name and not ran_merged_upfront:
             with Session(engine) as session:
                 vendor_constraints = _get_template_rules(session, tenant_id, vendor_name)
-            if vendor_constraints:
+            if not vendor_constraints and predetected_constraints:
+                logger.info("Re-running extraction with Global rules only (pre-detected vendor rules did not apply).")
+                agent_result = run_extraction_agent(
+                    file_path, _extracted_text, tenant_id,
+                    rules={"constraints": global_constraints} if global_constraints else None,
+                    ocr_result=ocr_result, on_log=on_log,
+                )
+                status = agent_result["status"]
+                alerts = agent_result["alerts"]
+                extracted_data = agent_result["extracted_data"] or {}
+                doc_type = agent_result.get("doc_type")
+                doc_type_evidence = agent_result.get("doc_type_evidence")
+                doc_attributes = agent_result.get("doc_attributes")
+                doc_type_confidence = agent_result.get("doc_type_confidence")
+                # Provenance from pass 2
+                model_deployment = agent_result.get("model_deployment")
+                prompt_version = agent_result.get("prompt_version")
+                schema_version = agent_result.get("schema_version")
+                llm_duration_ms = agent_result.get("llm_duration_ms")
+            elif vendor_constraints:
                 merged = _merge_constraints(global_constraints, vendor_constraints)
                 logger.info(
                     "Applying merged Global+vendor rules for vendor %s (%d constraints). Re-running extraction.",
@@ -1020,21 +1111,28 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 status = agent_result["status"]
                 alerts = agent_result["alerts"]
                 extracted_data = agent_result["extracted_data"] or {}
-                # The second pass reclassifies from the same OCR text, so this is
-                # the same answer; read from the result that is actually being
-                # persisted rather than leaving a stale value from the first pass.
                 doc_type = agent_result.get("doc_type")
                 doc_type_evidence = agent_result.get("doc_type_evidence")
                 doc_attributes = agent_result.get("doc_attributes")
                 doc_type_confidence = agent_result.get("doc_type_confidence")
-                # BE Gap 684: record pass 2 provenance (the pass that produced the persisted result)
+                # Provenance from pass 2
                 model_deployment = agent_result.get("model_deployment")
                 prompt_version = agent_result.get("prompt_version")
                 schema_version = agent_result.get("schema_version")
                 llm_duration_ms = agent_result.get("llm_duration_ms")
-
+            else:
+                logger.info("No vendor-specific rules found for vendor '%s'; skipping Stage 2 re-extraction.", vendor_name)
+        elif ran_merged_upfront:
+            logger.info("Stage 2 skipped: trained vendor rules were applied upfront in single pass (BE Gap 683).")
+        llm_latency_ms = (time.perf_counter() - _llm_start) * 1000.0  # BE Gap 686
 
         # Update invoice record in the database
+        _db_start = time.perf_counter()  # BE Gap 686
+        doc_routing_target = None
+        invoice_id_for_event = None
+        invoice_indexing_target = None
+        post_commit = None
+
         with Session(engine) as session:
             statement = select(Invoice).where(Invoice.file_path == file_path)
             invoice = session.exec(statement).first()
@@ -1074,56 +1172,15 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                     schema_version=schema_version,
                     llm_duration_ms=llm_duration_ms,
                 )
-
-                # Embed into the SIBLING collection (§5 step 9 / G10), never the
-                # tenant's invoice collection. `should_index_status()` is reused
-                # rather than reimplemented so the "is this worth indexing?"
-                # answer stays in one place (Gaps 240/243) -- EXTRACTED passes it,
-                # EXTRACT_FAILED does not. Best-effort, like the invoice path: a
-                # `Document` row is fully usable without an index.
-                from chroma_client import index_document_chunks, should_index_status
-                if should_index_status(status):
-                    try:
-                        _publish_sse_events(batch_id, {
-                            "status": "INDEXING",
-                            "message": "Generating page embeddings and indexing document chunks...",
-                        })
-                        index_document_chunks(
-                            document_id=str(document.id),
-                            tenant_id=str(document.tenant_id),
-                            doc_type=document.doc_type,
-                            party_name=document.party_name,
-                            file_path=file_path,
-                            on_log=on_log,
-                        )
-                    except Exception as ie:
-                        logger.error("RAG indexing failed for document %s: %s", document.id, ie)
-
-                # The terminal event carries the placeholder's id as well as the
-                # new document id: an open SSE stream is keyed on the id the
-                # upload returned, so without it that row would sit on
-                # PROCESSING forever rather than reaching a terminal state.
-                # E10 states the product consequence openly -- once the
-                # placeholder is gone the upload is absent from the ingestion
-                # status table until `GET /documents` (G14) has an FE surface
-                # (G11). That is a rollout gate, not a bug in this path.
-                _publish_sse_events(batch_id, {
-                    "status": status,
-                    "message": f"Processing finished with status: {status}",
-                    "invoice_id": str(invoice_id_for_event),
+                session.commit()
+                doc_routing_target = {
                     "document_id": str(document.id),
+                    "tenant_id": str(document.tenant_id),
                     "doc_type": document.doc_type,
-                    "data": extracted_data,
-                    "alerts": alerts,
-                })
-                return {
-                    "document_id": str(document.id),
-                    "doc_type": document.doc_type,
-                    "status": status,
-                    "alerts": alerts,
+                    "party_name": document.party_name,
                 }
 
-            if invoice:
+            elif invoice:
                 # Gap 540: defensive check before DB write in case status changed mid-extraction
                 if invoice.status in DECIDED_STATUSES:
                     logger.warning(
@@ -1154,19 +1211,24 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                         # issued -- without this filter a self-billing tenant
                         # could have an outbound row flag an inbound one.
                         Invoice.flow_direction == "INBOUND",
+                        Invoice.status != "DUPLICATE",
                         func.lower(Invoice.invoice_number) == invoice_number.lower(),
                         func.lower(Invoice.vendor_name) == vendor_name.lower()
                     )
-                    dup_invoice = session.exec(dup_stmt).first()
-                    if dup_invoice and dup_invoice.id:
-                        dup_alert = {
-                            "type": "duplicate_invoice",
-                            "message": f"An invoice with the same number ({invoice_number}) and vendor ({vendor_name}) already exists (ID: {dup_invoice.id})."
-                        }
-                        if dup_alert not in alerts:
-                            alerts = list(alerts)
-                            alerts.append(dup_alert)
-                        status = "AUDIT_REQUIRED"
+                    existing_dup = session.exec(dup_stmt.order_by(Invoice.created_at)).first()
+                    if existing_dup:
+                        invoice.status = "DUPLICATE"
+                        invoice.duplicate_of_id = existing_dup.id
+                        session.add(invoice)
+                        session.commit()
+                        logger.warning(f"Marked duplicate invoice {invoice.id} matching {existing_dup.id}")
+                        _publish_sse_events(batch_id, {
+                            "status": "DUPLICATE",
+                            "message": f"Duplicate invoice detected: matches {existing_dup.invoice_number}",
+                            "invoice_id": str(invoice.id),
+                            "duplicate_of_id": str(existing_dup.id)
+                        })
+                        return {"status": "DUPLICATE", "duplicate_of_id": str(existing_dup.id)}
 
                 # Layer 3 (Gap 503): near-duplicate -- same vendor, same invoice
                 # date, same grand total, DIFFERENT number. Layer 2 cannot see a
@@ -1176,7 +1238,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 near_dup = find_near_duplicate(session, invoice, extracted_data)
                 if near_dup is not None:
                     near_alert = {
-                        "type": "possible_duplicate",
+                        "type": "near_duplicate",
                         "severity": "warning",
                         "message": (
                             f"Possible duplicate: {near_dup.vendor_name} invoice {near_dup.invoice_number} "
@@ -1195,16 +1257,16 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.invoice_number = invoice_number
 
                 
-                # Parse date strings if present
+                # BE Gap 670: date parser
                 for date_field in ["invoice_date", "due_date"]:
-                    date_val = extracted_data.get(date_field)
-                    if date_val:
-                        try:
-                            # Truncate time if any or split by space/T
-                            date_str = str(date_val).split("T")[0].split(" ")[0].strip()
-                            setattr(invoice, date_field, datetime.strptime(date_str, "%Y-%m-%d").date())
-                        except Exception as de:
-                            logger.warning("Could not parse date %s for %s: %s", date_val, date_field, de)
+                    parsed_dt, date_alert = parse_extracted_date(extracted_data.get(date_field), date_field)
+                    if parsed_dt is not None:
+                        setattr(invoice, date_field, parsed_dt)
+                    if date_alert is not None:
+                        if date_alert not in alerts:
+                            alerts = list(alerts)
+                            alerts.append(date_alert)
+                        status = "AUDIT_REQUIRED"
                             
                 invoice.tax_amount = extracted_data.get("tax_amount")
                 invoice.po_number = extracted_data.get("po_number")
@@ -1267,86 +1329,192 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 invoice.items = extracted_data.get("items", [])
                 
                 session.add(invoice)
+                post_commit = {
+                    "invoice_id": invoice.id,
+                    "tenant_id": invoice.tenant_id,
+                    "vendor_name": invoice.vendor_name,
+                    "grand_total": invoice.grand_total,
+                    "currency": invoice.currency,
+                }
                 session.commit()
+                invoice_indexing_target = {
+                    "invoice_id": str(post_commit["invoice_id"]),
+                    "tenant_id": str(post_commit["tenant_id"]),
+                    "vendor_name": post_commit["vendor_name"],
+                }
 
-                # Feature 15 (Task 15.4): fire right after the commit that
-                # actually changed the status -- never before, so a webhook
-                # is never sent for a status the DB doesn't durably reflect yet.
-                if status in ("COMPLETED", "AUDIT_REQUIRED"):
-                    try:
-                        from services.webhooks import dispatch_webhook_event
-                        event_type = "invoice.completed" if status == "COMPLETED" else "invoice.audit_required"
-                        dispatch_webhook_event(session, invoice.tenant_id, event_type, {
-                            "invoice_id": str(invoice.id),
-                            "status": status,
-                            "vendor_name": invoice.vendor_name,
-                            "grand_total": invoice.grand_total,
-                            # Gap 557: do not default missing currency to "USD" -- send null/None if unknown
-                            "currency": invoice.currency,
-                        })
-                    except Exception as we:
-                        logger.error("Webhook dispatch failed for invoice %s: %s", invoice.id, we)
+        # BE Gap 678: the persistence session is closed here. Network side effects run after it.
+        db_persist_latency_ms = (time.perf_counter() - _db_start) * 1000.0  # BE Gap 686
+        chroma_latency_ms = 0.0
 
-                    try:
-                        from services.staff_notify import notify_processing_complete
-                        notify_processing_complete(session, invoice)
-                    except Exception as ne:
-                        logger.error("Staff process-complete notify failed for %s: %s", invoice.id, ne)
-
-                    # Gap 317: this invoice just moved total_invoice_count/
-                    # audit_rate_percent/top_vendors_by_spend -- the aggregates
-                    # Actionable Insights is grounded in -- so its cached
-                    # recommendation may now be stale.
-                    try:
-                        from routers.dashboard import invalidate_insights_cache
-                        invalidate_insights_cache(invoice.tenant_id)
-                    except Exception as ie:
-                        logger.error("Insights cache invalidation failed for %s: %s", invoice.id, ie)
-
-                    # BE Gap 577 (CH-10): Invoice data changed; invalidate chat answer cache
-                    try:
-                        from services.chat_cache import bump_tenant_data_version
-                        bump_tenant_data_version(invoice.tenant_id)
-                    except Exception as ce:
-                        logger.error("Chat cache data version bump failed for %s: %s", invoice.id, ce)
-
-
-
-            # Run page-level RAG indexing. Gap 240: this used to be gated on
-            # `status == "COMPLETED"`, so an invoice that tripped any
-            # verification alert (AUDIT_REQUIRED) was never indexed -- and
-            # because routers/audit.py's resolve path can only move it to
-            # PAID/REJECTED/AUDIT_REQUIRED, never back to COMPLETED, it stayed
-            # unindexed for the life of the row. RAG content is independent of
-            # the arithmetic-verification outcome, so the gate is now
-            # `should_index_status()` (everything except the not-yet-extracted /
-            # failed / duplicate statuses).
-            from chroma_client import index_invoice_document, should_index_status
+        if doc_routing_target is not None:
+            # Embed into the SIBLING collection (§5 step 9 / G10), never the
+            # tenant's invoice collection. `should_index_status()` is reused
+            # rather than reimplemented so the "is this worth indexing?"
+            # answer stays in one place (Gaps 240/243) -- EXTRACTED passes it,
+            # EXTRACT_FAILED does not. Best-effort, like the invoice path: a
+            # `Document` row is fully usable without an index.
+            from chroma_client import index_document_chunks, should_index_status
             if should_index_status(status):
+                _chroma_start = time.perf_counter()  # BE Gap 686
                 try:
                     _publish_sse_events(batch_id, {
                         "status": "INDEXING",
-                        "message": "Generating page embeddings and indexing document chunks..."
+                        "message": "Generating page embeddings and indexing document chunks...",
                     })
-                    index_invoice_document(
-                        invoice_id=str(invoice.id),
-                        tenant_id=str(invoice.tenant_id),
-                        vendor_name=invoice.vendor_name,
+                    index_document_chunks(
+                        document_id=doc_routing_target["document_id"],
+                        tenant_id=doc_routing_target["tenant_id"],
+                        doc_type=doc_routing_target["doc_type"],
+                        party_name=doc_routing_target["party_name"],
                         file_path=file_path,
                         on_log=on_log,
                     )
                 except Exception as ie:
-                    logger.error("RAG indexing failed for invoice %s: %s", invoice.id, ie)
-            
-            # Update SSE status to COMPLETED/AUDIT_REQUIRED
+                    logger.error("RAG indexing failed for document %s: %s", doc_routing_target["document_id"], ie)
+                chroma_latency_ms = (time.perf_counter() - _chroma_start) * 1000.0
+
+            # The terminal event carries the placeholder's id as well as the
+            # new document id: an open SSE stream is keyed on the id the
+            # upload returned, so without it that row would sit on
+            # PROCESSING forever rather than reaching a terminal state.
+            # E10 states the product consequence openly -- once the
+            # placeholder is gone the upload is absent from the ingestion
+            # status table until `GET /documents` (G14) has an FE surface
+            # (G11). That is a rollout gate, not a bug in this path.
             _publish_sse_events(batch_id, {
                 "status": status,
                 "message": f"Processing finished with status: {status}",
-                "invoice_id": str(invoice.id),
+                "invoice_id": str(invoice_id_for_event),
+                "document_id": doc_routing_target["document_id"],
+                "doc_type": doc_routing_target["doc_type"],
                 "data": extracted_data,
-                "alerts": alerts
+                "alerts": alerts,
             })
-        
+
+            total_duration_ms = (time.perf_counter() - pipeline_start) * 1000.0  # BE Gap 686
+            track_extraction_pipeline_turn(
+                batch_id=batch_id,
+                invoice_id=str(invoice_id_for_event),
+                tenant_id=tenant_id,
+                status=status,
+                ocr_latency_ms=ocr_latency_ms,
+                llm_latency_ms=llm_latency_ms,
+                verify_latency_ms=None,
+                db_persist_latency_ms=db_persist_latency_ms,
+                chroma_latency_ms=chroma_latency_ms,
+                total_duration_ms=total_duration_ms,
+                doc_type=doc_routing_target["doc_type"],
+                alerts_count=len(alerts) if alerts else 0,
+            )
+
+            return {
+                "document_id": doc_routing_target["document_id"],
+                "doc_type": doc_routing_target["doc_type"],
+                "status": status,
+                "alerts": alerts,
+            }
+
+        if post_commit and status in ("COMPLETED", "AUDIT_REQUIRED"):
+            # Feature 15 (Task 15.4): fire right after the commit that
+            # actually changed the status -- never before, so a webhook
+            # is never sent for a status the DB doesn't durably reflect yet.
+            try:
+                from services.webhooks import dispatch_webhook_event
+                event_type = "invoice.completed" if status == "COMPLETED" else "invoice.audit_required"
+                with Session(engine) as webhook_session:
+                    dispatch_webhook_event(webhook_session, post_commit["tenant_id"], event_type, {
+                        "invoice_id": str(post_commit["invoice_id"]),
+                        "status": status,
+                        "vendor_name": post_commit["vendor_name"],
+                        "grand_total": post_commit["grand_total"],
+                        # Gap 557: do not default missing currency to "USD" -- send null/None if unknown
+                        "currency": post_commit["currency"],
+                    })
+            except Exception as we:
+                logger.error("Webhook dispatch failed for invoice %s: %s", post_commit["invoice_id"], we)
+
+            try:
+                from services.staff_notify import notify_processing_complete
+                with Session(engine) as notify_session:
+                    notify_invoice = notify_session.get(Invoice, post_commit["invoice_id"])
+                    if notify_invoice is not None:
+                        notify_processing_complete(notify_session, notify_invoice)
+            except Exception as ne:
+                logger.error("Staff process-complete notify failed for %s: %s", post_commit["invoice_id"], ne)
+
+            # Gap 317: this invoice just moved total_invoice_count/
+            # audit_rate_percent/top_vendors_by_spend -- the aggregates
+            # Actionable Insights is grounded in -- so its cached
+            # recommendation may now be stale.
+            try:
+                from routers.dashboard import invalidate_insights_cache
+                invalidate_insights_cache(post_commit["tenant_id"])
+            except Exception as ie:
+                logger.error("Insights cache invalidation failed for %s: %s", post_commit["tenant_id"], ie)
+
+            # BE Gap 577 (CH-10): Invoice data changed; invalidate chat answer cache
+            try:
+                from services.chat_cache import bump_tenant_data_version
+                bump_tenant_data_version(post_commit["tenant_id"])
+            except Exception as ce:
+                logger.error("Chat cache data version bump failed for %s: %s", post_commit["tenant_id"], ce)
+
+        # Run page-level RAG indexing. Gap 240: this used to be gated on
+        # `status == "COMPLETED"`, so an invoice that tripped any
+        # verification alert (AUDIT_REQUIRED) was never indexed -- and
+        # because routers/audit.py's resolve path can only move it to
+        # PAID/REJECTED/AUDIT_REQUIRED, never back to COMPLETED, it stayed
+        # unindexed for the life of the row. RAG content is independent of
+        # the arithmetic-verification outcome, so the gate is now
+        # `should_index_status()` (everything except the not-yet-extracted /
+        # failed / duplicate statuses).
+        from chroma_client import index_invoice_document, should_index_status
+        if should_index_status(status) and invoice_indexing_target:
+            _chroma_start = time.perf_counter()  # BE Gap 686
+            try:
+                _publish_sse_events(batch_id, {
+                    "status": "INDEXING",
+                    "message": "Generating page embeddings and indexing document chunks..."
+                })
+                index_invoice_document(
+                    invoice_id=invoice_indexing_target["invoice_id"],
+                    tenant_id=invoice_indexing_target["tenant_id"],
+                    vendor_name=invoice_indexing_target["vendor_name"],
+                    file_path=file_path,
+                    on_log=on_log,
+                )
+            except Exception as ie:
+                logger.error("RAG indexing failed for invoice %s: %s", invoice_indexing_target["invoice_id"], ie)
+            chroma_latency_ms = (time.perf_counter() - _chroma_start) * 1000.0
+
+        resolved_invoice_id = invoice_indexing_target["invoice_id"] if invoice_indexing_target else str(_invoice_id_for_log or "")
+
+        # Update SSE status to COMPLETED/AUDIT_REQUIRED
+        _publish_sse_events(batch_id, {
+            "status": status,
+            "message": f"Processing finished with status: {status}",
+            "invoice_id": resolved_invoice_id,
+            "data": extracted_data,
+            "alerts": alerts
+        })
+
+        total_duration_ms = (time.perf_counter() - pipeline_start) * 1000.0  # BE Gap 686
+        track_extraction_pipeline_turn(
+            batch_id=batch_id,
+            invoice_id=resolved_invoice_id,
+            tenant_id=tenant_id,
+            status=status,
+            ocr_latency_ms=ocr_latency_ms,
+            llm_latency_ms=llm_latency_ms,
+            verify_latency_ms=None,
+            db_persist_latency_ms=db_persist_latency_ms,
+            chroma_latency_ms=chroma_latency_ms,
+            total_duration_ms=total_duration_ms,
+            doc_type=doc_type or "INVOICE",
+            alerts_count=len(alerts) if alerts else 0,
+        )
+
         return {
             "vendor_name": extracted_data.get("vendor_name"),
             "grand_total": extracted_data.get("grand_total"),
@@ -1356,6 +1524,24 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
 
     except Exception as e:
         logger.error("Error processing invoice batch %s: %s", batch_id, e)
+        total_duration_ms = (time.perf_counter() - pipeline_start) * 1000.0  # BE Gap 686
+        try:
+            track_extraction_pipeline_turn(
+                batch_id=batch_id,
+                invoice_id=str(_invoice_id_for_log or ""),
+                tenant_id=tenant_id,
+                status="FAILED",
+                ocr_latency_ms=ocr_latency_ms,
+                llm_latency_ms=0.0,
+                db_persist_latency_ms=0.0,
+                chroma_latency_ms=0.0,
+                total_duration_ms=total_duration_ms,
+                doc_type="INVOICE",
+                alerts_count=0,
+                error=str(e),
+            )
+        except Exception:
+            pass
         # Gap 84: persist FAILED before re-raising. This block used to publish
         # to the ephemeral SSE channel only, so a permanent failure was visible
         # solely to a browser that happened to have the stream open at that
@@ -1409,8 +1595,12 @@ def find_near_duplicate(session, invoice, extracted_data: dict):
     raw_date = extracted_data.get("invoice_date")
     if not (vendor_name and grand_total is not None and raw_date):
         return None
+    # BE Gap 670: same parser as persistence, so a non-ISO printed date no longer
+    # silently skips near-duplicate detection.
+    invoice_date, _ = parse_extracted_date(raw_date, "invoice_date")
+    if not invoice_date:
+        return None
     try:
-        invoice_date = datetime.strptime(str(raw_date).split("T")[0].split(" ")[0].strip(), "%Y-%m-%d").date()
         total = float(grand_total)
     except (TypeError, ValueError):
         return None

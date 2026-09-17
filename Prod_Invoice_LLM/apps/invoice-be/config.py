@@ -667,13 +667,15 @@ class Settings(BaseSettings):
     BILLING_GRACE_PERIOD_DAYS: int = 3
     # FE Gap 81: stuck-invoice reconciliation. An invoice still in a
     # non-terminal status this long after its last enqueue is treated as
-    # stalled and re-enqueued. 15 minutes is comfortably above a normal
+    # stalled and re-enqueued. BE Gap 679 / founder ruling D10 (2026-09-17): 15 -> 20
+    # minutes, now that a scheduled job actually runs the sweep every 10 minutes.
+    # 20 minutes is comfortably above a normal
     # end-to-end run (OCR + up to two LLM extraction passes, observed ~20-60s)
     # including the retry loops in extraction_agent/_run_ocr, so a merely slow
     # invoice is never re-queued underneath a worker that is still working on
     # it. After MAX_REPROCESS_ATTEMPTS re-queues it is marked FAILED instead,
     # so a file the worker genuinely cannot process can't loop forever.
-    INVOICE_STUCK_AFTER_MINUTES: int = 15
+    INVOICE_STUCK_AFTER_MINUTES: int = 20
     INVOICE_MAX_REPROCESS_ATTEMPTS: int = 2
     # Feature 14: one platform-wide mailbox (not per-tenant).
     # Tenant + direction are resolved from the sender's registered set.

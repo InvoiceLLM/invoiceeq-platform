@@ -28,7 +28,7 @@ from dependencies import (
 )
 from chroma_client import delete_document_chunks, delete_invoice_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
-from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
+from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage, StorageUploadError
 from services.invoice_visibility import invoice_not_deleted
 from utils.alert_ids import with_alert_ids
 from services.invoice_deletion import (
@@ -298,6 +298,12 @@ async def _ingest_single_file(
     try:
         file_path = await run_in_threadpool(
             upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
+        )
+    except StorageUploadError as e:
+        logger.error("Storage upload failed for invoice %s (%s): %s", invoice_id, filename, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is temporarily unavailable. Nothing was saved. Try again.",
         )
     except Exception as e:
         raise HTTPException(

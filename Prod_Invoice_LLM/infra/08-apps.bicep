@@ -216,6 +216,19 @@ param sandboxSweepCron string = '0 4 * * *'
 // cheap -- one indexed query per run, and nothing to do when nothing is stuck.
 param stuckChatTurnReaperCron string = '*/15 * * * *'
 
+// BE Gap 679 (Decision D10): the stuck-invoice reconciliation self-healing sweep.
+// Runs every 10 minutes to detect invoices stalled in non-terminal states (older than
+// INVOICE_STUCK_AFTER_MINUTES = 20, config.py) and re-enqueue them, or mark FAILED after
+// INVOICE_MAX_REPROCESS_ATTEMPTS. Declared only -- deployed in the infra pass with Gap 640.
+@description('Cron schedule (UTC) for the stuck-invoice reconciliation sweep (BE Gap 679). Every 10 minutes by default.')
+param stuckInvoiceSweepCron string = '*/10 * * * *'
+
+// BE Gap 688: extraction quality rollup sweep.
+// Daily sweep computing human correction rates and alert precision across active tenants,
+// writing telemetry to Application Insights and alerting on drift.
+@description('Cron schedule (UTC) for the extraction quality rollup sweep (BE Gap 688). Daily at 05:00 UTC by default.')
+param extractionQualitySweepCron string = '0 5 * * *'
+
 @description('vCPU allocation for scheduled jobs.')
 param scheduledJobCpu string = '0.5'
 
@@ -649,6 +662,68 @@ module stuckChatTurnReaperJob './modules/compute/scheduled-job.bicep' = {
       'scripts/sweep_stuck_chat_turns.py'
     ]
     cronExpression: stuckChatTurnReaperCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+  }
+}
+
+// BE Gap 679 (Decision D10): stuck-invoice reconciliation self-healing sweep.
+// Runs scripts/reconcile_stuck_invoices.py every 10 minutes to recover stranded uploads.
+module stuckInvoiceSweepJob './modules/compute/scheduled-job.bicep' = {
+  name: 'stuck-invoice-sweep-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-stuck-invoice-sweep-${environment}'
+    containerName: 'stuck-invoice-sweep'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/reconcile_stuck_invoices.py'
+    ]
+    cronExpression: stuckInvoiceSweepCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+  }
+}
+
+// BE Gap 688: extraction quality rollup sweep.
+// Runs scripts/sweep_extraction_quality.py daily to monitor human correction rates.
+module extractionQualitySweepJob './modules/compute/scheduled-job.bicep' = {
+  name: 'extraction-quality-sweep-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-extraction-quality-sweep-${environment}'
+    containerName: 'extraction-quality-sweep'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/sweep_extraction_quality.py'
+    ]
+    cronExpression: extractionQualitySweepCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName

@@ -18,7 +18,7 @@ from config import get_settings
 from dependencies import get_db_session, get_tenant_context, TenantContext
 from models import Tenant, TenantEmailSender, Invoice
 from routers.invoices import _ingest_single_file
-from services.storage import upload_pdf_to_blob_storage
+from services.storage import upload_pdf_to_blob_storage, StorageUploadError
 from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ImageTooLargeError,
@@ -196,9 +196,16 @@ async def _ingest_outbound_email_pdf(
         )
 
     invoice_id = uuid4()
-    file_path = await run_in_threadpool(
-        upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
-    )
+    try:
+        file_path = await run_in_threadpool(
+            upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
+        )
+    except StorageUploadError as e:
+        logger.error("Storage upload failed for outbound email invoice %s: %s", invoice_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is temporarily unavailable. Nothing was saved. Try again.",
+        )
 
     db_invoice = Invoice(
         id=invoice_id,

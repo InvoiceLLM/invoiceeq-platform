@@ -2,8 +2,10 @@ import os
 import json
 import time
 import logging
+import threading
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from azure.storage.queue import QueueClient
 from config import get_settings
 from utils.logging_config import setup_structured_logging, tenant_id_ctx, request_id_ctx
@@ -44,6 +46,8 @@ if appinsights_conn_str:
 MAX_WORKERS = 10
 MAX_DEQUEUE_ATTEMPTS = 5
 DEAD_LETTER_QUEUE_NAME = "extraction-tasks-deadletter-queue"
+VISIBILITY_TIMEOUT_SECONDS = 120  # BE Gap 677 / Decision D8: 120s message timeout
+HEARTBEAT_INTERVAL_SECONDS = 45.0  # BE Gap 677 / Decision D8: renewed every 45s
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +126,7 @@ def _release_tenant_slot(tenant_id: str) -> None:
 
 def _route_to_dead_letter_queue(queue_client: QueueClient, msg, error: Exception) -> None:
     """
-    Feature 19 (Task 19.4): Dead-Letter Queue (DLQ) poison message isolation.
+    Feature 19 (Task 19.4) & BE Gap 680 Part 1: Dead-Letter Queue (DLQ) poison message isolation.
     When a corrupted or unprocessable payload fails 5 times, it is moved to
     the Dead-Letter Queue ('extraction-tasks-deadletter-queue') and deleted
     from the active processing queue to prevent infinite retry lockup.
@@ -130,14 +134,6 @@ def _route_to_dead_letter_queue(queue_client: QueueClient, msg, error: Exception
     try:
         settings = get_settings()
         conn_str = settings.AZURE_STORAGE_CONNECTION_STRING
-        if not conn_str:
-            return
-
-        dlq_client = QueueClient.from_connection_string(conn_str, DEAD_LETTER_QUEUE_NAME)
-        try:
-            dlq_client.create_queue()
-        except Exception:
-            pass
 
         try:
             raw_payload = json.loads(msg.content)
@@ -153,16 +149,155 @@ def _route_to_dead_letter_queue(queue_client: QueueClient, msg, error: Exception
             "payload": raw_payload,
         }
 
-        dlq_client.send_message(json.dumps(dlq_payload))
-        # Purge from primary queue so worker can continue processing other messages
-        queue_client.delete_message(msg.id, msg.pop_receipt)
-        logger.error(
-            f"POISON MESSAGE ISOLATED: Message {msg.id} failed {getattr(msg, 'dequeue_count', MAX_DEQUEUE_ATTEMPTS)} times. "
-            f"Moved to Dead-Letter Queue '{DEAD_LETTER_QUEUE_NAME}' and purged from main queue.",
-            extra={"extra_fields": {"action": "moved_to_deadletter_queue", "dlq": DEAD_LETTER_QUEUE_NAME, "message_id": msg.id}},
-        )
+        # 1. Copy to the Dead-Letter Queue. BE Gap 680 (teammate finding): this used to
+        # `return` when the connection string was empty -- the message was neither
+        # isolated nor purged and retried forever. The DLQ client now falls back to the
+        # same storage account the main queue client is already talking to.
+        dlq_copied = False
+        try:
+            if conn_str:
+                dlq_client = QueueClient.from_connection_string(conn_str, DEAD_LETTER_QUEUE_NAME)
+            else:
+                account_url = queue_client.url.split("?")[0].rsplit("/", 1)[0]
+                dlq_client = QueueClient(account_url=account_url, queue_name=DEAD_LETTER_QUEUE_NAME,
+                                         credential=queue_client.credential)
+            try:
+                dlq_client.create_queue()
+            except Exception:
+                pass
+            dlq_client.send_message(json.dumps(dlq_payload))
+            dlq_copied = True
+        except Exception as dlq_send_err:
+            # BE Gap 680: never delete a message that was not copied -- deleting it here
+            # would lose the customer's job with no copy anywhere. It stays on the main
+            # queue, becomes visible again, and the next failure retries this routing.
+            logger.critical(
+                f"POISON MESSAGE ROUTING FAILED: Message {msg.id} could not be copied to "
+                f"'{DEAD_LETTER_QUEUE_NAME}' ({dlq_send_err}); left on the main queue for retry.",
+                extra={"extra_fields": {"action": "deadletter_copy_failed", "dlq": DEAD_LETTER_QUEUE_NAME, "message_id": msg.id}},
+            )
+
+        if dlq_copied:
+            # 2. Purge from the primary queue only once a copy exists.
+            try:
+                queue_client.delete_message(msg.id, msg.pop_receipt)
+            except Exception as del_err:
+                logger.error("Failed to purge poison message %s from main queue: %s", msg.id, del_err)
+
+            # 3. Exact log line required by alert-rules.bicep (Sev-1 alert keys on 'POISON MESSAGE ISOLATED')
+            logger.error(
+                f"POISON MESSAGE ISOLATED: Message {msg.id} failed {getattr(msg, 'dequeue_count', MAX_DEQUEUE_ATTEMPTS)} times. "
+                f"Moved to Dead-Letter Queue '{DEAD_LETTER_QUEUE_NAME}' and purged from main queue.",
+                extra={"extra_fields": {"action": "moved_to_deadletter_queue", "dlq": DEAD_LETTER_QUEUE_NAME, "message_id": msg.id}},
+            )
+
+        # 4. BE Gap 680: emit structured Application Insights telemetry
+        try:
+            from telemetry import track_poison_message
+            raw_dict = raw_payload if isinstance(raw_payload, dict) else {}
+            task_name = raw_dict.get("task", "unknown")
+            kwargs = raw_dict.get("kwargs") if isinstance(raw_dict.get("kwargs"), dict) else {}
+            tenant_id = kwargs.get("tenant_id") or raw_dict.get("tenant_id") or ""
+
+            payload_ids = {}
+            for key in ("batch_id", "file_path", "provider", "file_id", "job_id"):
+                val = kwargs.get(key) or raw_dict.get(key)
+                if val is not None:
+                    payload_ids[key] = val
+
+            track_poison_message(
+                task=task_name,
+                tenant_id=str(tenant_id),
+                payload_ids=payload_ids,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                dequeue_count=getattr(msg, "dequeue_count", MAX_DEQUEUE_ATTEMPTS),
+                dlq_copied=dlq_copied,
+            )
+        except Exception as telem_err:
+            logger.warning("Failed to emit poison message telemetry: %s", telem_err)
+
     except Exception as dlq_err:
         logger.critical(f"Failed to route poison message {msg.id} to DLQ: {dlq_err}", exc_info=True)
+
+
+class MessageHeartbeat:
+    """BE Gap 677: Renews visibility timeout of an in-flight Azure Storage Queue message
+
+    periodically (Decision D8: 120s timeout, renewed every 45s) to eliminate false redeliveries,
+    duplicate worker processing, and false dead-lettering during long-running extraction jobs.
+    """
+    def __init__(
+        self,
+        queue_client: QueueClient,
+        msg_id: str,
+        initial_pop_receipt: str,
+        visibility_timeout: int = VISIBILITY_TIMEOUT_SECONDS,
+        renew_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
+    ):
+        self.queue_client = queue_client
+        self.msg_id = msg_id
+        self.pop_receipt = initial_pop_receipt
+        self.visibility_timeout = visibility_timeout
+        self.renew_interval = renew_interval_seconds
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+
+    def get_pop_receipt(self) -> str:
+        with self._lock:
+            return self.pop_receipt
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.renew_interval):
+            # The lock is held across the renewal call, and the stop flag is re-checked
+            # inside it: `stop_and_get_receipt()` takes the same lock, so once it returns
+            # no renewal can still be in flight and no newer receipt can appear -- the
+            # receipt it hands to delete_message is final. (Review fix: the first version
+            # deleted with the heartbeat still running, so a renewal landing between
+            # reading the receipt and the delete invalidated it and the message was
+            # redelivered -- the duplicate this gap exists to prevent.)
+            with self._lock:
+                if self._stop_event.is_set():
+                    break
+                try:
+                    updated = self.queue_client.update_message(
+                        self.msg_id,
+                        self.pop_receipt,
+                        visibility_timeout=self.visibility_timeout,
+                    )
+                    if updated and getattr(updated, "pop_receipt", None):
+                        self.pop_receipt = updated.pop_receipt
+                        logger.debug(
+                            "Heartbeat renewed visibility timeout for message %s (next renewal in %ss)",
+                            self.msg_id, self.renew_interval,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "Heartbeat failed to renew visibility timeout for message %s: %s",
+                        self.msg_id, e,
+                    )
+
+    def stop_and_get_receipt(self) -> str:
+        """Stop renewing and return the final pop receipt. Blocks until any in-flight
+        renewal has finished, so the receipt cannot change after this returns."""
+        self._stop_event.set()
+        with self._lock:
+            return self.pop_receipt
+
+    def start(self) -> "MessageHeartbeat":
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"heartbeat-{self.msg_id}",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
 
 
 def _process_message(queue_client: QueueClient, msg) -> None:
@@ -172,6 +307,7 @@ def _process_message(queue_client: QueueClient, msg) -> None:
     someone calls .result()."""
     tenant_id = None
     slot_acquired = False
+    heartbeat: Optional[MessageHeartbeat] = None
     try:
         request_id_ctx.set(f"worker-{msg.id}")
         payload = json.loads(msg.content)
@@ -193,6 +329,15 @@ def _process_message(queue_client: QueueClient, msg) -> None:
 
         slot_acquired = True
         logger.info(f"Received task {task_name} with args {kwargs}")
+
+        # BE Gap 677: Start visibility heartbeat (120s timeout, renewed every 45s)
+        heartbeat = MessageHeartbeat(
+            queue_client=queue_client,
+            msg_id=msg.id,
+            initial_pop_receipt=msg.pop_receipt,
+            visibility_timeout=VISIBILITY_TIMEOUT_SECONDS,
+            renew_interval_seconds=HEARTBEAT_INTERVAL_SECONDS,
+        ).start()
 
         if task_name == "process_invoice":
             handle_process_invoice(
@@ -251,8 +396,10 @@ def _process_message(queue_client: QueueClient, msg) -> None:
         else:
             logger.warning(f"Unknown task {task_name}")
 
-        # Delete message after successful processing
-        queue_client.delete_message(msg.id, msg.pop_receipt)
+        # Delete after successful processing, with the heartbeat stopped FIRST so the
+        # receipt used here is final (see MessageHeartbeat._run).
+        final_pop_receipt = heartbeat.stop_and_get_receipt() if heartbeat else msg.pop_receipt
+        queue_client.delete_message(msg.id, final_pop_receipt)
         logger.info(f"Task {task_name} completed and deleted from queue.")
 
     except Exception as ex:
@@ -264,17 +411,25 @@ def _process_message(queue_client: QueueClient, msg) -> None:
         )
         # Feature 19 (Task 19.4): If attempts >= 5, route to Dead-Letter Queue to unblock queue
         if dequeue_count >= MAX_DEQUEUE_ATTEMPTS:
+            if heartbeat:
+                msg.pop_receipt = heartbeat.stop_and_get_receipt()
             _route_to_dead_letter_queue(queue_client, msg, ex)
     finally:
+        if heartbeat:
+            heartbeat.stop()
         if slot_acquired and tenant_id:
             _release_tenant_slot(tenant_id)
 
 
-def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
-    """Gap 280: Drains in-flight chat jobs from Redis chat_tasks_queue."""
+def _process_redis_chat_tasks(executor: ThreadPoolExecutor):
+    """Gap 280: Drains in-flight chat jobs from Redis chat_tasks_queue.
+
+    Returns the submitted Future (or None) so the poll loop can count the job against
+    the same MAX_WORKERS capacity as queue messages (BE Gap 677 review fix).
+    """
     r = _get_redis_sync()
     if not r:
-        return
+        return None
     try:
         # Check for queued chat tasks in Redis
         raw = r.rpop("chat_tasks_queue")
@@ -288,7 +443,7 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
             # default for the same reason -- an older message has no `task` key
             # at all and must still be read as a chat turn.
             if data.get("task") == "insight":
-                executor.submit(
+                return executor.submit(
                     handle_insight_job,
                     job_id=data.get("job_id"),
                     attachment_id=data.get("attachment_id"),
@@ -296,16 +451,14 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
                     message_id=data.get("message_id"),
                     notify_job_id=data.get("notify_job_id"),
                 )
-                return
             if data.get("task") == "extract_attachment":
-                executor.submit(
+                return executor.submit(
                     handle_extract_attachment,
                     job_id=data.get("job_id"),
                     attachment_id=data.get("attachment_id"),
                     tenant_id=data.get("tenant_id"),
                 )
-                return
-            executor.submit(
+            return executor.submit(
                 handle_process_chat_job,
                 job_id=data.get("job_id"),
                 session_id=data.get("session_id"),
@@ -325,6 +478,46 @@ def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:
             )
     except Exception as e:
         logger.warning("Error consuming Redis chat task: %s", e)
+    return None
+
+
+def _poll_once(queue_client: QueueClient, executor: ThreadPoolExecutor, active_futures: set) -> set:
+    """One pass of the BE Gap 677 poll loop; returns the still-running futures.
+
+    No batch barrier: a queue message is received only when a worker slot is free, and
+    Redis chat jobs occupy slots too. A message received while every thread is busy would
+    wait in the executor's backlog with its visibility clock running and no heartbeat
+    yet (the heartbeat starts inside `_process_message`), so it could reappear and be
+    processed twice -- the review found exactly that when chat jobs were not counted.
+    """
+    active_futures = {f for f in active_futures if not f.done()}
+
+    if len(active_futures) < MAX_WORKERS:
+        # Gap 280: Poll Redis chat queue (one job per pass, as before)
+        chat_future = _process_redis_chat_tasks(executor)
+        if chat_future is not None:
+            active_futures.add(chat_future)
+
+    available_slots = MAX_WORKERS - len(active_futures)
+    received_count = 0
+    if available_slots > 0:
+        for msg in queue_client.receive_messages(
+            messages_per_page=available_slots,
+            visibility_timeout=VISIBILITY_TIMEOUT_SECONDS,
+        ):
+            received_count += 1
+            active_futures.add(executor.submit(_process_message, queue_client, msg))
+            if len(active_futures) >= MAX_WORKERS:
+                break
+
+    if received_count == 0:
+        if active_futures:
+            # Wake as soon as any job finishes, never wait for the whole set.
+            done, _ = wait(active_futures, timeout=1.0, return_when=FIRST_COMPLETED)
+            active_futures.difference_update(done)
+        else:
+            time.sleep(2)
+    return active_futures
 
 
 def poll_queue():
@@ -351,28 +544,13 @@ def poll_queue():
 
     logger.info(f"Starting to poll Azure Storage Queue: {queue_name} (max {MAX_WORKERS} concurrent)")
 
+    active_futures = set()
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         while True:
             try:
-                # Gap 280: Poll Redis chat queue
-                _process_redis_chat_tasks(executor)
-
-                # Poll for up to MAX_WORKERS messages at once and process them
-                # concurrently. QueueClient is documented safe for concurrent
-                # use across threads (delete_message() per-message uses each
-                # message's own pop_receipt, so there's no shared mutable
-                # state between threads here).
-                messages = queue_client.receive_messages(messages_per_page=MAX_WORKERS, visibility_timeout=300)
-                batch = list(messages)
-
-                if batch:
-                    futures = [executor.submit(_process_message, queue_client, msg) for msg in batch]
-                    for future in futures:
-                        future.result()  # propagate nothing (errors handled inside), just wait for the batch
-
-                # Short sleep to prevent tight loop if queue is empty
-                time.sleep(2)
-
+                # BE Gap 677: continuous capacity loop, one pass at a time (see _poll_once).
+                active_futures = _poll_once(queue_client, executor, active_futures)
             except Exception as e:
                 logger.error(f"Error communicating with Azure Storage Queue: {e}")
                 time.sleep(10)

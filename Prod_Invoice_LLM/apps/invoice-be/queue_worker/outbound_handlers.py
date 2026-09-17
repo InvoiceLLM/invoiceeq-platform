@@ -10,6 +10,7 @@ from queue_worker.handlers import _run_ocr, _publish_sse_events, _persist_proces
 from agents.outbound_extraction_agent import run_outbound_extraction_agent
 from config import get_settings
 from utils.alert_ids import with_alert_ids
+from utils.extracted_dates import parse_extracted_date  # BE Gap 670
 
 logger = logging.getLogger(__name__)
 
@@ -164,14 +165,18 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 invoice.customer_name = customer_name
                 invoice.invoice_number = invoice_number
 
+                # BE Gap 670: same parser and alert as the inbound path; outbound's
+                # review status is NEEDS_REVIEW. A value that was not read never
+                # overwrites a date already on the row.
                 for date_field in ["invoice_date", "due_date"]:
-                    date_val = extracted_data.get(date_field)
-                    if date_val:
-                        try:
-                            date_str = str(date_val).split("T")[0].split(" ")[0].strip()
-                            setattr(invoice, date_field, datetime.strptime(date_str, "%Y-%m-%d").date())
-                        except Exception as de:
-                            logger.warning("Could not parse date %s for %s: %s", date_val, date_field, de)
+                    parsed_dt, date_alert = parse_extracted_date(extracted_data.get(date_field), date_field)
+                    if parsed_dt is not None:
+                        setattr(invoice, date_field, parsed_dt)
+                    if date_alert is not None:
+                        if date_alert not in alerts:
+                            alerts = list(alerts)
+                            alerts.append(date_alert)
+                        status = "NEEDS_REVIEW"
 
                 # Gap 505: subtotal was never persisted on the outbound path (inbound
                 # writes it at handlers.py); every outbound row had subtotal NULL.
@@ -240,24 +245,11 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 except Exception as ce:
                     logger.debug("Chat cache data version bump failed on outbound invoice %s: %s", invoice.id, ce)
 
-                # Feature 6.1 (Task 6.1.3): index outbound documents so they're
-                # searchable through the same RAG path Chat already uses.
-                # Gap 243: this used to be gated on `status == "VERIFIED"`, the
-                # outbound twin of Gap 240's inbound `COMPLETED` gate -- a
-                # NEEDS_REVIEW outbound invoice was never indexed, permanently,
-                # since routers/outbound_audit.py's resolve path doesn't change
-                # `status` at all. Now shares inbound's `should_index_status()`.
-                from chroma_client import index_invoice_document, should_index_status
-                if should_index_status(status):
-                    try:
-                        index_invoice_document(
-                            invoice_id=str(invoice.id),
-                            tenant_id=str(invoice.tenant_id),
-                            vendor_name=invoice.customer_name,
-                            file_path=file_path,
-                        )
-                    except Exception as ie:
-                        logger.error("RAG indexing failed for outbound invoice %s: %s", invoice.id, ie)
+                outbound_indexing_target = {
+                    "invoice_id": str(invoice.id),
+                    "tenant_id": str(invoice.tenant_id),
+                    "customer_name": invoice.customer_name,
+                }
 
                 if status in ("VERIFIED", "NEEDS_REVIEW"):
                     try:
@@ -266,13 +258,26 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                     except Exception as ne:
                         logger.error("Staff process-complete notify failed for outbound %s: %s", invoice.id, ne)
 
-            _publish_sse_events(batch_id, {
-                "status": status,
-                "message": f"Outbound processing finished with status: {status}",
-                "invoice_id": str(invoice.id) if invoice else None,
-                "data": extracted_data,
-                "alerts": alerts,
-            })
+        # BE Gap 678: RAG indexing runs outside DB session to prevent pool starvation
+        from chroma_client import index_invoice_document, should_index_status
+        if should_index_status(status) and outbound_indexing_target:
+            try:
+                index_invoice_document(
+                    invoice_id=outbound_indexing_target["invoice_id"],
+                    tenant_id=outbound_indexing_target["tenant_id"],
+                    vendor_name=outbound_indexing_target["customer_name"],
+                    file_path=file_path,
+                )
+            except Exception as ie:
+                logger.error("RAG indexing failed for outbound invoice %s: %s", outbound_indexing_target["invoice_id"], ie)
+
+        _publish_sse_events(batch_id, {
+            "status": status,
+            "message": f"Outbound processing finished with status: {status}",
+            "invoice_id": outbound_indexing_target["invoice_id"] if outbound_indexing_target else None,
+            "data": extracted_data,
+            "alerts": alerts,
+        })
 
         return {
             "customer_name": extracted_data.get("customer_name"),
