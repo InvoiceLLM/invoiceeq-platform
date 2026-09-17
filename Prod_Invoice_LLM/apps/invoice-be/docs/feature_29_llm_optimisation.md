@@ -605,6 +605,23 @@ Grouped into four tracks. Each task is independently completable and testable; �
   > with their extraction results. **Task 29.10's `tests/golden_long_doc.json` needs exactly
   > the same seeding**, so it is one piece of work for both, and until it exists CP1's
   > "57 golden" is 36 golden plus a separately-run probe.
+  >
+  > **Runnable since 2026-09-07 (Gap 483 loader), gradeable since 2026-09-15 (Gap 565).**
+  > `scripts/run_agent_eval.py::seed_case_attachments()` attaches the case's PDFs through the
+  > product's own `extract_attachment()`. What that port missed for eight days: a `compare` /
+  > `reconcile` turn is answered by design with Feature 26's **confirmation card** (D4 — candidate
+  > invoices are never compared until the user confirms), and the harness graded the card as the
+  > answer, so nine of the sixteen cases were a 5–15 ms zero-LLM failure on every nightly run. The
+  > probe had always answered the card (`attach_chat_eval.py` POSTs `confirm-matches` and re-asks).
+  > `run_turn()` now does the same in-process: when the first answer carries
+  > `attachment_confirmation` with at least one candidate, `confirm_proposed_candidates()` makes the
+  > same write the endpoint makes (only proposed ids, never over an existing confirmation), the
+  > question is asked again with `attachment_intent="compare"`, and the **second** answer is graded.
+  > The counter and the timer span both calls, so `llm_call_count` / `latency_ms` are the whole
+  > exchange a user would have had; the turn and its telemetry row carry `confirm_step: true`. A
+  > card with **no** candidates (tier 0) is graded as it stands — "nothing matches" is a real answer.
+  > `read` turns never enter the path. Tests: `tests/test_golden_attachment_loader.py` (Gap 565
+  > block, real Postgres for the write, scripted agent for the re-ask).
 - **29.10** `tests/golden_long_doc.json` (5 cases: multi-page contract, 3-page statement, 2 long POs,
   long delivery note); Terra vs Luna on the attachment branches; role decided by the 2-pt rule; env +
   bicep for `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME`.

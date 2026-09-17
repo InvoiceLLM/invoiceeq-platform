@@ -760,6 +760,58 @@ def seed_case_attachments(case, db_session, tenant_id: str, fixture_paths: dict)
 # ---------------------------------------------------------------------------
 
 
+#: BE Gap 565. The case intents whose first answer is, by product design, the
+#: Feature 26 confirmation card (D4) rather than a comparison. `read` turns never
+#: reach the gate and are deliberately not listed.
+_CONFIRM_GATED_INTENTS = frozenset({"compare", "reconcile"})
+
+
+def _awaiting_confirmation(result: dict) -> bool:
+    """True when the agent answered with the confirmation card AND proposed at
+    least one candidate. A card with no candidates (tier 0) is a real answer —
+    "no invoice matches this document" — and is graded as such, not retried."""
+    return bool(result.get("attachment_confirmation")) and bool(result.get("result_invoice_ids"))
+
+
+def confirm_proposed_candidates(attachment_ids: list, session) -> list[str]:
+    """Confirm every candidate the matcher proposed, the way a user would on the
+    card — the same write `routers/chat_attachments.py::confirm_attachment_matches`
+    makes, with the same restriction: only ids in `candidate_invoice_ids` can be
+    confirmed, and a row that already has a confirmation is left alone.
+
+    Returns the attachment ids that were confirmed by this call.
+
+    BE Gap 565. The original probe (`scripts/attach_chat_eval.py`) answers the
+    card over HTTP and re-asks; this in-process harness never did, so every
+    `compare`/`reconcile` golden case was graded on the card itself — a 5–15 ms
+    deterministic turn with zero model calls — and failed by construction.
+    """
+    from models import ChatAttachment
+
+    confirmed: list[str] = []
+    for raw_id in attachment_ids or []:
+        key = _uuid_or_skip(raw_id)
+        row = session.get(ChatAttachment, key) if key is not None else None
+        if row is None or row.confirmed_invoice_ids:
+            continue
+        proposed = [str(i) for i in (row.candidate_invoice_ids or [])]
+        if not proposed:
+            continue
+        row.confirmed_invoice_ids = proposed
+        session.add(row)
+        confirmed.append(str(row.id))
+    if confirmed:
+        session.commit()
+    return confirmed
+
+
+def _uuid_or_skip(value):
+    try:
+        return value if isinstance(value, UUID) else UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def run_turn(
     case: GoldenCase,
     path: str,
@@ -794,6 +846,7 @@ def run_turn(
     started = time.perf_counter()
     error: Optional[str] = None
     result: dict[str, Any] = {}
+    confirm_step = False
     with _counting_llm_calls() as counter:
         with _harness_patches(recorder, stats, chunks, invoice_chunks):
             try:
@@ -816,6 +869,29 @@ def run_turn(
                     attachment_ids=_att if len(_att) > 1 else None,
                     attachment_intent=getattr(case, "attachment_intent", None),
                 )
+                # BE Gap 565: the confirmation card is a designed UX step, not
+                # the answer. Do what the user (and the original probe) does:
+                # confirm the proposed candidates and ask the same question
+                # again with the compare intent. Still inside the counter and
+                # the timer, so the turn's llm_call_count and latency are the
+                # whole conversation the user would have had. A card with no
+                # candidates is graded as the answer it is.
+                if (
+                    _att
+                    and getattr(case, "attachment_intent", None) in _CONFIRM_GATED_INTENTS
+                    and _awaiting_confirmation(result)
+                    and confirm_proposed_candidates(_att, session)
+                ):
+                    confirm_step = True
+                    result = run_query_agent(
+                        session_id,
+                        case.question,
+                        case.tenant_id,
+                        session,
+                        attachment_id=_att[0] if len(_att) == 1 else None,
+                        attachment_ids=_att if len(_att) > 1 else None,
+                        attachment_intent="compare",
+                    )
             except Exception as e:  # a harness failure is data too
                 error = f"{type(e).__name__}: {e}"
                 logger.exception("Turn raised for %s/%s", case.case_id, path)
@@ -909,6 +985,9 @@ def run_turn(
         # turn's result can never be read as if it had been asked with none.
         "attachment_ids": list(attachment_ids or []),
         "attachment_keys": list(getattr(case, "attachment_keys", ()) or ()),
+        # BE Gap 565: True when this turn answered the confirmation card and was
+        # re-asked, so a confirmed comparison is never read as a one-shot answer.
+        "confirm_step": confirm_step,
         "citations": result.get("citations") or [],
         "latency_ms": round(latency_ms, 1),
         "llm_call_count": counter.call_count,
@@ -1193,6 +1272,9 @@ def persist(turns: list[dict], case_by_id: dict[str, GoldenCase], persist_url: s
                         # every greeting in the bank.
                         ("context_drift_score", turn.get("context_drift_score")),
                         ("script_id", turn.get("script_id")),
+                        # BE Gap 565: only on turns that went through the card,
+                        # so every older row keeps its shape.
+                        ("confirm_step", True if turn.get("confirm_step") else None),
                         # Guarded on `script_id`, not on itself: every
                         # single-turn case is turn 1, and emitting a constant
                         # `turn_index=1` on all 35 of them would change the

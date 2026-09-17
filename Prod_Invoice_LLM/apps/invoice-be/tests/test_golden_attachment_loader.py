@@ -183,3 +183,180 @@ def test_one_document_takes_the_single_branch_and_two_take_the_pair_branch():
     assert "attachment_id=_att[0] if len(_att) == 1 else None," in src
     assert "attachment_ids=_att if len(_att) > 1 else None," in src
     assert 'attachment_intent=getattr(case, "attachment_intent", None),' in src
+
+
+# --- BE Gap 565: the confirmation card is a step, not the answer -----------------
+#
+# Feature 26's D4 gate answers a `compare`/`reconcile` question with a card listing
+# candidate invoices and calls no model until the user confirms one. The original
+# probe (`scripts/attach_chat_eval.py`) confirms and re-asks; this harness never did,
+# so nine of the sixteen attachment golden cases were graded on the card itself --
+# a 5-15 ms zero-LLM turn -- and failed on every nightly run by construction.
+
+
+def _attachment_row(tenant: uuid.UUID, chat_id, candidates, confirmed=()):
+    from models import ChatAttachment
+
+    return ChatAttachment(
+        id=uuid.uuid4(),
+        tenant_id=tenant,
+        session_id=chat_id,
+        filename="po.pdf",
+        blob_path=f"{tenant}/po.pdf",
+        file_size_bytes=1,
+        extraction_status="EXTRACTED",
+        candidate_invoice_ids=[str(c) for c in candidates],
+        confirmed_invoice_ids=[str(c) for c in confirmed],
+    )
+
+
+def test_confirming_takes_exactly_the_proposed_candidates_on_postgres():
+    """Mirrors `confirm_attachment_matches`: only what the matcher proposed can be
+    confirmed, and all of it is -- the same click the probe makes on the card."""
+    from sqlmodel import select
+
+    from models import ChatAttachment, ChatSession
+    from scripts.run_agent_eval import confirm_proposed_candidates
+
+    tenant = uuid.uuid4()
+    a, b = uuid.uuid4(), uuid.uuid4()
+    with _pg_session() as session:
+        chat = ChatSession(tenant_id=tenant, title="gap-565")
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        row = _attachment_row(tenant, chat.id, [a, b])
+        session.add(row)
+        session.commit()
+        try:
+            done = confirm_proposed_candidates([str(row.id)], session)
+            assert done == [str(row.id)]
+            session.refresh(row)
+            assert row.confirmed_invoice_ids == [str(a), str(b)]
+        finally:
+            for r in session.exec(
+                select(ChatAttachment).where(ChatAttachment.tenant_id == tenant)
+            ).all():
+                session.delete(r)
+            for c in session.exec(select(ChatSession).where(ChatSession.tenant_id == tenant)).all():
+                session.delete(c)
+            session.commit()
+
+
+def test_an_already_confirmed_or_candidate_less_row_is_left_alone_on_postgres():
+    """Tier 0 ("nothing matches") is a real answer and must not be turned into a
+    confirmation; an existing confirmation is the user's and is never overwritten."""
+    from sqlmodel import select
+
+    from models import ChatAttachment, ChatSession
+    from scripts.run_agent_eval import confirm_proposed_candidates
+
+    tenant = uuid.uuid4()
+    chosen, other = uuid.uuid4(), uuid.uuid4()
+    with _pg_session() as session:
+        chat = ChatSession(tenant_id=tenant, title="gap-565")
+        session.add(chat)
+        session.commit()
+        session.refresh(chat)
+        empty = _attachment_row(tenant, chat.id, [])
+        already = _attachment_row(tenant, chat.id, [chosen, other], confirmed=[chosen])
+        session.add(empty)
+        session.add(already)
+        session.commit()
+        try:
+            assert confirm_proposed_candidates([str(empty.id), str(already.id), "not-a-uuid"], session) == []
+            session.refresh(empty)
+            session.refresh(already)
+            assert empty.confirmed_invoice_ids == []
+            assert already.confirmed_invoice_ids == [str(chosen)]
+        finally:
+            for r in session.exec(
+                select(ChatAttachment).where(ChatAttachment.tenant_id == tenant)
+            ).all():
+                session.delete(r)
+            for c in session.exec(select(ChatSession).where(ChatSession.tenant_id == tenant)).all():
+                session.delete(c)
+            session.commit()
+
+
+@dataclass(frozen=True)
+class _TurnCase:
+    case_id: str
+    question: str
+    tenant_id: str
+    attachment_keys: tuple
+    attachment_intent: str | None
+    expected_answer: str = ""
+    expected_invoice_numbers: tuple | None = None
+
+
+def _card(candidates):
+    return {
+        "content": "I found these invoices. Please confirm which to compare against.",
+        "generated_sql": "",
+        "citations": [],
+        "result_invoice_ids": list(candidates),
+        "attachment_confirmation": {"candidates": [{"invoice_id": c} for c in candidates]},
+    }
+
+
+def _run_turn_with_agent(answers, case, monkeypatch, confirmed_ids):
+    """Drive `run_turn` with a scripted agent. `answers` is what each successive
+    `run_query_agent` call returns; every call's kwargs are captured."""
+    import scripts.run_agent_eval as harness
+    from agents import query_agent
+
+    calls = []
+
+    def _fake_agent(session_id, question, tenant_id, session, **kwargs):
+        calls.append(kwargs)
+        return answers[len(calls) - 1]
+
+    monkeypatch.setattr(query_agent, "run_query_agent", _fake_agent)
+    monkeypatch.setattr(
+        harness, "confirm_proposed_candidates", lambda ids, session: list(confirmed_ids)
+    )
+    turn = harness.run_turn(
+        case, "default", session=None, stats="", chunks=[], attachment_ids=["att-1"]
+    )
+    return turn, calls
+
+
+def test_a_compare_turn_that_gets_the_card_is_confirmed_and_re_asked(monkeypatch):
+    case = _TurnCase("attach_a2", "Which invoice does this PO relate to?", str(uuid.uuid4()),
+                     ("po_summit",), "compare")
+    answered = {"content": "The PO relates to SOS-100442 and matches.", "citations": []}
+    turn, calls = _run_turn_with_agent([_card(["inv-1"]), answered], case, monkeypatch, ["att-1"])
+
+    assert len(calls) == 2, "the card must be answered and the question asked again"
+    assert calls[0]["attachment_intent"] == "compare"
+    assert calls[1]["attachment_intent"] == "compare"
+    assert calls[1]["attachment_id"] == "att-1"
+    assert turn["answer"] == answered["content"], "the graded answer is the second one"
+    assert turn["confirm_step"] is True
+    assert turn["error"] is None
+
+
+def test_a_card_with_no_candidates_and_a_read_turn_are_never_re_asked(monkeypatch):
+    # tier 0: the product's honest "nothing matches" is the answer
+    case = _TurnCase("attach_b2", "Does this delivery note match?", str(uuid.uuid4()),
+                     ("dn_cmc",), "compare")
+    turn, calls = _run_turn_with_agent([_card([])], case, monkeypatch, [])
+    assert len(calls) == 1
+    assert turn["confirm_step"] is False
+    assert "confirm which" in turn["answer"]
+
+    # a read turn never reaches the gate, so even a card-shaped reply is not retried
+    case = _TurnCase("attach_a1", "What is this document?", str(uuid.uuid4()),
+                     ("po_summit",), "read")
+    turn, calls = _run_turn_with_agent([_card(["inv-1"])], case, monkeypatch, ["att-1"])
+    assert len(calls) == 1
+    assert turn["confirm_step"] is False
+
+
+def test_the_telemetry_row_carries_confirm_step_only_when_it_happened():
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "run_agent_eval.py").read_text(
+        encoding="utf-8"
+    )
+    assert '("confirm_step", True if turn.get("confirm_step") else None),' in src
+    assert '"confirm_step": confirm_step,' in src
