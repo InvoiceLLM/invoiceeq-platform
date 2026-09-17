@@ -6,6 +6,7 @@ import time
 from typing import Optional
 from uuid import uuid4
 import redis
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from config import get_settings
@@ -32,6 +33,12 @@ CHAT_INFLIGHT_LEASE_TTL_SECONDS = 300  # Gap 605: 5 minutes self-healing lease T
 CHAT_CAPACITY_RETRY_AFTER_SECONDS = 5
 
 # Gap 365 / Gap 587: Per-session lock constants
+#: BE Gap 600 (CH-33): one runner per queued turn. Held only for the duration of
+#: the turn -- `_execute()` releases it in a `finally` -- with the TTL as the
+#: backstop for a process that dies without unwinding, never as the normal path.
+CHAT_JOB_CLAIM_PREFIX = "chat_job_claimed:"
+CHAT_JOB_CLAIM_TTL_SECONDS = 600
+
 CHAT_SESSION_LOCK_PREFIX = "chat_session_lock:"
 CHAT_SESSION_LOCK_TTL_SECONDS = 300
 CHAT_SESSION_LOCK_WAIT_SECONDS = 120
@@ -232,6 +239,98 @@ def is_chat_session_locked(session_id: str, client: Optional[redis.Redis] = None
         return False
 
 
+
+
+def _enforce_db_ceiling_fail_closed(tenant_id, *, db_session=None, user_msg_id=None, job_id=None) -> None:
+    """BE Gap 601 (CH-34): the per-tenant chat ceiling, enforced from Postgres.
+
+    Used whenever Redis cannot be relied on to hold the counter -- both when there
+    was never a client and (review follow-up 2026-09-17) when a client existed and
+    then threw part-way through the enqueue. That second case used to fall through
+    the `except` with no ceiling applied at all, which made a half-working Redis the
+    one state with no limit of any kind.
+
+    Raises `ChatQueueCapacityError` when the tenant already has
+    `PER_TENANT_MAX_ACTIVE_CHAT` turns in flight. Best-effort otherwise: if no
+    session is available the check cannot run and the turn proceeds, exactly as
+    before -- this is a ceiling, not an authorisation gate.
+    """
+    # Gap 601 (CH-34): the ceiling, read from Postgres when Redis cannot hold it.
+    session_to_close = None
+    try:
+        cur_session = db_session
+        if cur_session is None:
+            try:
+                from database import engine
+
+                if engine:
+                    session_to_close = Session(engine)
+                    cur_session = session_to_close
+            except Exception:
+                cur_session = None
+        if cur_session is None:
+            return
+
+        from uuid import UUID
+
+        from models import ChatSession
+
+        try:
+            t_uuid = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
+        except Exception:
+            return
+
+        msg_uuid = None
+        if user_msg_id:
+            try:
+                msg_uuid = UUID(user_msg_id) if isinstance(user_msg_id, str) else user_msg_id
+            except Exception:
+                msg_uuid = None
+
+        conditions = [
+            ChatSession.tenant_id == t_uuid,
+            ChatMessage.status.in_(["queued", "processing"]),
+        ]
+        if msg_uuid:
+            conditions.append(ChatMessage.id != msg_uuid)
+        if job_id:
+            # Review follow-up 2026-09-17: `job_id != job_id` alone is SQL
+            # three-valued logic -- NULL, not TRUE, for every row whose `job_id` is
+            # NULL, so those rows fell out of the count and this fail-closed ceiling
+            # undercounted the very turns least likely to have finished.
+            conditions.append(
+                or_(ChatMessage.job_id.is_(None), ChatMessage.job_id != job_id)
+            )
+
+        active = cur_session.exec(
+            select(ChatMessage.id)
+            .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+            .where(*conditions)
+        ).all()
+        if len(active) >= PER_TENANT_MAX_ACTIVE_CHAT:
+            raise ChatQueueCapacityError(
+                tenant_id=str(tenant_id),
+                active=len(active) + 1,
+                limit=PER_TENANT_MAX_ACTIVE_CHAT,
+            )
+    except ChatQueueCapacityError:
+        raise
+    except Exception:
+        # Review follow-up 2026-09-17: the database can be unreachable too -- and when
+        # Redis has just failed, that is not far-fetched. Letting the error out turns a
+        # degraded enqueue into a 500. This is a ceiling, not an authorisation gate, so
+        # it declines to LIMIT rather than declining to serve.
+        logger.warning(
+            "Fail-closed chat ceiling could not be evaluated for tenant %s; allowing the turn",
+            tenant_id, exc_info=True,
+        )
+    finally:
+        if session_to_close is not None:
+            try:
+                session_to_close.close()
+            except Exception:  # pragma: no cover
+                pass
+
 class ChatQueueService:
     """Core Service managing asynchronous chat jobs, tenant concurrency limits,
     and real-time event publishing."""
@@ -399,63 +498,21 @@ class ChatQueueService:
                 if slot_reserved:
                     ChatQueueService.release_tenant_slot(tenant_id, r, job_id=job_id)
                 logger.error("Failed to enqueue chat job %s to Redis: %s", job_id, e)
+                # Review follow-up 2026-09-17 (BE Gap 601): Redis handed back a client
+                # and then threw part-way through. This `except` used to swallow that
+                # and return `enqueued: False` with NO ceiling applied at all -- the
+                # fail-closed path lived only in the `else` branch, reached when there
+                # was never a client. A half-working Redis was the one state with no
+                # limit of any kind. Raises ChatQueueCapacityError, which the caller
+                # already handles; it is deliberately NOT caught by the block above.
+                _enforce_db_ceiling_fail_closed(
+                    tenant_id, db_session=db_session, user_msg_id=user_msg_id, job_id=job_id
+                )
         else:
-            # Gap 601 (CH-34): Concurrency ceiling fail-closed check when Redis is unconfigured or unreachable.
-            # Query the database for active (queued or processing) turns for this tenant.
-            session_to_close = None
-            try:
-                cur_session = db_session
-                if cur_session is None:
-                    try:
-                        from database import engine
-                        if engine:
-                            session_to_close = Session(engine)
-                            cur_session = session_to_close
-                    except Exception:
-                        cur_session = None
-
-                if cur_session is not None:
-                    from models import ChatSession
-                    from uuid import UUID
-                    try:
-                        t_uuid = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
-                    except Exception:
-                        t_uuid = None
-
-                    if t_uuid:
-                        msg_uuid = None
-                        if user_msg_id:
-                            try:
-                                msg_uuid = UUID(user_msg_id) if isinstance(user_msg_id, str) else user_msg_id
-                            except Exception:
-                                pass
-
-                        conditions = [
-                            ChatSession.tenant_id == t_uuid,
-                            ChatMessage.status.in_(["queued", "processing"]),
-                        ]
-                        if msg_uuid:
-                            conditions.append(ChatMessage.id != msg_uuid)
-                        if job_id:
-                            conditions.append(ChatMessage.job_id != job_id)
-
-                        stmt = (
-                            select(ChatMessage.id)
-                            .join(ChatSession, ChatMessage.session_id == ChatSession.id)
-                            .where(*conditions)
-                        )
-                        active_msgs = cur_session.exec(stmt).all()
-                        active_db_count = len(active_msgs)
-                        if active_db_count >= PER_TENANT_MAX_ACTIVE_CHAT:
-                            raise ChatQueueCapacityError(
-                                tenant_id=str(tenant_id),
-                                active=active_db_count + 1,
-                                limit=PER_TENANT_MAX_ACTIVE_CHAT,
-                            )
-            finally:
-                if session_to_close:
-                    session_to_close.close()
-
+            # BE Gap 601 (CH-34): Redis was never available for this call.
+            _enforce_db_ceiling_fail_closed(
+                tenant_id, db_session=db_session, user_msg_id=user_msg_id, job_id=job_id
+            )
         return {"job_id": job_id, "status": "queued", "created_at": now_iso, "enqueued": enqueued_to_redis}
 
     @staticmethod

@@ -125,9 +125,26 @@ def test_enqueue_chat_job_reports_enqueued_flag():
         content="Hello spend",
         tenant_id=str(TENANT_ID),
         job_id="job-test-2",
+        # Review follow-up 2026-09-17: `client=None` does NOT mean "no Redis" --
+        # `enqueue_chat_job` falls through to `get_redis_client()`, so on any machine
+        # with a local Redis running this took the healthy path and `enqueued` came
+        # back True. The absent-Redis case is expressed by patching the lookup, so the
+        # test asserts the code path rather than the developer environment.
         client=None,
     )
-    assert res_no_redis["enqueued"] is False
+    assert res_no_redis["enqueued"] in (True, False)  # depends on the live environment
+
+    # The real "Redis is unavailable" path, independent of what is running locally.
+    with patch("services.chat_queue.get_redis_client", return_value=None):
+        res_absent = ChatQueueService.enqueue_chat_job(
+            session_id=str(uuid4()),
+            user_msg_id=str(uuid4()),
+            content="Hello spend",
+            tenant_id=str(TENANT_ID),
+            job_id=f"job-absent-{uuid4()}",
+            client=None,
+        )
+    assert res_absent["enqueued"] is False
 
 
 def test_post_message_skips_local_pool_when_enqueued_to_redis(db_session):

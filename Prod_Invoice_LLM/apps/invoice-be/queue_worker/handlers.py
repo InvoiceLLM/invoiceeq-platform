@@ -1531,6 +1531,8 @@ def handle_deliver_webhook(
 # so routers can import it without circular dependencies. Re-exported here for
 # backward compatibility.
 from services.chat_queue import (
+    CHAT_JOB_CLAIM_PREFIX,
+    CHAT_JOB_CLAIM_TTL_SECONDS,
     CHAT_SESSION_LOCK_PREFIX,
     CHAT_SESSION_LOCK_TTL_SECONDS,
     CHAT_SESSION_LOCK_WAIT_SECONDS,
@@ -1641,19 +1643,23 @@ def handle_process_chat_job(
         )
 
     def _execute(session: Session) -> dict:
+        # BE Gap 600 (CH-33): the claim this runner holds, so the `finally` below can
+        # tell "I claimed it" from "someone else had it" and only release its own.
+        claim_key = f"{CHAT_JOB_CLAIM_PREFIX}{job_id}"
+        claim_client = None
         try:
             # BE Gap 600 (CH-33): Atomic claim guard to prevent duplicate executions across workers/threads.
-            # 1. Redis atomic claim (SETNX chat_job_claimed:{job_id} with 10-minute TTL)
             try:
                 r = _get_redis_sync()
                 if r:
-                    claimed = r.set(f"chat_job_claimed:{job_id}", "1", nx=True, ex=600)
+                    claimed = r.set(claim_key, "1", nx=True, ex=CHAT_JOB_CLAIM_TTL_SECONDS)
                     if not claimed:
                         logger.warning(
                             "Chat job %s already claimed by another runner; aborting duplicate execution",
                             job_id,
                         )
                         return {"job_id": job_id, "status": "duplicate_claimed"}
+                    claim_client = r
             except Exception as e:
                 logger.warning("Redis atomic claim check failed for job %s: %s", job_id, e)
 
@@ -1860,6 +1866,26 @@ def handle_process_chat_job(
                 message_id=str(user_msg_id or ""),
             )
             return {"job_id": job_id, "status": "failed", "error": str(e)}
+        finally:
+            # BE Gap 600, review follow-up 2026-09-17. The claim used to be set and
+            # never deleted, so its TTL was the only thing that ever cleared it. Two
+            # consequences, one of them live: a worker that crashed mid-turn left the
+            # claim standing, and the queue's own retry then no-opped as
+            # "duplicate_claimed" for the rest of the TTL -- the job was silently
+            # dropped for ten minutes. (The visible symptom was in the tests, which
+            # reuse fixed job ids and so claimed each other's runs.)
+            #
+            # Released on every exit, success or failure. Only when THIS runner took
+            # the claim: a duplicate returns above with `claim_client` still None, so
+            # it can never delete the claim the real runner is holding.
+            if claim_client is not None:
+                try:
+                    claim_client.delete(claim_key)
+                except Exception as claim_err:  # pragma: no cover - best effort
+                    logger.warning(
+                        "Could not release chat job claim %s (it expires in %ss): %s",
+                        job_id, CHAT_JOB_CLAIM_TTL_SECONDS, claim_err,
+                    )
 
     with correlation_context(tenant_id=tenant_id, trace_id=trace_id, request_id=request_id):
         # Gap 365 / D8: held across the whole turn, including the commit -- the

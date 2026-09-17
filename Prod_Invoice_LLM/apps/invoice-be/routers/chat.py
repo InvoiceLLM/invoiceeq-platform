@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import or_
 from sqlmodel import Session, select
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import telemetry
 from dependencies import (
@@ -709,10 +709,28 @@ def post_chat_message(
             detail="A chat turn is already running in this session.",
         )
 
+    # BE Gap 587 + BE Gap 605, review follow-up 2026-09-17: bounded by age.
+    #
+    # Without the cutoff this asked "is there ANY queued/processing row?", and a
+    # worker killed mid-turn leaves one forever -- so that session answered 409 to
+    # every message from then on, permanently. That is worse than the defect it
+    # replaced: before, the same crash left a spinner the user could reload past.
+    # The Redis lease does not help here, because this check reads Postgres.
+    #
+    # The cutoff is the same lease TTL the Redis slot uses, so both halves of the
+    # concurrency story expire on one clock: a row older than the lease cannot
+    # still belong to a live turn, because the runner holding it would have lost
+    # its slot by then. `scripts/sweep_stuck_chat_turns.py` still marks those rows
+    # `failed` so the UI stops spinning -- this just stops the session being bricked
+    # while waiting for it.
+    from services.chat_queue import CHAT_INFLIGHT_LEASE_TTL_SECONDS
+
+    stale_before = datetime.utcnow() - timedelta(seconds=CHAT_INFLIGHT_LEASE_TTL_SECONDS)
     active_turn = db_session.exec(
         select(ChatMessage.id)
         .where(ChatMessage.session_id == session_id)
         .where(ChatMessage.status.in_(["queued", "processing"]))
+        .where(ChatMessage.created_at > stale_before)
     ).first()
     if active_turn:
         raise HTTPException(

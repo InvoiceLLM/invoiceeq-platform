@@ -28,6 +28,8 @@ import logging
 from typing import Optional
 from uuid import UUID
 
+from sqlmodel import Session
+
 logger = logging.getLogger(__name__)
 
 #: The single action name every chat read is filed under, so a trail query can
@@ -84,6 +86,10 @@ def record_chat_read_access(
     if not ids:
         return 0
 
+    # Bound before the try: the handler below references them, and an import or a
+    # bad tenant id would otherwise raise NameError inside the error path.
+    own_session = None
+    write_session = None
     try:
         from models import AuditLog
 
@@ -97,13 +103,31 @@ def record_chat_read_access(
             "actor_kind": actor_role,
         }
 
+        # Review follow-up 2026-09-17: written on its OWN session, never the
+        # caller's. This used to `db_session.commit()`, which ends the caller's
+        # transaction from inside a helper -- the exact anti-pattern BE Gap 583 is
+        # filed against, and doing it in the audit trail of all places would have
+        # committed whatever else the turn had staged. A separate short-lived session
+        # also means a trail failure rolls back only the trail.
+        #
+        # The caller's session is still used for the read above (resolving the actor),
+        # which is a read and commits nothing.
+        try:
+            from database import engine
+
+            own_session = Session(engine)
+            write_session = own_session
+        except Exception:
+            logger.warning("chat read audit: no engine available; nothing written", exc_info=True)
+            return 0
+
         written = 0
         for invoice_id in ids:
             try:
                 invoice_uuid = UUID(str(invoice_id))
             except (ValueError, AttributeError, TypeError):
                 continue
-            db_session.add(
+            write_session.add(
                 AuditLog(
                     tenant_id=tenant_uuid,
                     invoice_id=invoice_uuid,
@@ -114,12 +138,19 @@ def record_chat_read_access(
                 )
             )
             written += 1
-        db_session.commit()
+        try:
+            write_session.commit()
+        finally:
+            if own_session is not None:
+                own_session.close()
         return written
     except Exception:  # noqa: BLE001 -- see the module docstring
         logger.warning("Failed to write chat read-access audit rows", exc_info=True)
         try:
-            db_session.rollback()
+            if write_session is not None:
+                write_session.rollback()
+                if own_session is not None:
+                    own_session.close()
         except Exception:  # pragma: no cover
             pass
         return 0

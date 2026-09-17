@@ -187,6 +187,17 @@ param overdueSweepCron string = '0 2 * * *'
 @description('Cron schedule (UTC) for the sandbox-tenant reap sweep. Daily at 04:00 UTC by default.')
 param sandboxSweepCron string = '0 4 * * *'
 
+// BE Gap 605 (CH-39), review follow-up 2026-09-17: the stuck-chat-turn reaper.
+// `scripts/sweep_stuck_chat_turns.py` shipped with the gap and was scheduled
+// nowhere, so it only ran if someone typed it -- the same "the reaper exists but
+// nothing runs it" shape Gap 345 was raised for on the sandbox sweep.
+//
+// Every 15 minutes, not nightly: this one clears turns a crashed worker left in
+// `queued`/`processing`, and until it runs the user sees a spinner that never
+// resolves. A daily cadence would leave that standing for up to a day. It is
+// cheap -- one indexed query per run, and nothing to do when nothing is stuck.
+param stuckChatTurnReaperCron string = '*/15 * * * *'
+
 @description('vCPU allocation for scheduled jobs.')
 param scheduledJobCpu string = '0.5'
 
@@ -574,6 +585,40 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
       'scripts/sweep_sandbox_tenants.py'
     ]
     cronExpression: sandboxSweepCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+  }
+}
+
+// BE Gap 605 (CH-39): the stuck-chat-turn reaper, on the same module and the same
+// env/secret wiring as the two sweeps above -- `sweep_stuck_chat_turns.py` imports
+// `database.py` and `services/chat_queue.py`, so it needs the full Settings set
+// (REDIS_URL especially: it releases the tenant concurrency slots those stuck turns
+// are still holding), not the narrower billing-lifecycle module.
+module stuckChatTurnReaperJob './modules/compute/scheduled-job.bicep' = {
+  name: 'stuck-chat-turn-reaper-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-chat-turn-reaper-${environment}'
+    containerName: 'chat-turn-reaper'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/sweep_stuck_chat_turns.py'
+    ]
+    cronExpression: stuckChatTurnReaperCron
     chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
     azureOpenAiEndpoint: openaiAccount.properties.endpoint
     azureOpenAiDeploymentName: azureOpenAiDeploymentName

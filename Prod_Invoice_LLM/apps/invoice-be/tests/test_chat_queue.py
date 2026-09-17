@@ -135,7 +135,12 @@ def test_chat_worker_executes_agent_and_publishes_events(db_session):
     """Gap 280: Verify handle_process_chat_job runs agent, updates DB rows, and completes job."""
     session_id = uuid4()
     user_msg_id = uuid4()
-    job_id = "test-job-456"
+    # BE Gap 600, review follow-up 2026-09-17: a fresh id per run. With a fixed id
+    # every run after the first hit the previous run's claim key in a live local
+    # Redis and aborted as `duplicate_claimed`. The handler now releases its claim,
+    # so this is belt-and-braces -- but a test that depends on the previous run
+    # having cleaned up is a test that fails for the wrong reason.
+    job_id = f"test-job-{uuid4()}"
 
     chat_session = ChatSession(id=session_id, tenant_id=MOCK_TENANT_ID, title="Test Thread")
     user_msg = ChatMessage(
