@@ -17,6 +17,7 @@ output line, not a recollection.
 | 1 | Every task in the spec's Tasks section implemented? |
 | 2 | Every item in the spec's Verification Plan actually run? Cite command + result line for each. |
 | 3 | DB- or API-touching work run against **Postgres**, not SQLite? Cite the run. |
+| 3b | Touched `.ts`/`.tsx` in `invoice-fe` or `invoice-website`? Run `npm run typecheck` in that app and cite the result. **`next build` typechecks and neither app sets `ignoreBuildErrors`, so a type error is a failed deploy, discovered inside a Docker build at the end of the pipeline.** `fix/chat-backend-21-gaps` reached its second review with two such errors (FE Gap 639). |
 | 4 | Migration **applied** (`alembic upgrade head` against Postgres), not merely written? |
 | 5 | Spec body updated to describe what was actually built, with deviations named? |
 | 6 | Tracker status marker and gap entry updated, gap numbers carrying their `BE`/`FE`/`Website` prefix? |

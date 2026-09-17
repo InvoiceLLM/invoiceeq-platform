@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:proxy": "playwright test --config=playwright.proxy.config.ts",
     "test:e2e:all": "npm run test:e2e && npm run test:e2e:proxy && npm run test:e2e:sandbox",

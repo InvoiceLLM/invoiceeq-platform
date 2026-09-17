@@ -43,6 +43,11 @@ produces a real one. Write the class sentence, then answer in the entry:
 `/verify-postgres` for anything touching the DB or an API. Smallest relevant test file first;
 widen only at a track boundary. Keep the exact pass/fail line — it is what gets cited.
 
+**Frontend work also needs `npm run typecheck`** in `invoice-fe` / `invoice-website`. The image build
+runs `next build`, which typechecks, and neither app sets `ignoreBuildErrors` — so a type error is not
+untidiness, it is a deploy that fails inside a Docker build at the end of the pipeline. No test in this
+repo catches it (FE Gap 639).
+
 Also run `tests/test_no_hardcoding.py` — the durable half of the guard.
 
 **The test must assert a property, not the fixture's output.** `assert title == "₹437,190.00 …"`
