@@ -21,6 +21,7 @@ from sqlmodel import Session, SQLModel, create_engine
 os.environ.setdefault("MOCK_EMBEDDINGS", "true")
 
 from agents.query_agent import (  # noqa: E402
+    _ATTENTION_PREDICATE,
     _DETAILS_PROJECTION,
     _NAMED_METRICS,
     SQL_PROMPT_TENANT_SECTION_MARKER,
@@ -142,3 +143,57 @@ def test_the_block_precedes_rule_6d_in_the_tail(db):
     prompt = build_sql_system_prompt("discount amount for apex consulting group", T, db)
     tail = prompt.split(SQL_PROMPT_TENANT_SECTION_MARKER, 1)[1]
     assert tail.index("SCHEMA LINK") < tail.index("6d. LINE-ITEM LEVEL EXTRACTION")
+
+
+# ---------------------------------------------------------------------------
+# BE Gap 706 — "which invoices need my attention" is a predicate, not a word
+#
+# Found live on the VPI demo tenant (2026-09-18): the real answer is three
+# invoices — two possible duplicates and one whose alert reads "Subtotal
+# (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)". SAGE
+# answered two, from SQL filtering `LIKE '%duplicate%'`. The filter came from
+# rule 6's own casting example, which used that literal.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Which invoices need my attention?",
+        "which invoices need attention",
+        "what should I look at first?",
+        "is anything wrong with our invoices",
+        "show me the flagged invoices",
+        "which invoices require my review",
+    ],
+)
+def test_an_attention_question_links_to_the_predicate(question):
+    assert link_question_to_schema(question)["attention"] is True
+    block = _schema_linking_block_for(question)
+    assert _ATTENTION_PREDICATE in block
+    # Both halves of the OR, named individually: a regression that drops one is
+    # exactly the defect, and "the predicate is present" would not catch it.
+    assert "sa_alerts IS NOT NULL" in block
+    assert "AUDIT_REQUIRED" in block and "NEEDS_REVIEW" in block
+    assert "duplicate" in block.lower(), "the block must say what NOT to filter on"
+
+
+def test_an_ordinary_question_does_not_trip_the_attention_link():
+    """It must not fire on every question, or it stops meaning anything."""
+    for question in ["what did titan bill us", "how many invoices from apex", "show invoice 1041"]:
+        assert link_question_to_schema(question)["attention"] is False
+        assert _ATTENTION_PREDICATE not in _schema_linking_block_for(question)
+
+
+def test_the_casting_example_no_longer_teaches_that_attention_means_duplicate(db):
+    """**The root cause, asserted where it lived.**
+
+    Rule 6 exists to teach that a JSONB column must be cast before LIKE. Its
+    example was `LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')`, and
+    an example is the strongest instruction in a prompt: the model reproduced it
+    verbatim for a question that was not about duplicates at all.
+    """
+    prompt = build_sql_system_prompt("which invoices need my attention", T, db)
+    assert "LIKE LOWER('%duplicate%')" not in prompt
+    # And the question's own answer is in the tail, as a fact.
+    tail = prompt.split(SQL_PROMPT_TENANT_SECTION_MARKER, 1)[1]
+    assert _ATTENTION_PREDICATE in tail

@@ -1509,3 +1509,274 @@ act on and is not test data anyone should find later.
    this slice reflects that; the spec's two task tables do not, and are left alone.
 4. **§7.3's "(Q5: where a list becomes a queue)" reads as open.** It was ruled by D41 and is
    recorded in §13.1; the §7.3 sentence still carries the question mark.
+
+---
+
+## 18. As built — what real data exposed, and what the tests were asserting instead (2026-09-18)
+
+**Additive, per hard rule 4.** Nothing above this line is rewritten. §§1, 2.2, 5.3, 7.3 and 7.5 all
+stand as written — the defects below are places where the code did not implement them, not places
+where the design was wrong. Where a section's own words turned out to be what made a bug findable,
+that is noted; the words did not change.
+
+This section closes **BE Gaps 704, 705 and 706** and records four of the six defects in
+`.claude/tasklists/senior-dev-atlas-real-data-fixes.md`. The founder's instruction was that these
+are the feature being finished, not a separate gap pass, which is why they are recorded here and
+not only in the tracker.
+
+### 18.1 The finding that matters more than any individual defect
+
+The VPI demo tenant — 26 invoices through real Doc Intelligence and real GPT-5.6 Luna — was loaded
+and the work screen driven for three roles. **Every one of the six defects passed 149 backend tests
+and 155 frontend tests.** They were found by one person looking at one screen for about ten minutes.
+
+That is not a story about missing coverage. The coverage was there and it was dense. It is a story
+about what the assertions were *about*:
+
+| The suite asserted | Nobody asserted |
+|---|---|
+| `areas[]` carries the right `line_ids` | that a line appears on the screen **once** |
+| `AreaRow.count == len(line_ids)` | that the count equals **the work a person has to do** |
+| `Why.doubt` is a non-empty string when a line is uncertain | that the string is **a sentence** |
+| every money token in prose is declared | that the declaration was **honest** |
+| `CashPosition.payable_due` equals the sum of its fixture | that the fixture was **the right population** |
+| the generated SQL parses and runs | that it **can return the right answer at all** |
+
+Every row is the same mistake: **the test was written against the shape of the thing, and the defect
+was in its meaning.** A shape test cannot fail for a wrong meaning, so it passed — and the passing
+was then read as evidence.
+
+Two consequences worth stating because they are actionable rather than rhetorical:
+
+1. **A test written from the implementation inherits the implementation's misconception.** The
+   cash-position test asserted `payable_due == 50000` against a fixture holding exactly one
+   `AUDIT_REQUIRED` invoice. It was a correct test of the wrong rule and would have passed forever.
+   Its replacement (`test_the_cash_line_sums_the_whole_open_book_not_the_decision_queue`) derives
+   its expected figure from the statuses named in the test, so the test states the rule instead of
+   echoing the code.
+2. **A guard that can be satisfied by two different shapes is not a guard.** See §18.2.
+
+### 18.2 BE Gap 704 — a data structure in a sentence, and a laundered guard
+
+**What a user read**, on every duplicate-flagged invoice, on every role's screen:
+
+> `{'id': 'ad637a2e2d924a0aa3175b6f3409b427', 'type': 'possible_duplicate', 'message': 'Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-...) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.', 'severity': 'warning'}`
+
+**The source** was one expression: `alerts = [str(a) for a in (inv.sa_alerts or [])]`. `sa_alerts`
+is JSONB and holds **dicts**, not strings, so `str()` produced a Python repr.
+
+**The part worth recording is not that — it is how it got past §5.3.** The same line declared
+`references` of `["#RAJ-2009", "637", "2", "2", "924", "0", "3175", ...]`: the digit runs of the
+alert's UUID, produced by running the contract's own tokeniser over the stringified dict.
+`assert_no_undeclared_numbers()` was therefore satisfied **by construction**. The emitter met the
+letter of "never invents a number" by declaring the noise, and no strengthening of that check would
+have caught the line, because the check was never failing.
+
+This is the failure mode CONVENTIONS hard rule 3 names, in an unusual form: not a prompt rule
+standing in for a control, but a real control **satisfied by a shape it was not written about**.
+
+**Fixed in two places, deliberately:**
+
+- **The source.** `atlas_skills._alert_prose()` takes the alert's `message` — the field a person is
+  meant to read — and strips the `(ID: <uuid>)` parenthetical, which is storage, not content. This
+  is the same call `agents/query_agent.render_alert_cell()` already makes for the identical column
+  in a chat results table (Gap 508); the two agree and neither imports the other. The line's
+  references are now `["#RAJ-2009", "2008", "437,190.00", "2009"]` — four real identifiers.
+- **The guard.** `atlas_contract.assert_no_structure_in_prose()` refuses `{'`, `{"`, `':`, `":` and
+  `[{` in **any** prose field on any line, and runs **before** the number checks in
+  `validate_recommendation()` so a caller is told "that is a dict" rather than being told about one
+  of the UUID fragments inside it — which describes the symptom and invites exactly the fix that
+  shipped the defect. The marker list is narrow and literal rather than a judgement about whether a
+  string "reads like prose", for the same reason every other check in that module is: a judgement is
+  what a model answers differently on each run.
+
+`test_the_line_that_shipped_is_now_refused_by_the_contract` asserts both halves. It first calls
+`assert_no_undeclared_numbers()` on the exact line that shipped and asserts it **passes**, then
+asserts the new guard rejects it. The old check being happy is the evidence, not a caveat.
+
+### 18.3 BE Gap 705 — the forecast summed the wrong population
+
+**What a user read:** *"Over the next 30 days you are committed to Rs 5,17,146.80 across 2
+invoice(s), and expecting Rs 0.00 across 0."*
+
+**What was true**, by direct SQL over the same rows: Rs 16,24,588.60 across 11 payables and
+Rs 42,50,646.00 across 10 receivables.
+
+§5.3 was already right about the cost: *"Wrong number — the most damaging. Trust in numbers is
+binary and does not recover."* A CFO reading that line would have judged the month owing a third of
+what they owe and being owed nothing at all.
+
+**Two independent population bugs, one on each side:**
+
+| Side | Was | Is | Why the old one was wrong |
+|---|---|---|---|
+| Payable | `status in _AWAITING_AUDIT` — `AUDIT_REQUIRED`, `REVIEW_LATER` | `status in _OPEN_PAYABLE` — plus `COMPLETED`, `NEEDS_RESUBMISSION` | "Awaiting a decision" is a queue an auditor owns. A `COMPLETED` invoice is not a decision anybody owes; it is a bill the business owes, which is the question the cash line is asked. On the VPI tenant this hid nine of the eleven payables |
+| Receivable | `status == "SENT"` | `status in _OPEN_RECEIVABLE` — `VERIFIED`, `NEEDS_REVIEW`, `SENT` | `SENT` is reached only by a human pressing confirm-send in this app. Most businesses send the invoice from their own system and never record the step here, so the line reads **Rs 0.00 expected** on almost any real tenant. A receivable exists when the invoice was raised, not when a button was clicked |
+
+**The line's own `computation` string had been describing the bug accurately for a day**: *"the 2
+invoice(s) **awaiting a decision** and due within 30 days, added up"*. §12.4's requirement that a
+COMPUTED figure name its computation is what made this diagnosable from the screen in seconds rather
+than from a debugger — the one part of this story where the design did its job. Both strings are
+updated to name the whole open book, which is what the figures beside them now sum.
+
+`services/atlas_forecast.py::shortfalls()` held **a third** population (`_OWED`, its own tuple,
+excluding `COMPLETED`), so the day-by-day walk and the position line were reading two different
+books on one screen. It now imports the same two constants. Two modules each deciding what an open
+payable is were two answers waiting to disagree, and they already did.
+
+**What deliberately did not change:** the assumption. This is still a due-date forecast and still
+says so (§7.5: "deterministic and honest are separate properties"). Fixing the population does not
+turn it into the behaviour-based forecast §7.5 calls the highest-value item.
+
+**One number in BE Gap 705's own text needs reading carefully**, recorded here rather than corrected
+there: the gap says "real payables of INR 1,107,441.80" and "INR 3,449,780.00 of real outbound
+receivables". Those are the amounts the old line **missed** — the nine `COMPLETED` payables, and the
+seven receivables due on 17 Sep — not the totals. The totals, which the line now prints and which a
+direct SQL sum confirms, are Rs 16,24,588.60 and Rs 42,50,646.00. The difference is the
+Rs 5,17,146.80 the old line did show, plus three receivables due later in the same window.
+
+### 18.4 §2.2 and D20 — collapse fired for a tenant with one person working
+
+Every area on the Admin's screen read **"someone else is working this"** on a workspace where nobody
+else was working anything.
+
+**The predicate asked whether a capability existed, not whether a person held the work.**
+`capabilities_held_by_others()` returned a capability whenever any other `User` row in the tenant
+held the grant. D20's words are *"items another grant-holder is **actively working**"*, and §2.2
+already says a solo owner collapses nothing *"because nobody else is handling anything"*. Holding a
+grant is a permission; handling something is an act. The code treated them as one fact.
+
+**What "actively working" can mean with the evidence this product actually has.** ATLAS has no
+assignment and no presence — there is no "Priya has claimed this" anywhere, and D38 forbids the
+background job that would maintain one. What it has is a record of what people did:
+`atlas_action_log` (§5.3's never-writes-silently — attributed and timestamped) and
+`atlas_dismissals` (D49, per person). So `capabilities_worked_by_others()` asks: has another user
+**touched a line currently in this area**, within seven days? Nothing else in the schema knows.
+
+**With no evidence the bias is to collapse nothing**, and that direction is the safe one. An Admin
+shown a plain list sees every line, which is §2.2's "coverage is total". An Admin shown a collapsed
+row is told a colleague has it in hand — and if that is false, the work quietly disappears, which is
+the outcome §2.2 exists to prevent.
+
+A smaller thing fell out of the same change: the old function compared `TenantContext.user_id`
+against `User.clerk_user_id`, two identifiers not guaranteed to be the same string. The new one
+compares like with like, against the same column the dismissal store already keys on.
+
+### 18.5 §2.2's count counted lines, not work
+
+**"Decisions — 5 pending"** on a tenant with **two** invoices awaiting a decision. The five were two
+approve lines, two "attach the quotation" doubt asks *about those same two invoices*, and
+`audit-cash-INR` — the cash position tile, which is not pending and is not a decision.
+
+Two rules, both stated once in `services/atlas_collapse.py` so that the count, the threshold and the
+grouping cannot each decide differently:
+
+1. **A line about a record is work; a line whose `what.entity_kind` is `"tenant"` is not.** The
+   position, the runway and the shortfall warning are standing facts — always true, never pending,
+   never somebody else's job to clear. They are excluded from an area entirely and stay in the plain
+   list, which is also the only reading of "nothing withheld" that survives an Admin's own cash line
+   being folded away from them. The tile was swept into the decisions queue because it declares
+   `AtlasCapability.AUDIT` — correctly, per D44 — and grouping by capability alone cannot tell a
+   position from a decision.
+2. **Two lines about one invoice are one piece of work.** The count is over distinct
+   `what.entity_id`. Every line is still in `line_ids`, so the row expands to everything ATLAS has to
+   say about those subjects; the count is about the sentence, not about the contents.
+
+Aging follows the same rule — a subject is as old as its **oldest** line, and of unknown age only
+when no line about it states a `since`. Per-line aging had a single invoice reporting "1 untouched,
+1 of unknown age" beside itself.
+
+The area now reads **"Decisions — 2 pending."**
+
+### 18.6 BE Gap 706 — SQL that could not return the right answer
+
+"Which invoices need my attention?" on the VPI tenant returned **two**. The correct answer is
+**three**: `RAJ-2009` and `NAT-2007` (possible duplicates) and `VPI-OUT-2014`, whose alert reads
+*"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)"*.
+
+The generated SQL filtered `LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')`. That query
+**structurally cannot** return the third invoice, whatever the data says — so this was never a
+retrieval-quality problem and never a model problem.
+
+**Where the filter came from.** Not the model's imagination: it is the literal example the SQL
+prompt's rule 6 gave for casting a JSONB column before `LIKE`. An example is the strongest
+instruction in a prompt, and that one quietly taught *attention means duplicate*.
+
+**The fix keeps correctness out of prose** (hard rule 3), using the mechanism this codebase already
+has for it — `link_question_to_schema()`, the deterministic pre-pass that states facts about the
+question before the model runs:
+
+- `_ATTENTION_PATTERN` detects the question class by regex, in code.
+- `_ATTENTION_PREDICATE` **is** the answer, as a WHERE clause:
+  `(sa_alerts IS NOT NULL AND CAST(sa_alerts AS TEXT) NOT IN ('null','[]','{}')) OR status IN
+  ('AUDIT_REQUIRED','NEEDS_REVIEW','NEEDS_RESUBMISSION')`. The `OR` is the whole fix: an invoice can
+  be flagged by the pipeline **or** be sitting in a state a human must clear, and neither implies the
+  other.
+- Rule 6's example no longer carries a domain word at all — it reads
+  `LIKE LOWER('%<the exact word the user used>%')` — and says explicitly that the shape must not be
+  used for an attention question.
+
+An execution-time SQL rewriter was considered and rejected: that is the Gap 253 pattern this repo
+deleted once already, and CONVENTIONS records it as the basis of hard rule 3.
+
+Verified two ways: `_ATTENTION_PREDICATE` run directly against the VPI tenant returns exactly the
+three ground-truth invoices, and the question re-asked live through
+`POST /chat/sessions/{id}/message` answers *"Three invoices need attention"* and names all three
+(§18.8).
+
+### 18.7 What did not change, and why
+
+- **`areas[]` still carries every line it stands for.** The double-render was fixed on the frontend,
+  not by making `areas` a truncation of `lines`. Collapse **groups, never removes** (D20/D41), and
+  that property is exactly what makes a row openable in place with no second request. FE Feature 23
+  §16 carries the argument for why the seam belongs on that side.
+- **The forecast still assumes due dates.** §7.5's better forecast is unbuilt; only the population
+  was wrong.
+- **No new table, no new column, no migration.** The collapse predicate reads two tables that
+  already exist because D49 and §5.3 required them.
+
+### 18.8 Verification
+
+Real Postgres (`127.0.0.1:5433/invoice_db`, BE Gap 697), real Azure OpenAI, VPI demo tenant
+`00000000-0000-0000-0000-000000000000` — **not reseeded**; the same 26 invoices from the 2026-09-18
+ingestion run.
+
+| Check | Command | Result |
+|---|---|---|
+| Contract guard | `pytest tests/test_atlas_contract.py -q` | 39 passed |
+| Emitters and the cash population | `pytest tests/test_atlas_skills.py -q` | 11 passed |
+| Collapse and the predicate | `pytest tests/test_atlas_ranking.py -q` | 26 passed |
+| Attention linking | `pytest tests/test_c4_schema_linking.py -q` | 23 passed |
+| Payable/receivable vs. a direct SQL sum | sums over `_OPEN_PAYABLE` / `_OPEN_RECEIVABLE` on the VPI tenant | 11 / Rs 16,24,588.60 and 10 / Rs 42,50,646.00 — identical to the rendered line |
+| Attention predicate on real data | `_ATTENTION_PREDICATE` run directly | 3 rows: `VPI-OUT-2014`, `NAT-2007`, `RAJ-2009` |
+| The chat answer, live | `POST /chat/sessions/{id}/message` | "Three invoices need attention", all three named |
+
+**Falsification, not just green.** Each new backend behaviour was re-run against the pre-fix code to
+confirm the new test fails: reverting `_OPEN_PAYABLE`, `_OPEN_RECEIVABLE` and `_alert_prose()` turned
+three of the eleven `test_atlas_skills.py` tests red, with the cash assertion reporting
+`Decimal('449190.0') == Decimal('1559631.8')`. A test that passes both before and after a fix is not
+evidence of the fix, and this repo has shipped that mistake before.
+
+Live evidence — the payload, screenshots per role and the re-asked chat questions — is filed under
+`docs/test_evidence/vpi_demo_atlas_2026-09-18/` alongside the original captures, so the before and
+the after sit in one directory.
+
+### 18.9 One thing recorded, not fixed — the demo script and the product have diverged
+
+`showcase/vpi_demo/README.md` Section 8 and `docs/atlas_vpi_scenario_day1_30.md` describe
+**Feature 33**: Discover firing at 10 documents, `docs_seen`/`docs_required`, five onboarding
+questions, convention proposals answered inline, weekly cash-shortfall runs, FP&A cards, and
+`ops`/`exec` clearance on chat.
+
+**§8 of this document records, in its own words, that Feature 33 was never built.** Feature 34
+replaced it with a different contract — `/atlas/lines`, capability-scoped skills, the claim-to-witness
+rule, no clearance, no FP&A cards, no onboarding questionnaire. The demo script and the running
+product therefore describe two different products, and most of Section 8's specific expectations
+cannot be reproduced against what is live — not because anything is broken, but because that product
+does not exist.
+
+**Neither document is rewritten** (hard rule 4, and neither is this feature's to edit). It is flagged
+because the risk is specific and near-term: the VPI README reads as a **test script**, so anyone
+running it against the live system will record failures for capabilities that were deliberately never
+built. Whether the scenario doc is retired as history or rewritten against Feature 34 is a founder
+call; it is not a code change either way.

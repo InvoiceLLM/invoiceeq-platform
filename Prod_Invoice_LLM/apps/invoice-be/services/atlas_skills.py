@@ -50,6 +50,7 @@ would be the second ranking §12.3 warns about.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -101,6 +102,40 @@ __all__ = [
 
 #: Inbound invoices in this state are the Auditor's queue (routers/audit.py).
 _AWAITING_AUDIT = ("AUDIT_REQUIRED", "REVIEW_LATER")
+
+#: **What this tenant owes** -- every inbound invoice that has finished
+#: extraction and has not been finalised. BE Gap 705.
+#:
+#: These are `routers/audit.py::_FINALIZABLE_FROM_STATUSES` minus the two
+#: terminal ones (`PAID`, `REJECTED`): an invoice that can still be approved or
+#: rejected is money that has not left yet, and an invoice that has been is not.
+#: `PROCESSING` is excluded on purpose -- extraction has not produced a total, so
+#: adding it would add a zero and report a payable as costing nothing.
+#:
+#: **Why this is not `_AWAITING_AUDIT`.** It was, and that was the defect. The
+#: cash line summed only the invoices *awaiting a decision*, which on the VPI
+#: tenant was the two duplicate-flagged invoices that happened to be the two
+#: decision lines directly above it on the same screen -- Rs 5,17,146.80 against
+#: a real open book of Rs 16,24,588.60. A COMPLETED invoice is not a decision
+#: anybody owes; it is a bill this business owes, which is the entire question
+#: the cash line is asked. §5.2 puts a wrong number at the top of its cost table
+#: because trust in numbers is binary and does not recover.
+_OPEN_PAYABLE = ("COMPLETED", "AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION")  # hardcode-ok: invoice STATUS tokens, this repo's own status machine (routers/audit.py), not domain data
+
+#: **What is owed to this tenant** -- every outbound invoice raised and not yet
+#: settled. BE Gap 705.
+#:
+#: The outbound lifecycle is PROCESSING -> VERIFIED/NEEDS_REVIEW -> (confirm-send)
+#: SENT -> (mark-paid) PAID; `services/document_comparison.py` owns those
+#: transitions. Only `PAID` retires a receivable.
+#:
+#: **Why this is not just `SENT`.** It was. `SENT` is reached only by a human
+#: pressing confirm-send, which most businesses do at generation time in their
+#: own system and never record here -- so on the VPI tenant, with Rs 42,50,646
+#: of raised, unpaid outbound invoices, the line read "expecting Rs 0.00 across
+#: 0". A receivable does not begin to exist when somebody clicks a button in this
+#: app; it exists when the invoice was raised.
+_OPEN_RECEIVABLE = ("VERIFIED", "NEEDS_REVIEW", "SENT")  # hardcode-ok: invoice STATUS tokens, this repo's own outbound status machine (services/document_comparison.py), not domain data
 #: How far ahead the cash forecast looks. One month is the horizon a payment run
 #: is planned over; a longer one is a chart, and §7.5 says never a chart.
 _FORECAST_DAYS = 30
@@ -158,6 +193,43 @@ def _numbers_in(text: str) -> list[str]:
     return numeric_tokens(text)
 
 
+#: A UUID as it appears inside an alert message -- "(ID: d5869da2-b3bc-...)".
+#: Stripped before the message becomes prose (BE Gap 704): a record id is
+#: plumbing, it is meaningless to the person reading the line, and its digit runs
+#: are what got declared as `references` to satisfy §5.3's number check. The
+#: parenthetical is removed whole so the sentence still reads as a sentence.
+_ID_PARENTHETICAL_RE = re.compile(
+    r"\s*\(\s*(?:ID|id|Id)\s*:\s*[0-9a-fA-F-]{8,}\s*\)"
+)
+
+
+def _alert_prose(alert) -> str:
+    """One `sa_alerts` entry as a person reads it -- BE Gap 704.
+
+    `Invoice.sa_alerts` is JSONB: a list of **dicts**
+    (`{"id": ..., "type": "possible_duplicate", "message": ..., "severity": ...}`),
+    not a list of strings. `str(a)` over that list put a Python dict repr on the
+    work screen of every role, on every duplicate-flagged invoice -- the single
+    worst-looking thing on the screen (BE Gap 704).
+
+    **The message is the content; everything around it is plumbing.** That is the
+    same rule `agents/query_agent.render_alert_cell()` applies when the identical
+    column is rendered into a chat results table (Gap 508), and it is stated here
+    rather than imported because a service importing an agent to read a column is
+    a worse dependency than two short functions agreeing about one shape.
+
+    Deliberately tolerant of a plain string: `sa_alerts` has been written as a
+    list of strings by older pipeline code and by fixtures, and an alert that
+    arrives already-readable must not be discarded.
+    """
+    if isinstance(alert, dict):
+        text = alert.get("message") or alert.get("type") or ""
+    else:
+        text = str(alert)
+    text = _ID_PARENTHETICAL_RE.sub("", str(text))
+    return " ".join(text.split())
+
+
 def _currency_of(inv: Invoice, ctx: SkillContext) -> str:
     return (inv.currency or ctx.default_currency).upper()
 
@@ -202,10 +274,13 @@ class CashPosition:
     currency: str
     #: Latest balance on this tenant's bank statement lines, if one was imported.
     balance: Decimal | None
-    #: INBOUND invoices not yet resolved, due within the horizon.
+    #: INBOUND invoices in `_OPEN_PAYABLE` -- received, not finalised -- due
+    #: within the horizon. The whole open book, not the subset awaiting a
+    #: decision (BE Gap 705).
     payable_due: Decimal
     payable_count: int
-    #: OUTBOUND invoices sent and unpaid, due within the horizon.
+    #: OUTBOUND invoices in `_OPEN_RECEIVABLE` -- raised, not yet paid -- due
+    #: within the horizon. Not just `SENT` (BE Gap 705).
     receivable_due: Decimal
     receivable_count: int
     horizon_days: int
@@ -249,7 +324,7 @@ def cash_position(db: Session, ctx: SkillContext) -> list[CashPosition]:
         b = bucket(currency)
         amount = _amount(inv)
         if inv.flow_direction == "INBOUND":
-            if inv.status in _AWAITING_AUDIT and inv.due_date and inv.due_date <= horizon:
+            if inv.status in _OPEN_PAYABLE and inv.due_date and inv.due_date <= horizon:
                 b["payable"] += amount
                 b["payable_count"] += 1
             # Historical outflow, for the runway denominator: what this tenant
@@ -257,7 +332,7 @@ def cash_position(db: Session, ctx: SkillContext) -> list[CashPosition]:
             if inv.status == "PAID" and (inv.invoice_date or ctx.today) >= ninety_days_ago:
                 b["outflow_90"] += amount
         elif inv.flow_direction == "OUTBOUND":
-            if inv.status == "SENT" and inv.due_date and inv.due_date <= horizon:
+            if inv.status in _OPEN_RECEIVABLE and inv.due_date and inv.due_date <= horizon:
                 b["receivable"] += amount
                 b["receivable_count"] += 1
 
@@ -348,22 +423,35 @@ def _approval_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
         mark = money_prefix(currency)
         vendor = inv.vendor_name or "an unnamed vendor"
         number = f"#{inv.invoice_number}" if inv.invoice_number else "no invoice number"
-        alerts = [str(a) for a in (inv.sa_alerts or [])]
+        # BE Gap 704: `sa_alerts` is a list of dicts, so `str(a)` printed a
+        # Python dict repr on the screen. `_alert_prose()` takes the message a
+        # person is meant to read and drops the record-id parenthetical.
+        alerts = [prose for a in (inv.sa_alerts or []) if (prose := _alert_prose(a))]
 
         figures = [
             computed_figure(
                 amount, currency, "the invoice total as extracted from the document"
             )
         ]
-        # An alert is carried into the doubt **verbatim** -- "Possible duplicate
-        # of #4241" is what the pipeline wrote and is what the user must read.
-        # Its numbers are declared as references rather than figures, and that is
-        # a deliberate, bounded exception worth stating: `sa_alerts` strings are
-        # copied character for character out of the invoice's own row, so the
+        # An alert's **message** is carried into the doubt verbatim -- "Possible
+        # duplicate of #4241" is what the pipeline wrote and is what the user
+        # must read. Its numbers are declared as references rather than figures,
+        # and that is a deliberate, bounded exception worth stating: the message
+        # is copied character for character out of the invoice's own row, so the
         # failure §5.3 guards against -- prose from a model that rounded -- cannot
-        # occur on this path. Rewriting or stripping the alert would be worse: it
-        # would either hide the number the alert is about, or turn a verbatim
-        # record into ATLAS's paraphrase of one.
+        # occur on this path. Rewriting or paraphrasing the message would be
+        # worse: it would either hide the number the alert is about, or turn a
+        # verbatim record into ATLAS's paraphrase of one.
+        #
+        # **BE Gap 704 changed what "the alert" means here, and it is worth being
+        # precise about why that is not a violation of the paragraph above.**
+        # What used to be copied verbatim was `str(the whole dict)`, envelope and
+        # all, and the envelope's UUID then had its digit runs declared as
+        # `references` so the number check passed. The message is the alert; the
+        # id, type and severity around it are storage. Dropping them is the same
+        # call `render_alert_cell()` makes for the identical column in chat, and
+        # `assert_no_structure_in_prose()` now refuses the old shape outright so
+        # this cannot quietly return.
         alert_references: list[str] = []
         if alerts:
             doubt = alerts[0] if len(alerts) == 1 else "; ".join(alerts[:3])
@@ -440,14 +528,20 @@ def _cash_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
             computed_figure(
                 pos.payable_due,
                 pos.currency,
-                f"the {pos.payable_count} invoice(s) awaiting a decision and due "
-                f"within {pos.horizon_days} days, added up",
+                # BE Gap 705: this string is the line's own witness, and the old
+                # one ("awaiting a decision") described the bug accurately enough
+                # to diagnose it from the screen. It now names the whole open
+                # book, which is what the figure beside it actually sums.
+                f"the {pos.payable_count} invoice(s) you have received and not "  # hardcode-ok: both interpolated values are counts of rows and a day horizon, not money -- the money in this figure is `pos.payable_due`, which `computed_figure()` renders
+                f"yet paid, due within {pos.horizon_days} days, added up",  # hardcode-ok: a day horizon, not money
             ),
             computed_figure(
                 pos.receivable_due,
                 pos.currency,
-                f"the {pos.receivable_count} invoice(s) sent and unpaid and due "
-                f"within {pos.horizon_days} days, added up",
+                # BE Gap 705: was "sent and unpaid", which meant the manual
+                # confirm-send step and therefore almost nothing.
+                f"the {pos.receivable_count} invoice(s) you have raised and not "  # hardcode-ok: a count of rows, not money -- the money in this figure is `pos.receivable_due`, which `computed_figure()` renders
+                f"yet been paid for, due within {pos.horizon_days} days, added up",  # hardcode-ok: a day horizon, not money
             ),
         ]
         text = (

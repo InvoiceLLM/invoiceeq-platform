@@ -32,6 +32,12 @@
 // `tests/unit/atlas-no-client-arithmetic.test.ts`.
 //
 // NO ARITHMETIC (spec §2). Same rule as the line: nothing here computes.
+//
+// A LINE APPEARS EXACTLY ONCE (2026-09-18, found by loading real data). An area
+// owns the lines it stands for; everything else is a plain line below. See
+// `looseLines` in the body for why that rule lives on this side of the seam and
+// could not have been fixed on the other. It is asserted by counting rendered
+// rows, not by inspecting props — `tests/unit/atlas-work-screen.test.tsx`.
 // =============================================================================
 
 "use client";
@@ -192,6 +198,38 @@ export default function WorkScreen() {
   const showRecon =
     payload?.lines.some((line) => ATTACH_ACTION_KINDS.has(line.action.kind)) ?? false;
 
+  /**
+   * EVERY LINE APPEARS EXACTLY ONCE — the seam §1 exists to close.
+   *
+   * Found by loading real data (2026-09-18): all nine lines rendered twice,
+   * once inside their collapsed area and once in the list below it. **Neither
+   * side was wrong on its own.** The backend is right to keep collapsed lines in
+   * `lines`: collapse groups, it never removes (BE 34 §2.2, D20/D41), and that
+   * is precisely what makes an area openable in place with no second request.
+   * This component then rendered both lists independently, because each was
+   * written against the field it read rather than against the screen.
+   *
+   * So the ownership rule is stated here, once: **an area owns the lines it
+   * stands for.** Everything else is a plain line. It cannot be stated on the
+   * backend without making `areas` a truncation of `lines`, which would cost the
+   * openable-in-place property the whole design rests on.
+   *
+   * The ranking is untouched — `lines` keeps the server's order and this filters
+   * it; it never re-sorts (BE §7.3, D30).
+   */
+  const claimedByAnArea = new Set(
+    (payload?.areas ?? []).flatMap((area) => area.line_ids)
+  );
+  const looseLines = (payload?.lines ?? []).filter(
+    (line) => !claimedByAnArea.has(line.id)
+  );
+  /**
+   * The cut applies to what is actually in this list. `rank_cut` is a count of
+   * rows above the fold, and applying the server's number to a list the areas
+   * have taken rows out of would hide lines that were never below any cut.
+   */
+  const aboveTheCut = showAll ? looseLines : looseLines.slice(0, payload?.rank_cut ?? 0);
+
   return (
     <div data-testid="work-screen" className="space-y-4">
       <div className="flex items-center gap-3">
@@ -314,15 +352,19 @@ export default function WorkScreen() {
         </ul>
       )}
 
-      {payload && payload.lines.length > 0 && (
+      {payload && looseLines.length > 0 && (
         <>
           <ul data-testid="work-screen-lines" className="space-y-2">
             {/* RANKED BY THE SERVER (BE §7.3, D30) AND NEVER RE-SORTED HERE.
                 `rank_cut` decides how many are above the fold; `showAll` reveals
                 the rest, which are already in this payload. ATLAS ranks; it does
                 not hide, and the proof of that is that nothing below the cut
-                needs another request. */}
-            {(showAll ? payload.lines : payload.lines.slice(0, payload.rank_cut)).map(
+                needs another request.
+
+                These are the lines NO AREA STANDS FOR. A line inside a collapsed
+                area is rendered by that area, once, and is reachable by opening
+                it — see `looseLines` above on why that rule lives here. */}
+            {aboveTheCut.map(
               (line) => (
                 <AtlasLine
                   key={line.id}
@@ -337,7 +379,7 @@ export default function WorkScreen() {
               )
             )}
           </ul>
-          {payload.lines.length > payload.rank_cut && (
+          {looseLines.length > (payload.rank_cut ?? 0) && (
             <button
               type="button"
               data-testid="work-screen-show-everything"

@@ -42,12 +42,15 @@ from services.atlas_contract import (
     AttachmentPromiseError,
     NotBatchableError,
     Recommendation,
+    StructureInProseError,
     Reversibility,
     UnwitnessedFigureError,
     Verify,
     What,
     Why,
     assert_batch_acceptable,
+    assert_no_structure_in_prose,
+    assert_no_undeclared_numbers,
     assert_single_currency,
     assert_verify_does_not_promise_attachment,
     numeric_tokens,
@@ -640,3 +643,76 @@ def test_validate_recommendation_runs_the_attachment_check():
                 )
             )
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BE Gap 704 — the guard that was laundered rather than met
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: The exact string that shipped to the VPI demo tenant's work screen, on every
+#: role, on every duplicate-flagged invoice.
+_THE_DICT_THAT_SHIPPED = (
+    "{'id': 'ad637a2e2d924a0aa3175b6f3409b427', 'type': 'possible_duplicate', "
+    "'message': 'Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 "
+    "(ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total "
+    "(437,190.00) but a different number (RAJ-2009). Check whether this is a "
+    "re-issue.', 'severity': 'warning'}"
+)
+
+#: The references the emitter declared so that the number check would pass:
+#: digit runs sliced out of the UUID above.
+_THE_LAUNDERED_REFERENCES = [
+    "#1041",  # this fixture's own headline reference, not part of the laundering
+    "#RAJ-2009", "637", "2", "2", "924", "0", "3175", "6", "3409", "427",
+    "2008", "5869", "2", "3", "4", "41", "9356", "2", "6", "02352616",
+    "437,190.00", "2009",
+]
+
+
+def test_the_line_that_shipped_is_now_refused_by_the_contract():
+    """**The whole point of this test is that the old line passed.**
+
+    `assert_no_undeclared_numbers` was satisfied — by declaring the UUID's digit
+    runs as `references`. The guard was met in form and not in substance, which
+    is the failure mode CONVENTIONS hard rule 3 exists to prevent, so the dict is
+    now refused for being a dict, independently of what the line declares.
+    """
+    rec = _rec(
+        certainty=Certainty.UNCERTAIN,
+        why=Why(
+            text=f"This vendor has never billed above {RUPEE}2,41,300.",
+            figures=[_figure()],
+            references=_THE_LAUNDERED_REFERENCES,
+            doubt=_THE_DICT_THAT_SHIPPED,
+        ),
+    )
+    # The old check is still happy with it. That is the evidence, not a caveat.
+    assert_no_undeclared_numbers(rec)
+    with pytest.raises(StructureInProseError):
+        assert_no_structure_in_prose(rec)
+    with pytest.raises(StructureInProseError):
+        validate_recommendation(rec)
+
+
+def test_a_structure_is_refused_in_any_prose_field_not_only_doubt():
+    """`doubt` was where it happened; `str(some_dict)` is available everywhere."""
+    with pytest.raises(StructureInProseError):
+        validate_recommendation(
+            _rec(what=What(headline="{'vendor_name': 'Kumar'}", entity_kind="invoice", entity_id="i"))
+        )
+
+
+def test_plain_english_with_a_colon_or_a_possessive_still_passes():
+    """The guard has to be narrow enough that emitters do not route around it —
+    a control nobody can write prose against stops being a control."""
+    validate_recommendation(
+        _rec(
+            certainty=Certainty.UNCERTAIN,
+            why=Why(
+                text=f"This vendor has never billed above {RUPEE}2,41,300.",
+                figures=[_figure()],
+                references=["#1041"],
+                doubt="Rajesh Steel's invoice: same date, same total, different number.",
+            ),
+        )
+    )

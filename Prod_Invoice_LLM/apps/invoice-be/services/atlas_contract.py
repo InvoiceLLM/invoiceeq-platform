@@ -88,6 +88,7 @@ __all__ = [
     "UnwitnessedFigureError",
     "InventedNumberError",
     "NotBatchableError",
+    "StructureInProseError",
     "Certainty",
     "Reversibility",
     "FigureSource",
@@ -104,6 +105,7 @@ __all__ = [
     "assert_figures_are_witnessed",
     "assert_no_undeclared_numbers",
     "assert_batch_acceptable",
+    "assert_no_structure_in_prose",
     "validate_recommendation",
     "sum_figures",
     "numeric_tokens",
@@ -136,6 +138,24 @@ class NotBatchableError(AtlasContractError):
 
 class AttachmentPromiseError(AtlasContractError):
     """D47: a Verify question promised an attachment ATLAS cannot make."""
+
+
+class StructureInProseError(AtlasContractError):
+    """§1/§5.3: a data structure reached a sentence a person reads.
+
+    BE Gap 704. `Why.doubt` on every duplicate-flagged invoice rendered
+    ``{'id': 'ad637a2e...', 'type': 'possible_duplicate', 'message': '...'}`` --
+    a Python dict repr, printed to a finance user. The line passed every check
+    this contract had, because the emitter had **declared the UUID's digit runs
+    as `references`** ("637", "2", "924", "3175", ...) and
+    `assert_no_undeclared_numbers` was therefore satisfied.
+
+    That is the guard being laundered rather than met, which is the exact failure
+    mode CONVENTIONS hard rule 3 exists to prevent: a control that can be
+    satisfied by a shape other than the one it was written to enforce is not a
+    control. So the dict is now rejected for being a dict, independently of what
+    the line declares about its numbers.
+    """
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -777,6 +797,50 @@ def assert_verify_does_not_promise_attachment(rec: Recommendation) -> None:
         )
 
 
+#: The marks that say "this was a data structure, not a sentence" (BE Gap 704).
+#:
+#: Deliberately narrow and literal, for the reason every other check in this
+#: module is: a judgement ("does this read like prose?") is what an LLM does
+#: differently on every run, and a fixed list of substrings is a fact. Each entry
+#: is a shape that cannot occur in a sentence a finance user is meant to read:
+#:
+#: * ``{'`` / ``{"`` -- the opening of a Python dict repr or a JSON object, which
+#:   is what `str(alert)` produced on every duplicate-flagged invoice;
+#: * ``':`` / ``":`` -- a quoted key followed by its value, the shape that
+#:   survives even if something strips the braces;
+#: * ``[{`` -- a list of objects, which is what `sa_alerts` actually is.
+#:
+#: An apostrophe before a colon does not occur in English ("the vendor's: " is
+#: not a sentence), so this does not fire on ordinary possessives.
+_STRUCTURE_MARKS = ("{'", '{"', "':", '":', "[{")
+
+
+def assert_no_structure_in_prose(rec: Recommendation) -> None:
+    """§1/§5.3, BE Gap 704: no data structure ever reaches a sentence.
+
+    Runs over **every** prose string on the line (`Recommendation.prose()`), not
+    just `doubt`, because the defect was in `doubt` only by accident -- the same
+    `str(a_dict)` mistake is available to every emitter and every field.
+
+    **Why this is a separate check rather than a wider number rule.** The dict
+    that shipped did not fail `assert_no_undeclared_numbers`: the emitter ran the
+    contract's own tokeniser over the stringified dict and declared every digit
+    run it found as a `reference`, including the fragments of a UUID. The numbers
+    check was therefore satisfied *by construction*, and no strengthening of it
+    would have caught the line -- what a user read was still a dict. A rule that
+    can be satisfied by declaring the noise is not the rule anybody wanted, so
+    the structure is now rejected as structure.
+    """
+    for text in rec.prose():
+        for mark in _STRUCTURE_MARKS:
+            if mark in text:
+                raise StructureInProseError(
+                    f"recommendation {rec.id} renders {mark!r} in {text!r} -- that is a "  # hardcode-ok: developer-facing exception text; the interpolated values are prose and a fixed marker, not money
+                    "data structure, not a sentence. Take the field a person reads "
+                    "(an alert's `message`), never `str()` of the object"
+                )
+
+
 def validate_recommendation(rec: Recommendation) -> Recommendation:
     """Run every boundary. **The single entry point every emitter calls.**
 
@@ -791,6 +855,11 @@ def validate_recommendation(rec: Recommendation) -> Recommendation:
     figure the line never shows" describes its shadow.
     """
     assert_single_currency(rec)
+    # BE Gap 704: **before** the number checks, deliberately. A stringified dict
+    # fails as a dict, and the caller is told that -- rather than being told
+    # about one of the UUID fragments inside it, which describes the symptom and
+    # invites the fix that shipped the defect (declare the fragments and move on).
+    assert_no_structure_in_prose(rec)
     assert_no_undeclared_numbers(rec)
     assert_figures_are_witnessed(rec)
     assert_verify_does_not_promise_attachment(rec)
