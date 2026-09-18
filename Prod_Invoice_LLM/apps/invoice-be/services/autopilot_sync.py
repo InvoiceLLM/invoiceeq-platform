@@ -100,19 +100,45 @@ SOURCE_TYPE_TO_PROVIDER = {
 # Public API
 # ---------------------------------------------------------------------------
 
+def list_ingestion_sources(
+    db_session: Session, tenant_id: UUID
+) -> list[TenantAutopilotConfig]:
+    """Every configured ingestion source for one tenant, oldest first (D43).
+
+    Feature 34 / task 34.13. There may be several -- a Drive folder for AP and
+    another for AR, one per site, one per entity the bookkeeper handles. Ordered
+    by `created_at` so "the tenant's first source" is a stable idea for the
+    single-source callers below and for ATLAS's Loader lines, which are printed
+    one per row of this list (`services/atlas_skills.py::loader_lines`).
+    """
+    return list(
+        db_session.exec(
+            select(TenantAutopilotConfig)
+            .where(TenantAutopilotConfig.tenant_id == tenant_id)
+            .order_by(TenantAutopilotConfig.created_at)  # type: ignore[arg-type]
+        ).all()
+    )
+
+
 def run_sync(
     tenant_id: UUID,
     db_session: Session,
     trigger: str = "scheduled",
+    config_id: UUID | None = None,
 ) -> dict:
     """
-    Run a full Autopilot sync cycle for one tenant.
+    Run a full Autopilot sync cycle for **one ingestion source** of one tenant.
 
     Args:
         trigger: Gap 427 — what started this run, recorded on every log row it
             writes. Defaults to 'scheduled' because the unattended ACA job path
             (run_sync_for_all_due_tenants below) is the one that cannot pass it
             per-call; routers/autopilot.py::trigger_sync() passes 'manual'.
+        config_id: Feature 34 / task 34.13 (D43) — which of the tenant's
+            ingestion sources to sync. Omitted means the tenant's first source,
+            which is what every caller written before a tenant could have more
+            than one meant; `run_sync_all_sources()` is the multi-source entry
+            point and the one the Sync Now button uses.
 
     Returns:
         {"processed": int, "skipped": int, "failed": int, "quota_exhausted": bool}
@@ -120,11 +146,15 @@ def run_sync(
     settings = get_settings()
 
     # 1. Load config — raise clearly if none configured
-    config = db_session.exec(
-        select(TenantAutopilotConfig).where(
-            TenantAutopilotConfig.tenant_id == tenant_id
-        )
-    ).first()
+    sources = list_ingestion_sources(db_session, tenant_id)
+    if config_id is not None:
+        config = next((c for c in sources if c.id == config_id), None)
+        if not config:
+            raise ValueError(
+                f"No Autopilot source {config_id} found for tenant {tenant_id}"
+            )
+    else:
+        config = sources[0] if sources else None
 
     if not config:
         raise ValueError(f"No Autopilot config found for tenant {tenant_id}")
@@ -174,11 +204,21 @@ def run_sync(
     # next sync would re-list -- and, with the dedup queries below equally
     # blind, re-import -- everything since. Hidden means "not shown", never
     # "did not happen".
+    #
+    # Feature 34 / task 34.13 (D43): the watermark is per SOURCE, not per
+    # source_type. With two Drive folders on one tenant, a successful run
+    # against folder B would otherwise move folder A's `since` forward and every
+    # file added to A before that instant would never be listed again -- a
+    # silent, permanent miss. Legacy rows carry `source_config_id = NULL` and are
+    # deliberately NOT counted for any source: the cost of ignoring them is one
+    # full re-list on the first run after this change, where both dedup layers
+    # below already stop a re-import; the cost of claiming them would be the
+    # silent miss above.
     last_run = db_session.exec(
         select(TenantAutopilotLog)
         .where(
             TenantAutopilotLog.tenant_id == tenant_id,
-            TenantAutopilotLog.source_type == config.source_type,
+            TenantAutopilotLog.source_config_id == config.id,
             TenantAutopilotLog.status == "SUCCESS",
         )
         .order_by(TenantAutopilotLog.ingested_at.desc())  # type: ignore[union-attr]
@@ -223,7 +263,7 @@ def run_sync(
     # case has none of these; the two are mutually exclusive by construction.
     if not remote_files:
         _write_log(
-            db_session, tenant_id, config.source_type,
+            db_session, tenant_id, config,
             source_file_id="", content_hash="", status="NO_NEW_FILES",
             batch_id=batch_id, trigger=trigger, source_file_name=None,
         )
@@ -249,7 +289,7 @@ def run_sync(
             if existing_by_id:
                 logger.debug("Skipping %s — already ingested by file ID", file_name)
                 _write_log(
-                    db_session, tenant_id, config.source_type,
+                    db_session, tenant_id, config,
                     file_id, content_hash="", status="SKIPPED_DUPLICATE",
                     batch_id=batch_id, trigger=trigger, source_file_name=file_name,
                 )
@@ -277,7 +317,7 @@ def run_sync(
                     "Autopilot: refusing %s — %s", file_name, norm_exc.detail
                 )
                 _write_log(
-                    db_session, tenant_id, config.source_type,
+                    db_session, tenant_id, config,
                     file_id, content_hash="", status="FAILED",
                     error_detail=norm_exc.detail,
                     batch_id=batch_id, trigger=trigger, source_file_name=file_name,
@@ -304,7 +344,7 @@ def run_sync(
                     "Skipping %s — content hash already ingested (renamed/moved file)", file_name
                 )
                 _write_log(
-                    db_session, tenant_id, config.source_type,
+                    db_session, tenant_id, config,
                     file_id, content_hash=content_hash, status="SKIPPED_DUPLICATE",
                     batch_id=batch_id, trigger=trigger, source_file_name=file_name,
                 )
@@ -340,7 +380,7 @@ def run_sync(
                     tenant_id, file_name, processed,
                 )
                 _write_log(
-                    db_session, tenant_id, config.source_type,
+                    db_session, tenant_id, config,
                     file_id, content_hash=content_hash, status="FAILED",
                     error_detail=(
                         "Free-tier invoice quota exhausted — this file was not "
@@ -378,7 +418,7 @@ def run_sync(
 
             # --- Write SUCCESS log ---
             _write_log(
-                db_session, tenant_id, config.source_type,
+                db_session, tenant_id, config,
                 file_id, content_hash=content_hash, status="SUCCESS",
                 batch_id=batch_id, trigger=trigger, source_file_name=file_name,
             )
@@ -393,7 +433,7 @@ def run_sync(
         except Exception as exc:
             logger.error("Autopilot: failed to process %s: %s", file_name, exc)
             _write_log(
-                db_session, tenant_id, config.source_type,
+                db_session, tenant_id, config,
                 file_id, content_hash="", status="FAILED",
                 error_detail=str(exc),
                 batch_id=batch_id, trigger=trigger, source_file_name=file_name,
@@ -425,11 +465,67 @@ def run_sync(
     return summary
 
 
+def run_sync_all_sources(
+    tenant_id: UUID,
+    db_session: Session,
+    trigger: str = "manual",
+) -> dict:
+    """Sync **every** configured ingestion source for one tenant (D43).
+
+    Feature 34 / task 34.13. "Sync Now" means "go and look", and a customer with
+    a Drive folder for AP and another for AR means both of them; syncing only the
+    first would leave half their invoices sitting in a folder with a button that
+    claims to have checked it.
+
+    The summaries add up rather than being returned per source: the four counters
+    are what the endpoint reports, and a per-source breakdown belongs on the
+    Loader's ATLAS lines (`services/atlas_skills.py`), which already read the
+    log rows this run writes. One source raising does not stop the others -- the
+    failure is recorded in this tenant's history either way -- but if *every*
+    source fails, the first error is re-raised so the caller still sees it.
+    """
+    sources = list_ingestion_sources(db_session, tenant_id)
+    if not sources:
+        raise ValueError(f"No Autopilot config found for tenant {tenant_id}")
+
+    totals = {"processed": 0, "skipped": 0, "failed": 0, "quota_exhausted": False}
+    first_error: Exception | None = None
+    succeeded = 0
+
+    for config in sources:
+        try:
+            summary = run_sync(
+                tenant_id, db_session, trigger=trigger, config_id=config.id
+            )
+        except Exception as exc:  # noqa: BLE001 -- recorded, then carry on
+            logger.error(
+                "Autopilot: source %s (%s) failed for tenant %s: %s",
+                config.id, config.source_ref, tenant_id, exc,
+            )
+            first_error = first_error or exc
+            continue
+        succeeded += 1
+        totals["processed"] += summary["processed"]
+        totals["skipped"] += summary["skipped"]
+        totals["failed"] += summary["failed"]
+        totals["quota_exhausted"] = totals["quota_exhausted"] or summary["quota_exhausted"]
+
+    if succeeded == 0 and first_error is not None:
+        raise first_error
+    return totals
+
+
 def run_sync_for_all_due_tenants(db_session: Session) -> None:
     """
     Called by the ACA Job script. Queries all TenantAutopilotConfig rows
     and runs sync for each. In MVP, all configured tenants run on every
     invocation (the ACA Job cron controls frequency).
+
+    Feature 34 / task 34.13 (D43): the loop was already per *config* row, but it
+    called `run_sync(config.tenant_id)`, which re-resolved to the tenant's first
+    config -- fine while a tenant had exactly one, and a bug the moment it has
+    two (the first source would sync N times and the others never). It now names
+    the source it is iterating.
     """
     configs = db_session.exec(select(TenantAutopilotConfig)).all()
     logger.info("Autopilot job: found %d tenants configured", len(configs))
@@ -446,9 +542,15 @@ def run_sync_for_all_due_tenants(db_session: Session) -> None:
         try:
             # Gap 427: explicit rather than relying on the default, so the
             # scheduled path stays labelled correctly if that default ever moves.
-            summary = run_sync(config.tenant_id, db_session, trigger="scheduled")
+            summary = run_sync(
+                config.tenant_id,
+                db_session,
+                trigger="scheduled",
+                config_id=config.id,
+            )
             logger.info(
-                "Tenant %s sync done: %s", config.tenant_id, summary
+                "Tenant %s source %s sync done: %s",
+                config.tenant_id, config.id, summary,
             )
         except Exception as exc:
             logger.error(
@@ -512,15 +614,29 @@ def prune_autopilot_history(db_session: Session, force: bool = False) -> int:
     configs = db_session.exec(select(TenantAutopilotConfig)).all()
     total_deleted = 0
 
+    # Feature 34 / task 34.13 (D43): a tenant can now have several sources, each
+    # with its own retention setting, while the delete below is tenant-wide --
+    # `tenant_autopilot_logs` rows written before `source_config_id` existed
+    # cannot be attributed to a source at all, so a per-source delete would
+    # leave them unprunable forever. One pass per tenant at the LONGEST of that
+    # tenant's retention windows: a shorter window on one source must never
+    # delete history another source is still keeping, and retention is a floor
+    # ("keep at least this long"), never a ceiling.
+    retention_by_tenant: dict[UUID, int] = {}
     for config in configs:
         # Defensive: a row written before the column had a default, or edited
         # directly in the database, must not turn into a cutoff of "now".
         retention_days = config.history_retention_days or 90
+        retention_by_tenant[config.tenant_id] = max(
+            retention_by_tenant.get(config.tenant_id, 0), retention_days
+        )
+
+    for tenant_id, retention_days in retention_by_tenant.items():
         cutoff = now - timedelta(days=retention_days)
 
         stale = db_session.exec(
             select(TenantAutopilotLog).where(
-                TenantAutopilotLog.tenant_id == config.tenant_id,
+                TenantAutopilotLog.tenant_id == tenant_id,
                 TenantAutopilotLog.ingested_at < cutoff,
                 TenantAutopilotLog.status.in_(_PRUNABLE_STATUSES),  # type: ignore[union-attr]
             )
@@ -533,7 +649,7 @@ def prune_autopilot_history(db_session: Session, force: bool = False) -> int:
             logger.info(
                 "Autopilot retention: deleted %d row(s) older than %s "
                 "(%d day window) for tenant %s",
-                len(stale), cutoff.isoformat(), retention_days, config.tenant_id,
+                len(stale), cutoff.isoformat(), retention_days, tenant_id,
             )
         total_deleted += len(stale)
 
@@ -541,7 +657,7 @@ def prune_autopilot_history(db_session: Session, force: bool = False) -> int:
     _last_prune_at = now
     logger.info(
         "Autopilot retention pass complete — %d tenant(s), %d row(s) deleted",
-        len(configs), total_deleted,
+        len(retention_by_tenant), total_deleted,
     )
     return total_deleted
 
@@ -553,7 +669,7 @@ def prune_autopilot_history(db_session: Session, force: bool = False) -> int:
 def _write_log(
     db_session: Session,
     tenant_id: UUID,
-    source_type: str,
+    config: "TenantAutopilotConfig",
     source_file_id: str,
     content_hash: str,
     status: str,
@@ -570,10 +686,17 @@ def _write_log(
     call site inside run_sync() passes all three -- a row written without a
     batch_id would silently fall into the endpoint's legacy bucket instead of
     the run it actually belongs to.
+
+    Feature 34 / task 34.13 (D43): takes the whole `config` rather than its
+    `source_type`, because a tenant can now have several sources of the *same*
+    type and `source_type` alone no longer identifies which one wrote the row.
+    Every row this writes carries `source_config_id`; the nullability on the
+    column is for rows written before the column existed, not for new ones.
     """
     log_entry = TenantAutopilotLog(
         tenant_id=tenant_id,
-        source_type=source_type,
+        source_type=config.source_type,
+        source_config_id=config.id,
         source_file_id=source_file_id,
         source_file_name=source_file_name,
         content_hash=content_hash,

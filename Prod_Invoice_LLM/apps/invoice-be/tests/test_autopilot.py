@@ -188,6 +188,7 @@ def _make_log(
     trigger: str | None = None,
     source_file_name: str | None = None,
     ingested_at: datetime | None = None,
+    source_config_id: UUID | None = None,
 ) -> TenantAutopilotLog:
     """Insert a TenantAutopilotLog row and return it.
 
@@ -203,6 +204,7 @@ def _make_log(
     """
     log = TenantAutopilotLog(
         tenant_id=tenant_id,
+        source_config_id=source_config_id,
         source_type="gdrive",
         source_file_id=source_file_id,
         source_file_name=source_file_name,
@@ -493,10 +495,17 @@ def test_T12d_run_sync_passes_since_dt_as_modified_after(db_session):
     because every other test in this file mocks list_google_drive_files
     with return_value= and would stay green even if the argument were
     silently dropped again."""
-    _make_config(db_session)
+    config = _make_config(db_session)
     _make_connection(db_session)
+    # Feature 34 / task 34.13 (D43): the watermark is per ingestion SOURCE now,
+    # so the prior-success row has to name the source it came from. A row with a
+    # NULL source_config_id is a legacy row and is deliberately not counted for
+    # any source -- with two Drive folders on one tenant, a success against
+    # folder B moving folder A's `since` forward would silently and permanently
+    # skip every file added to A before that instant.
     last_sync = _make_log(
-        db_session, source_file_id="gdrive-file-000", content_hash="h0", status="SUCCESS"
+        db_session, source_file_id="gdrive-file-000", content_hash="h0",
+        status="SUCCESS", source_config_id=config.id,
     )
 
     with patch("services.autopilot_sync.get_valid_access_token", return_value="tok"), \
@@ -683,10 +692,15 @@ def test_T18_job_calls_run_sync_per_tenant(db_session):
 
     call_log = []
 
-    def _fake_run_sync(tenant_id, session, trigger="scheduled"):
+    def _fake_run_sync(tenant_id, session, trigger="scheduled", config_id=None):
         # Gap 427: the scheduled path must label its rows 'scheduled'; asserting
         # it here is what stops the ACA job silently writing 'manual' runs.
         assert trigger == "scheduled"
+        # Feature 34 / task 34.13 (D43): the scheduler now names the SOURCE it is
+        # iterating. Without this the loop would re-resolve to the tenant's first
+        # config on every pass, so a tenant with two sources would sync one of
+        # them twice and the other never.
+        assert config_id is not None
         call_log.append(tenant_id)
         return {"processed": 0, "skipped": 0, "failed": 0}
 
