@@ -73,6 +73,7 @@ What is deliberately not here
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Iterable, Sequence
@@ -96,6 +97,8 @@ __all__ = [
     "Action",
     "Verify",
     "Correction",
+    "Lever",
+    "Forecast",
     "Recommendation",
     "assert_single_currency",
     "assert_figures_are_witnessed",
@@ -398,6 +401,61 @@ class Correction(BaseModel):
     after_rendered: str = Field(min_length=1)
 
 
+class Lever(BaseModel):
+    """One thing a person could do that closes the forecast gap (§7.5, D15).
+
+    §7.5 is explicit that a forecast is "a warning with levers, never a chart":
+    *"On the 22nd you are Rs 1.2L short -- chasing these two invoices covers it,
+    or delaying this payment covers it, or it resolves itself if Sharma pays on
+    time."* The date and the number are the warning; these are the rest of it,
+    and without them the line is a chart in a sentence.
+
+    **`amount_rendered` is a string this server formatted**, like every other
+    number on a line. There is no `value` here for the same reason `ReconRow`
+    has none (§15.2): a number a client can add up is a number a client
+    eventually adds up, and the sum of three levers is not a meaningful figure.
+
+    `target_id` is nullable because one lever names nothing: "it resolves itself
+    if they pay on time" is a statement about a receivable that is *already*
+    expected, not an action to take on it.
+    """
+
+    #: What sort of lever this is, for the FE to group by -- never a URL and
+    #: never an action kind. Pulling a lever is going and doing something, and
+    #: §5.3's "ATLAS never moves money" means none of these is ever a button
+    #: ATLAS presses.
+    kind: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    target_id: str | None = None
+    amount_rendered: str = Field(min_length=1)
+
+
+class Forecast(BaseModel):
+    """A date, a number, and the actions that close the gap (§7.5, D15, D44).
+
+    **A deliberate contract extension, added for task 34.9**, on the same terms
+    as `Correction` was added for D45: the FE lays out a date, a shortfall and a
+    list of levers as distinct things, and prose that has to be parsed to be laid
+    out is a field the two sides agree about by accident.
+
+    **`assumption` is required, not optional.** §7.5: "the forecast states its
+    assumption -- on-time payment and historical behaviour are different numbers,
+    and a user making a decision needs to know which they are looking at.
+    Deterministic and honest are separate properties." A nullable assumption
+    would make the honest half optional, and the half that is optional is the
+    half that gets left out.
+    """
+
+    #: The day the balance goes short. A date, not a rendered string: it is not
+    #: money, and the FE formats dates in the user's locale everywhere else.
+    on_date: date
+    shortfall_rendered: str = Field(min_length=1)
+    #: In words. "Every invoice is settled on its due date" is a different
+    #: forecast from "each customer pays the way they have been paying".
+    assumption: str = Field(min_length=1)
+    levers: list[Lever] = Field(default_factory=list)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # The recommendation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -428,6 +486,41 @@ class Recommendation(BaseModel):
     #: are not corrections; a line that carries one is held to the same number
     #: rules on both halves of it (see `prose()`).
     correction: Correction | None = None
+    #: Slice C / task 34.9 (§7.5, D15): present only on a line that warns about a
+    #: shortfall. Optional because most lines are not forecasts; a line that
+    #: carries one has every rendered string in it held to §5.3's number rules
+    #: (see `prose()`).
+    forecast: Forecast | None = None
+
+    # ── Slice C / task 34.7f: the two ranking inputs, and the aging figure ──
+    #
+    # These three are **inputs to arithmetic, never rendered**. Nothing on the
+    # screen prints them: §7.3's ranking is "money at stake x how soon it stops
+    # being fixable", which is deterministic code (hard rule 3), and the only
+    # way that code can be deterministic is if the emitter states the two terms
+    # rather than a ranker inferring them out of prose.
+    #
+    # They are deliberately NOT `Figure`s. A `Figure` is a number a user reads
+    # and therefore needs a witness (§5.3); these are never read, so requiring a
+    # quote or a computation for them would be ceremony with no reader. The
+    # amounts a user actually sees are still `why.figures`, unchanged.
+    #
+    # All three are optional, and `None` is meaningful in each case rather than
+    # a default standing in for a missing value -- see `services/atlas_ranking.py`
+    # for what an unknown stake and an unknown deadline each rank as.
+
+    #: The money at risk on this line, in `currency`. `None` means this line has
+    #: no money on it at all (a quiet ingestion source), which is different from
+    #: zero.
+    stake: Decimal | None = None
+    #: The date after which acting on this line stops being useful -- a payment
+    #: run, a due date, a statement period. `None` means "no deadline known",
+    #: which ranks as far-off rather than as urgent: inventing urgency is how a
+    #: ranking stops meaning anything.
+    fixable_until: date | None = None
+    #: When this became work. Read by §2.2/D20's collapse row for its aging
+    #: figure ("34 pending, 3 untouched for a week"); never printed as a date.
+    since: date | None = None
 
     certainty: Certainty = Certainty.CERTAIN
     reversibility: Reversibility = Reversibility.REVERSIBLE
@@ -498,6 +591,15 @@ class Recommendation(BaseModel):
                     self.correction.after_rendered,
                 ]
             )
+        if self.forecast is not None:
+            # Task 34.9 / §7.5. A shortfall and its levers are the numbers a
+            # person decides on, so they go through the same checks: an invented
+            # "you are about Rs 1.2L short" is §5.3's worst case with a date
+            # attached to it.
+            strings.append(self.forecast.shortfall_rendered)
+            strings.append(self.forecast.assumption)
+            for lever in self.forecast.levers:
+                strings.extend([lever.label, lever.amount_rendered])
         return strings
 
 

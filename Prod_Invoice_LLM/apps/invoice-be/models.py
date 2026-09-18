@@ -2067,3 +2067,167 @@ class AtlasDismissal(SQLModel, table=True):
     #: shape today is a skill prefix plus a UUID.
     recommendation_id: str = Field(max_length=255)
     dismissed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AtlasActionLog(SQLModel, table=True):
+    """Feature 34 / task 34.7c — what ATLAS actually did, as a readable list.
+
+    **§5.3 names this as a boundary, not as a feature.** ATLAS "never writes
+    silently: every write is visible, attributed and timestamped. 'What ATLAS
+    did' is a real list." Before this table that sentence was a claim in a spec
+    with nothing behind it, because ATLAS could not write at all. D50/D51 made
+    two action kinds performable, so the list has to exist in the same change
+    that creates the first thing worth listing.
+
+    **One row per attempt, successes and failures alike.** A log that held only
+    successes would answer "did ATLAS touch this invoice?" with a confident no
+    on precisely the occasions someone is asking because something looks wrong.
+    `succeeded` carries which, and `summary` carries the endpoint's own words --
+    including its refusal.
+
+    **Tenant-wide reads, per-user attribution.** `user_id` is who clicked;
+    the read (`services/atlas_actions.py::recent_actions`) is not filtered by it,
+    because §2.2 makes the Admin the superset and a per-user log would hide one
+    auditor's resolve from the person answerable for it.
+
+    **This table is not the audit trail.** `AuditLog` is, and the underlying
+    endpoint still writes it: `resolve_audit_invoice` is called unchanged, so a
+    resolve performed from the work screen appears in `audit_logs` exactly as one
+    performed from the audit queue does. This table answers a narrower question
+    -- which of those came from an ATLAS line and which line -- and deleting it
+    would lose no financial history.
+
+    **Nothing reads `recommendation_id` back as a key.** It is recorded because
+    "ATLAS did this, from this line" is the whole point of the list; dismissal
+    (`AtlasDismissal`) is the table keyed on it.
+    """
+
+    __tablename__ = "atlas_action_log"
+    __table_args__ = (
+        # The one read: this tenant's actions, newest first.
+        sa.Index("idx_atlas_action_tenant_time", "tenant_id", "performed_at"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
+    #: `TenantContext.user_id`, same rule as `AtlasDismissal.user_id`: a string,
+    #: not a FK, because not every authenticated caller has a `users` row.
+    user_id: str = Field(max_length=255)
+    #: The deterministic `Recommendation.id` the click came from.
+    recommendation_id: str = Field(max_length=255)
+    #: An `ACTION_DISPOSITIONS` key -- "resolve_invoice", "retry_ingestion_source".
+    action_kind: str = Field(max_length=64)
+    #: What it acted on: an invoice id, an ingestion source id. A string rather
+    #: than a UUID column because the kinds do not all address the same table,
+    #: and a typed column would force a guess about which one.
+    target_id: str = Field(max_length=255)
+    succeeded: bool = Field(default=False)
+    #: The outcome in the words the screen shows -- or the refusal, unedited.
+    summary: str = Field(max_length=1000)
+    performed_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AtlasMemoryRule(SQLModel, table=True):
+    """Feature 34 / task 34.10 — everything ATLAS learns, in plain language.
+
+    Spec §7.2 (D31), **bounded by D40**.
+
+    **Why a rule has to be readable and editable.** §7.2: "everything ATLAS
+    learns becomes a visible, editable rule in plain language -- whether it came
+    from a direct answer, a dismissal, a correction or something said in chat.
+    This follows from never-write-silently: if ATLAS believes something about
+    the business, the user can read it, change it or delete it. **A wrong lesson
+    that cannot be found haunts the system forever.**"
+
+    **What D40 keeps OUT of this table, and it is most of what ATLAS knows.**
+    Vendor baselines, claims and every other *derived observation* are computed
+    at check time and thrown away (D39) -- they are not rules and they never
+    become rows here. The line shows its own working instead ("4x their usual
+    Rs 40,000-Rs 60,000 across 4 invoices"), which is provenance without
+    persistence. So this table holds only what ATLAS was **told or inferred as a
+    rule**: a correction the user taught, a pattern they reported as missed, a
+    dismissal pattern they agreed to act on.
+
+    That boundary is load-bearing and invisible, so `tests/test_atlas_memory.py`
+    asserts that no emitter module imports this one: the day a baseline is
+    written here, a recomputed observation becomes a stored belief that outlives
+    the invoices that produced it.
+
+    **`text` is the whole rule.** Not a predicate, not JSON, not a DSL: §7.2
+    says plain language because the person who has to judge whether a lesson is
+    wrong is a finance user, and a rule they cannot read is a rule they cannot
+    delete. Nothing in this backend evaluates these rows automatically today,
+    and that is stated rather than implied -- they are what ATLAS *believes*, and
+    the surfaces that act on them are future work.
+
+    **Delete means delete.** There is no `deleted_at` here: `active=False` is a
+    user switching a rule off and keeping it, and a delete removes the row.
+    """
+
+    __tablename__ = "atlas_memory_rules"
+    __table_args__ = (
+        sa.Index("idx_atlas_memory_tenant", "tenant_id", "created_at"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
+    #: The rule, as a person reads it. §7.2's "plain language".
+    text: str = Field(max_length=2000)
+    #: Where this lesson came from -- "told", "correction", "missed_report",
+    #: "dismissal_pattern". Recorded because §5.2's "wrong lesson" is much easier
+    #: to judge when you know whether ATLAS was told it or worked it out.
+    source: str = Field(max_length=32)
+    #: What produced it, when there is something to point at: a recommendation
+    #: id, an invoice id, a missed-report id. Free text, because the four sources
+    #: do not all address the same table.
+    origin_ref: str | None = Field(default=None, max_length=255)
+    #: A user switching a rule off without losing what it said. Distinct from
+    #: deleting it, which removes the row entirely (founder rule: delete is hard).
+    active: bool = Field(default=True)
+    #: `TenantContext.user_id`, so a wrong lesson can be asked about.
+    created_by: str = Field(max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AtlasMissedReport(SQLModel, table=True):
+    """Feature 34 / task 34.14 — "you missed this", the only false-negative detector.
+
+    Spec §5.2 (Q13) · `atlas_discussion.md` **D34**.
+
+    **Why this is the whole mechanism.** §5.2's asymmetry: a false positive is
+    cheap and visible and self-correcting; a false negative is real money and
+    **invisible** -- no feedback, no correction, no signal. Q13 asked how one is
+    ever detected, and D34 ruled: **the user reports it.** There is no automatic
+    detector, and there is not going to be one.
+
+    **Under-reporting is accepted, explicitly** (§13.4). The miss rate stays
+    unknown, including whether it is worsening. The founder's position, recorded
+    rather than softened: getting better matters more than measuring, and a
+    reported miss names a real pattern that then protects every future invoice.
+
+    So the point of a row here is not the count. It is the `description`, which
+    becomes an `AtlasMemoryRule` the user can then read, edit or delete -- which
+    is the "feeding §7.2's memory" half of D34, and the reason the report is
+    worth storing at all rather than being a support email.
+    """
+
+    __tablename__ = "atlas_missed_reports"
+    __table_args__ = (
+        sa.Index("idx_atlas_missed_tenant", "tenant_id", "created_at"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
+    user_id: str = Field(max_length=255)
+    #: What it was about -- "invoice", "vendor", "tenant". Free text for the same
+    #: reason `What.entity_kind` is: the set grows with the surfaces.
+    entity_kind: str = Field(max_length=64)
+    entity_id: str = Field(max_length=255)
+    #: What ATLAS should have caught, in the user's own words. **Never
+    #: paraphrased**: the sentence is the finding, and rewriting it would be
+    #: ATLAS editing the evidence that it was wrong.
+    description: str = Field(max_length=2000)
+    #: The memory rule this produced, so the two can be read together.
+    rule_id: UUID | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

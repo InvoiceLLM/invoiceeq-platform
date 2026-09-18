@@ -1138,3 +1138,374 @@ The same run shows D47's wording as served:
 
 **The seeded rows were removed afterwards.** They existed to make the mock tenant's screen
 non-empty and are not test data anyone should find later.
+
+---
+
+## 17. As built — Slice C (2026-09-18)
+
+**Additive record, not a replacement for §1–§16** (CONVENTIONS hard rule 4). Branch
+`feature/atlas`, uncommitted, on top of commit `2baf8bb`. Tasks **34.7 (a–g), 34.9, 34.10,
+34.12 and 34.14**. **34.8, 34.11, escalation and every background job remain unbuilt by ruling**
+(D42, D36, D37, D38) and nothing in this slice contains a skeleton of any of them.
+
+Founder rulings this slice is written against: **D50** and **D51** (2026-09-18, the action set),
+plus D30, D20/D41, D15/D44, D31/D40, D12, D24/D25 and D34.
+
+### 17.1 What this slice changes about what ATLAS *is*
+
+Slices A and B produced a screen that **explains and cannot act**. `PERFORMABLE_ACTION_KINDS`
+was empty on both sides, every button rendered disabled saying *"I can see this and explain it,
+but I cannot do it for you yet"*, and `atlas_lines()` returned skill order, which §14.8 said in
+so many words is not a ranking. Until this slice ATLAS was a report.
+
+It is now a tool, on **exactly two action kinds**, and the lines arrive ranked.
+
+### 17.2 Files
+
+| File | Task | What it holds |
+|---|---|---|
+| `services/atlas_actions.py` | 34.7a–e | `ActionDisposition`, `ACTION_DISPOSITIONS` (all ten kinds), `ACTION_CAPABILITY`, `PERFORMABLE_ACTION_KINDS`, `perform_action()`, `record_action()`, `recent_actions()` |
+| `services/atlas_ranking.py` | 34.7f | `RANK_CUT`, `days_left()`, `rank_score()`, `rank()` |
+| `services/atlas_collapse.py` | 34.7g | `COLLAPSE_THRESHOLD`, `UNTOUCHED_DAYS`, `CollapsedArea`, `capabilities_held_by_others()`, `collapse()` |
+| `services/atlas_forecast.py` | 34.9 | `Shortfall`, `shortfalls()`, `forecast_recommendations()`, `DUE_DATE_ASSUMPTION` |
+| `services/atlas_memory.py` | 34.10, 34.14 | `RuleSource`, `ID_FAMILIES`, `list_rules`/`add_rule`/`edit_rule`/`delete_rule`, `report_missed()`, `noise_suggestions()` |
+| `services/atlas_orientation.py` | 34.12 | `OrientationPart`, `Orientation`, `orientation()`, `tenant_has_history()` |
+| `services/atlas_contract.py` | 34.7f, 34.9 | `stake` / `fixable_until` / `since` on `Recommendation`; `Lever`, `Forecast`, `Recommendation.forecast`, and both inside `prose()` |
+| `services/atlas_skills.py` · `atlas_doubt.py` | 34.7f | `_arrived_on()`, and the ranking inputs stated at each emitter |
+| `models.py` | 34.7c, 34.10, 34.14 | `AtlasActionLog`, `AtlasMemoryRule`, `AtlasMissedReport` |
+| `alembic/versions/c3d4e56f15a7_atlas_action_log.py` | 34.7c | One add-only table |
+| `alembic/versions/d4e5f67a16b8_atlas_memory_and_missed.py` | 34.10, 34.14 | Two add-only tables |
+| `routers/atlas.py` | all | `POST /lines/{id}/act`, `GET /actions`, `GET /actions/kinds`, `GET /orientation`, `GET/POST/PATCH/DELETE /memory`, `POST /missed`; ranking and collapse applied to `GET /lines` |
+| `tests/test_atlas_actions.py` · `test_atlas_ranking.py` · `test_atlas_forecast.py` · `test_atlas_memory.py` | all | 64 new tests |
+
+**Three add-only tables, no backfill, no down/up ceremony** (founder's dev-phase rule).
+`alembic upgrade head` run once: `b2c3d45e14f6 → c3d4e56f15a7 → d4e5f67a16b8`.
+
+### 17.3 34.7 — the action set, and where each ruling is enforced
+
+**The dispatcher performs nothing itself.** Both performable kinds are wired to code that
+already existed:
+
+- `resolve_invoice` → `routers.audit.resolve_audit_invoice`, **called as a function**, not over
+  HTTP and not re-implemented. It is an ordinary `async def` whose `Depends(...)` defaults FastAPI
+  resolves; passing the context and session explicitly runs exactly what an auditor's own click
+  runs — Gap 561's rate limiter, Gap 541's row lock, the `AuditLog` write, the alert re-check,
+  the notification fan-out. A second path to the same decision is the one that drifts.
+- `retry_ingestion_source` → `services.autopilot_sync.run_sync(config_id=…)`, **per source**
+  (D51, possible since D43). The endpoint `POST /autopilot/sync` runs every source because a Sync
+  Now that checked one would lie; an ATLAS line names one source, so it calls the per-source entry
+  point. `run_sync` resolves the config out of this tenant's own sources, so tenant scoping is not
+  re-implemented either.
+
+**Every kind is in the table, including the eight that will never be performed.** A kind that is
+merely absent is refused by accident; a kind present as `SUGGEST` is refused on purpose, and the
+next reader can tell which. The four dispositions are `PERFORM`, `SUGGEST` (D50 — resolves to a
+destination, never a write), `NAVIGATE` (never was a write) and `INSTRUCT` (`attach_witness_document`
+since D47, `request_missing_invoices` because §5.3 says an outbound message is read in full and
+sent by a human).
+
+**34.7b — the capability check on acting is a second, separate decision.** `visible_to()` drops a
+line the caller may not act on, so it was never on their screen; that is not a gate, because a
+request naming a line id arrives regardless of what was rendered. `perform_action()` requires
+`ACTION_CAPABILITY[kind]` and answers **403**. The equivalence between that check and the audit
+router's own `Depends(require_actions_scope)` — which calling the handler directly does not run —
+is asserted over every role in `test_acting_gate_agrees_with_the_audit_router_gate`, not left to a
+docstring.
+
+**The client's `params` are never forwarded.** `AuditResolutionPayload` also accepts `corrections`
+and `apply_as_standing_rule`, so a passed-through dict would let `apply_field_correction` —
+suggest-only by ruling — arrive wearing `resolve_invoice`'s name and teach a vendor-scoped standing
+rule. The payload is rebuilt from a whitelist, and the status is narrowed to `PAID`/`REJECTED`:
+Gap 193's Admin-only reopen and Gap 407's two deferrals are not reachable through a surface whose
+lines never propose them. `test_resolve_invoice_ignores_a_smuggled_standing_rule` re-reads the
+vendor name afterwards, because a status code alone would not prove the correction was dropped
+rather than merely unreported.
+
+**34.7c — the action log is a table, not a claim.** §5.3 requires that every write is visible,
+attributed and timestamped and that "what ATLAS did" is a real list. `atlas_action_log` holds one
+row per **attempt**: a log holding only successes answers "did ATLAS touch this invoice?" with a
+confident no on exactly the occasions someone is asking because something looks wrong. Read
+tenant-wide by `GET /atlas/actions` — the Admin is the superset (§2.2) and a per-user log would
+hide one auditor's resolve from the person answerable for it. A logging failure never fails the
+action: the underlying write has already happened, and reporting a failure for something that
+succeeded is a worse lie than a missing row.
+
+**This table is not the audit trail.** `AuditLog` is, and it is still written, because
+`resolve_audit_invoice` is called unchanged — a resolve performed from the work screen appears in
+`audit_logs` exactly as one from the audit queue does.
+
+**34.7d — `PERFORMABLE_ACTION_KINDS` is now served, not transcribed.** The empty set in
+`lib/atlas.ts` was Slice B's honesty mechanism and it **stays empty**: the FE reads
+`GET /atlas/actions/kinds` at runtime instead. A hand-maintained copy on the client is what lets a
+button be enabled ahead of its endpoint, which is the exact failure the empty set was invented to
+prevent. The FE's fallback while that read is in flight or has failed is "nothing is performable",
+because "I do not know whether I can do this" and "I can" must not render the same.
+
+**34.7e — suggest-only never becomes a write, enforced twice.** The endpoint answers **409** with
+D50's reason in words (not 404 — a 404 reads as "not built yet", which is the wrong expectation to
+set about a ruling), and `test_a_suggest_only_kind_is_refused_and_writes_nothing` re-reads the
+invoice row to prove nothing moved. The FE renders those kinds as a **link** to
+`actionDestination()`, so there is no button whose `onClick` a later change could fill in.
+
+### 17.4 34.7f — ranking, as arithmetic
+
+`money at stake ÷ (days until it stops being fixable + 1)`, sorted descending, tie-broken on
+`(-stake, id)`. Hard rule 3: ordering decides which finding a person reads first and which they
+never scroll to, so a ranking a model produces differently each run is a shuffle with an
+explanation attached.
+
+The two terms are **stated by the emitter**, not inferred from prose — `Recommendation.stake` and
+`.fixable_until`, plus `.since` for the aging figure. They are new contract fields and are
+**never rendered**: they are inputs to arithmetic, so requiring a `Figure`'s witness for them would
+be ceremony with no reader. What each emitter states, and why:
+
+| Line | `stake` | `fixable_until` |
+|---|---|---|
+| `audit-approve-` | the invoice total | its due date |
+| `train-arithmetic-` | **the size of the error**, not the invoice — a wrong total on a small invoice is a small problem, and ranking by the invoice would push every large invoice's rounding slip above a genuinely wrong small one | none |
+| `train-lowconf-` | none — there is no computable error size, and the invoice total would be the wrong number (same reasoning that keeps `Correction` off that line) | none |
+| `doubt-` | `claim.value`, the amount the doubt is *about* — a doubt about a freight line is not a doubt about the whole invoice | the invoice's due date |
+| `forecast-short-` | the shortfall | the day it lands |
+
+`fixable_until is None` ranks as far off (90 days), never as urgent: inventing urgency for a line
+that stated none degrades the whole ordering every time an emitter forgets the field. `days_left`
+is floored at zero, so an overdue item is maximally urgent rather than negatively urgent — a
+missed deadline does not make the money stop mattering.
+
+**Nothing is hidden.** `rank()` returns every line it was given. `rank_cut` is a display hint on
+the response and the lines below it are **in the same payload**, so the FE's *Show everything*
+reveals rather than fetches — "reachable" must not quietly mean "reachable when the network is up".
+
+**One honest limit, stated rather than discovered later:** two lines in different currencies are
+ordered by raw magnitude with no rate applied. No blended number is produced and nobody reads the
+score, so §7.4 is not violated — but the relative order of cross-currency neighbours is arbitrary,
+and that is written in the module docstring rather than left for someone to find.
+
+### 17.5 34.7g — collapse, and what it is not
+
+Admin only. An area collapses when **another grant-holder holds that capability** (D20) *or* when
+there is simply a lot of it (D41 — `COLLAPSE_THRESHOLD`, a stated guess of 12, because §13.5 names
+the real threshold as a build-time unknown to be answered by measurement and there is no customer
+to measure). One row shape, two reasons, and the row says which.
+
+- **It groups; it never removes.** The lines an area stands for are still in `lines`, and the row
+  carries their ids. That is what makes "openable in place" a client-side expansion with no second
+  request and no second permission decision — coverage is total by construction.
+- **A solo owner collapses nothing**, and it is not special-cased: no other grant-holder and a
+  small list means no reason to collapse.
+- **The Admin's own position is never collapsed away from them.** `AtlasCapability.ADMIN` is
+  skipped: the cash position is not somebody else's work, and §2.2's "nothing withheld" forbids it.
+- **No escalation** (D37). Nothing travels anywhere after a delay; there is no clock in this module.
+- **Aging is honest about what it could not measure.** A line with no `since` is counted in the
+  total and **not** counted as untouched — "I do not know how old this is" and "this is fresh" are
+  different facts — and the row carries `age_unknown` and says so in its headline.
+
+### 17.6 34.9 — the forecast with levers
+
+`shortfalls()` walks each currency's balance forward **day by day** from the last imported
+statement balance and returns the first day it goes below zero. That is a different question from
+"what is the net position in 30 days" and a much more useful one: a tenant can be comfortably
+positive at month end and unable to pay on the 22nd. A net-position forecast would say nothing, and
+`test_short_on_a_day_even_when_the_month_nets_out_fine` is that case.
+
+Three levers, all chosen by arithmetic: the fewest receivables due *after* the short day whose
+total reaches the gap; the single payable due on or before it that is large enough to cover it; and
+the receivable already expected before it, which asks nothing of the user. **A chase set that
+cannot cover the gap is dropped, not offered as a partial fix** — the user would find out after
+doing the chasing.
+
+- **`Forecast.assumption` is a required contract field**, and it says due dates in words. §7.5:
+  "deterministic and honest are separate properties", and the honest half is the one that gets left
+  out when it is optional. §7.5's better forecast — built on how people actually pay — is **not
+  built**, and the line says so in its `doubt` rather than letting a due-date sum wear behaviour's
+  clothes (§5.2's "right flag, wrong reason").
+- **Nothing is emitted when the balance is unknown.** No statement, no starting point; a walk from
+  zero would report every tenant as short on day one, and "unknown" must not render as "short" —
+  the same rule that makes `runway_days` `None` rather than a large number.
+- **Nothing is emitted when there is no shortfall.** A line saying "you are fine" is the
+  false-positive volume §5.2 says trains a user to stop reading.
+- **`AtlasCapability.AUDIT`** — D44, one forecast and one view of it, with the Admin seeing it as
+  the superset. That reversal of D2 lives in one field, and a test asserts it.
+- **A lever is never a button.** §5.3: ATLAS never moves money and never sends outside the company
+  unseen. Chasing a customer and deferring a payment are things the person does.
+
+### 17.7 34.10 and 34.14 — memory, and being told about a miss
+
+**D40 removes most of what ATLAS knows from the memory store, and that is the point.** Vendor
+baselines and claims are derived at check time and thrown away (D39); the line shows its working
+instead. `atlas_memory_rules` holds only what ATLAS was **told** or what a user **agreed** it
+should remember. That boundary is invisible — nothing would fail if a baseline were written there —
+so `test_no_emitter_writes_to_the_memory_store` asserts grep-shaped that no emitter module imports
+it.
+
+A rule can be read, edited, switched off and deleted. **Delete is a hard delete**: there is no
+`deleted_at`, and §7.2's own argument is why — a wrong lesson that cannot be found haunts the
+system forever, and a soft-deleted rule is precisely one that cannot be found. `active=False` is a
+different act: a user keeping a rule and switching it off.
+
+**D12's noise pruning suggests and never writes.** `noise_suggestions()` counts dismissals per line
+family, tenant-wide across users, and above 40 (§5.3's own figure: "one dismissal is noise, forty
+are a pattern") produces a sentence the user may accept. Accepting it is them calling `add_rule`.
+Writing it automatically would be the silent write §5.3 forbids, arriving through the door marked
+"learning".
+
+The family is a **registry (`ID_FAMILIES`), not a parse**, and this is the one non-obvious decision
+in the module: the tail of a recommendation id is a UUID, which is full of hyphens, so splitting on
+them cannot find where the family ends. A test greps every `id=f"…"` out of the four emitter
+modules and asserts the registry covers them.
+
+**34.14** is `POST /atlas/missed`. It is **not capability-gated**, deliberately: a miss is noticed
+by whoever happens to be looking, and §5.2 says this evidence is already invisible and
+under-reported. The user's sentence is stored **unedited** and copied into a memory rule prefixed
+with a fixed label — it is the evidence ATLAS was wrong, and paraphrasing it would be the system
+editing its own report card. `AtlasMissedReport.rule_id` is **not** a foreign key, so deleting a
+wrong lesson does not delete the record that ATLAS missed something.
+
+Under-reporting stays accepted and unmeasured (§13.4). There is no miss rate anywhere in this code.
+
+### 17.8 34.12 — cold start
+
+`GET /atlas/orientation` serves §7.1's three parts for the capabilities the caller holds, plus the
+day-one findings and the historical-import offer.
+
+- **It is data, not a prompt.** Part 3 — *"right now I do not know your vendors… in a month I will
+  know each vendor's usual range. In three months I will know who pays late"* — is a **commitment
+  about what the product will do**, and a sentence that varies per run is a commitment nobody can
+  be held to.
+- **`needed` is "has this workspace seen an invoice", not an onboarding flag.** A flag records that
+  somebody clicked past a screen; the question that decides whether the explanation is still true
+  is whether ATLAS has anything to go on. A tenant that goes quiet and comes back to an empty
+  workspace gets the honest explanation again.
+- **Not a tour** (D25). No step counter, no "next", no "skip", no completion row, nothing persisted.
+- **An ungranted user gets no orientation.** D3's empty state already says the true thing;
+  describing work they cannot do would be explaining a product they have no access to.
+- **Grants stack into one orientation** (§2.1), the way the screen merges lines rather than tabbing.
+- **The historical import is an offer and says so in its own sentence** — everything works without
+  it, and a first session held hostage to a file the customer may not have is the opposite of what
+  §7.1 is for.
+
+### 17.9 The contract, extended three times
+
+Slice C extended `services/atlas_contract.py` deliberately rather than working around it, on the
+same terms §14.6 records for `Correction`:
+
+1. **`stake`, `fixable_until`, `since`** — ranking and aging inputs, never rendered, deliberately
+   not `Figure`s (§17.4).
+2. **`Lever` and `Forecast`**, plus `Recommendation.forecast` — because the FE lays out a date, a
+   shortfall and a list as distinct things, and prose that has to be parsed to be laid out is a
+   field the two sides agree about by accident.
+3. **`prose()` now covers the forecast**, so `shortfall_rendered`, the assumption and every lever's
+   label and amount go through §5.3's number rules. An invented "you are about ₹1.2L short" is the
+   worst case with a date attached to it.
+
+`Action` still carries no URL. Destinations for suggest-only kinds live in the FE's own route table
+(`actionDestination()`), because they are FE routes and §12.2's reason for keeping URLs off the
+contract has not changed.
+
+### 17.10 Verification
+
+Real Postgres at `postgresql://…@127.0.0.1:5433/invoice_db` — **`127.0.0.1`, never `localhost`**
+(BE Gap 697).
+
+The eleven ATLAS test files, which is the narrow run used per task:
+
+```
+DATABASE_URL="postgresql://postgres:localpassword123@127.0.0.1:5433/invoice_db" \
+  ./.venv/Scripts/python.exe -m pytest tests/test_atlas_contract.py tests/test_atlas_skills.py \
+    tests/test_atlas_recon.py tests/test_atlas_doubt.py tests/test_atlas_ingestion_sources.py \
+    tests/test_atlas_router.py tests/test_atlas_dismissals.py tests/test_atlas_actions.py \
+    tests/test_atlas_ranking.py tests/test_atlas_forecast.py tests/test_atlas_memory.py -q
+→ 149 passed          (85 before this slice; 64 of them are new)
+```
+
+The whole backend suite, at the track boundary:
+
+```
+DATABASE_URL="postgresql://postgres:localpassword123@127.0.0.1:5433/invoice_db" \
+  ./.venv/Scripts/python.exe -m pytest tests/ -q
+→ 4564 passed, 11 failed, 4 skipped, 5 deselected
+```
+
+**The eleven failures are pre-existing on this branch and are not this slice's.** They are
+`test_a3_streaming.py` (1), `test_rag.py` (4), `test_gap426_qualified_column_normalisation.py` (2),
+`test_online_quality_judge.py` (2), `test_agent_eval_multiturn.py` (1) and `test_sandbox_keys.py`
+(1) — SQL normalisation (the rewriter emits `= TRIM(LOWER(…))` where the test expects
+`LIKE LOWER('%…%')`), streaming partial events, and chat metering. Slice C touched no file any of
+them reads: the diff is `models.py`, `routers/atlas.py`, six new `services/atlas_*.py` modules and
+three emitters. **Stated honestly: no pre-change run of the whole suite was captured, so this is an
+argument from the diff, not from a baseline.** Filed as **BE Gap 699** rather than carried silently.
+
+Every §11 invariant still holds, and the Slice C ones §17.11 lists are new.
+
+### 17.11 End-to-end evidence (2026-09-18) — **an invoice resolved from the work screen**
+
+**This is the acceptance proof for the slice, and a unit test is not it.** Real Chromium, `next dev`
+on `127.0.0.1:3077` → the FE route handler → `uvicorn` on `127.0.0.1:8077` → Postgres on
+`127.0.0.1:5433`. Not a `TestClient`, not a mocked `apiClient`, not a fixture.
+
+```
+LINE RENDERED: Kumar Supplies #ATLAS-E2E-347
+BUTTON LABEL:  Approve
+BUTTON ENABLED: true          ← from GET /atlas/actions/kinds, not from a constant
+OUTCOME:       Invoice approved.
+LINE STILL PRESENT AFTER RE-READ: false
+PAGE ERRORS:   none
+```
+
+Read back out of Postgres afterwards, not off the screen:
+
+```
+invoice        → ('ATLAS-E2E-347', 'PAID')
+atlas_action_log → ('resolve_invoice', '5004da49-…', True, 'Invoice approved.',
+                    'user_test_default', 2026-09-18 07:09:20)
+```
+
+The same live backend, driven with `curl`, refusing a suggest-only kind — **the D50 half of the
+proof**, because "it performed the right thing" and "it refused the wrong thing" are two claims:
+
+```
+POST /api/v1/atlas/lines/train-arithmetic-…/act  {"kind":"apply_field_correction",…}
+→ 409 "I do not do 'apply_field_correction' for you. I can show you exactly where to do it,
+       but being wrong here would not stay on one record — a wrong correction teaches a rule
+       that misfires on every invoice after it. Open it and decide."
+
+GET  /api/v1/atlas/actions
+→ the refusal is in the log, succeeded=false, attributed and timestamped
+```
+
+**The seeded row was removed afterwards.** It existed to give the mock tenant's screen something to
+act on and is not test data anyone should find later.
+
+### 17.12 What Slice C deliberately does not do
+
+- **No batch endpoint, no batch action, no `assert_batch_acceptable()` caller** (D42). §12.5's and
+  §14.8's caveat is unchanged: the guard is proven, the endpoint that must call it does not exist,
+  and §11's "an outbound message cannot be sent by a batch endpoint" is still asserted against the
+  guard rather than an endpoint.
+- **No notification, channel, digest or interrupt** (D36). Nothing in this slice sends anything.
+- **No escalation** (D37), **no background job, event hook, cron or absence clock** (D38). Every
+  function here runs when it is called, on the open-the-app path.
+- **No behaviour-based forecast.** §7.5's highest-value item is not built, and every forecast line
+  states the assumption it used instead of implying otherwise.
+- **No automatic false-negative detection** (D34). There is no miss rate and no detector.
+- **No rule evaluation.** `atlas_memory_rules` records what ATLAS believes; nothing in this backend
+  evaluates those rows automatically, and that is stated rather than implied.
+- **The "you missed this" affordance is on ATLAS lines only.** D34 says "on any record"; the
+  endpoint takes any `entity_kind`/`entity_id`, and the invoice, trainer and document screens do
+  not carry the control yet. That is remaining FE work, not a backend gap — filed as **FE Gap 703**.
+
+### 17.13 What this slice found to be wrong in the specs, flagged rather than rewritten (hard rule 4)
+
+1. **§12.2's "There is no confidence number and no `actionable` flag" is still true, but §12.6's
+   list of what Slice A does not do now reads as a to-do list that is finished.** Ranking, assignment
+   and collapse, memory and forecast levers are built as of this section; §12.6 is left as written
+   because it is the record of what Slice A's boundary was.
+2. **§14.6's sentence "the endpoints that perform them do not all exist yet" is now precise in a way
+   it was not meant to be.** Two of the ten exist; the other eight are ruled never to exist (D50),
+   not merely unbuilt. The sentence reads as a deferral and it is a ruling. Left as written; §17.3
+   is the correction.
+3. **§10's task list and §13.3's revision both still show 34.7 as "assignment and collapse".** D50
+   and D51 made 34.7 primarily *the action set*, with collapse as one part of it. The tasklist for
+   this slice reflects that; the spec's two task tables do not, and are left alone.
+4. **§7.3's "(Q5: where a list becomes a queue)" reads as open.** It was ruled by D41 and is
+   recorded in §13.1; the §7.3 sentence still carries the question mark.

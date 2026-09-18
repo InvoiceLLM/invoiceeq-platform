@@ -30,20 +30,35 @@
 "use client";
 
 import Link from "next/link";
+
+import MissedThis from "@/components/atlas/MissedThis";
 import { AlertTriangle, ArrowRight, Check, HelpCircle, Paperclip } from "lucide-react";
 
 import {
+  actionDestination,
   ATTACH_ACTION_KINDS,
   isActionPerformable,
   lineDefect,
+  PERFORMABLE_ACTION_KINDS,
   VERIFY_ATTACH_HINT,
   verifyChatHref,
   type AtlasRecommendation,
 } from "@/lib/atlas";
 
-/** Why a click cannot be performed yet, said on the line rather than on a 404. */
+/** Why a click cannot be performed, said on the line rather than on a 404. */
 const NOT_YET_PERFORMABLE =
   "I can see this and explain it, but I cannot do it for you yet.";
+
+/**
+ * What a suggest-only line says instead (D50, BE 34.7e).
+ *
+ * **Not "not yet".** These two kinds are ruled never to become writes, and the
+ * difference matters to the reader: a wrong correction teaches a rule that
+ * misfires on every future invoice from that vendor, and a wrong requeue spends
+ * pipeline work nobody asked for. So the line takes the user to the place where
+ * they decide, and says that is on purpose.
+ */
+const SUGGESTION_ONLY = "I will take you there — this one is yours to decide.";
 
 const CAPABILITY_LABEL: Record<string, string> = {
   audit: "Decision",
@@ -64,6 +79,24 @@ export interface AtlasLineProps {
   onDismiss?: (line: AtlasRecommendation) => void;
   /** True while the dismissal is in flight, so the click cannot be repeated. */
   dismissing?: boolean;
+  /**
+   * BE 34.7 — perform this line's action. The page owns what happens next,
+   * which is a re-read: D38 recomputes every line on open, so whether the line
+   * survives its own action is the server's answer, not this component's.
+   */
+  onAct?: (line: AtlasRecommendation) => void;
+  /** True while this line's action is in flight. */
+  acting?: boolean;
+  /**
+   * The kinds the **backend** says it can perform right now (BE 34.7d), read
+   * from `GET /atlas/actions/kinds` by the page above.
+   *
+   * Defaulted to the empty set on purpose: a line rendered before that read
+   * lands, or after it failed, shows a disabled button. "I do not know whether
+   * I can do this" and "I can do this" must not render the same, and the safe
+   * one is the one that does nothing.
+   */
+  performableKinds?: ReadonlySet<string>;
 }
 
 export default function AtlasLine({
@@ -71,6 +104,9 @@ export default function AtlasLine({
   onAttach,
   onDismiss,
   dismissing = false,
+  onAct,
+  acting = false,
+  performableKinds = PERFORMABLE_ACTION_KINDS,
 }: AtlasLineProps) {
   const defect = lineDefect(line);
   if (defect) {
@@ -87,7 +123,11 @@ export default function AtlasLine({
 
   const uncertain = line.certainty === "uncertain";
   const attachable = ATTACH_ACTION_KINDS.has(line.action.kind);
-  const performable = isActionPerformable(line.action.kind);
+  const performable = isActionPerformable(line.action.kind, performableKinds);
+  // A destination is only offered for a kind that is NOT performable. A kind
+  // that is both would be two affordances for one line, and the user would have
+  // to guess which one the label meant.
+  const destination = performable ? null : actionDestination(line);
 
   return (
     <li
@@ -170,6 +210,53 @@ export default function AtlasLine({
         </p>
       )}
 
+      {/* THE FORECAST (BE §7.5, D15 · task 34.9) — a date, a number, and the
+          levers. Never a chart: §7.5 says so in those words, and there is no
+          graph, no sparkline and no trend line anywhere in this block.
+
+          THE ASSUMPTION IS RENDERED UNCONDITIONALLY. It is required on the
+          contract and it is the half of the answer that is easy to drop —
+          "deterministic and honest are separate properties" (§7.5), and a
+          shortfall date shown without what it assumed is the deterministic half
+          on its own.
+
+          A LEVER IS NOT A BUTTON. BE §5.3: ATLAS never moves money and never
+          sends outside the company unseen. Chasing a customer and deferring a
+          payment are both things the person does; printing them as clickable
+          would be this screen quietly claiming an authority the whole feature
+          is built to refuse. */}
+      {line.forecast && (
+        <div data-testid="atlas-line-forecast" className="mt-2 rounded border border-amber-800/40 bg-amber-950/10 px-3 py-2">
+          <p className="text-[12px] text-amber-200">
+            <span data-testid="atlas-forecast-date">{line.forecast.on_date}</span>
+            {" · "}
+            <span data-testid="atlas-forecast-shortfall">
+              {line.forecast.shortfall_rendered}
+            </span>{" "}
+            {line.currency}
+          </p>
+          <p data-testid="atlas-forecast-assumption" className="mt-1 text-[11px] text-slate-400">
+            {line.forecast.assumption}
+          </p>
+          {line.forecast.levers.length > 0 && (
+            <ul data-testid="atlas-forecast-levers" className="mt-2 space-y-1">
+              {line.forecast.levers.map((lever, index) => (
+                <li
+                  key={`${line.id}:lever:${index}`} // hardcode-ok: a React key from an id and an index; never rendered, and the amount beside it is the server's own string
+                  data-testid="atlas-forecast-lever"
+                  data-lever-kind={lever.kind}
+                  className="flex items-center gap-2 text-[12px] text-slate-300"
+                >
+                  <span className="text-slate-500">·</span>
+                  <span>{lever.label}</span>
+                  <span className="text-slate-200">{lever.amount_rendered}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {line.why.references.length > 0 && (
         <p data-testid="atlas-line-references" className="mt-2 text-[11px] text-slate-500">
           {line.why.references.join(", ")}
@@ -189,17 +276,35 @@ export default function AtlasLine({
             <Paperclip className="h-3.5 w-3.5" />
             {line.action.label}
           </button>
+        ) : destination ? (
+          /* SUGGEST ONLY (D50) — resolves to a destination and opens it. It is
+             a link, not a button that posts: the backend refuses this kind as a
+             write (409), and rendering it as something clickable that then fails
+             would teach the user the product is broken rather than that the
+             decision is theirs. */
+          <Link
+            href={destination}
+            data-testid="atlas-line-destination"
+            data-action-kind={line.action.kind}
+            data-performable="no"
+            title={SUGGESTION_ONLY}
+            className="inline-flex items-center gap-1.5 rounded border border-slate-700 px-2.5 py-1 text-[12px] text-slate-200 hover:bg-slate-800"
+          >
+            {line.action.label}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
         ) : (
           <button
             type="button"
             data-testid="atlas-line-action"
             data-action-kind={line.action.kind}
             data-performable={performable ? "yes" : "no"}
-            disabled={!performable}
-            title={performable ? undefined : NOT_YET_PERFORMABLE}
-            className="inline-flex items-center gap-1.5 rounded border border-slate-700 px-2.5 py-1 text-[12px] text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!performable || acting || !onAct}
+            onClick={performable && onAct ? () => onAct(line) : undefined}
+            title={performable ? line.action.label : NOT_YET_PERFORMABLE}
+            className="inline-flex items-center gap-1.5 rounded border border-slate-700 px-2.5 py-1 text-[12px] text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {line.action.label}
+            {acting ? "Working…" : line.action.label}
           </button>
         )}
 
@@ -255,9 +360,20 @@ export default function AtlasLine({
         </p>
       )}
 
+      {/* Said on the line, in the right one of two sentences. "I cannot do this
+          for you yet" is a state that will change when an endpoint lands; "this
+          one is yours to decide" is a ruling (D50) that will not. Printing the
+          first where the second is true would promise a feature nobody intends
+          to build. */}
+      {/* "YOU MISSED THIS" (BE task 34.14, D34) — on every line, because the
+          thing ATLAS failed to notice is usually noticed while looking at
+          something adjacent to it. It reports against this line's own entity, so
+          the lesson that comes out of it names a real record. */}
+      <MissedThis entityKind={line.what.entity_kind} entityId={line.what.entity_id} />
+
       {!performable && !attachable && (
         <p data-testid="atlas-line-not-performable" className="mt-1 text-[11px] text-slate-500">
-          {NOT_YET_PERFORMABLE}
+          {destination ? SUGGESTION_ONLY : NOT_YET_PERFORMABLE}
         </p>
       )}
     </li>

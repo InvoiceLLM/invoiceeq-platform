@@ -552,6 +552,17 @@ def doubt_recommendations(
                         ),
                         document_id=str(invoice.id),
                     ),
+                    # §7.3 / D30, stated by the emitter (task 34.7f). The money
+                    # at stake on a doubt is the amount the doubt is about --
+                    # `doubt.claim.value` is the claimed figure, not the invoice
+                    # total, because a doubt about a freight line is not a doubt
+                    # about the whole invoice. It is nullable -- a delivery claim
+                    # has no amount -- and `None` ranks as no money rather than
+                    # as zero money. The deadline is the invoice's due date:
+                    # after it, the question is asked about a payment already
+                    # made.
+                    stake=doubt.claim.value,
+                    fixable_until=invoice.due_date,
                     certainty=Certainty.UNCERTAIN,
                     reversibility=Reversibility.REVERSIBLE,
                     currency=currency,

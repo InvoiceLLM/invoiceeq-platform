@@ -166,6 +166,21 @@ def _amount(inv: Invoice) -> Decimal:
     return Decimal(str(inv.grand_total or 0))
 
 
+def _arrived_on(inv: Invoice) -> date | None:
+    """When this became work -- `Recommendation.since`, task 34.7f/34.7g.
+
+    `created_at` is when the row appeared here, which is the honest answer to
+    "how long has this been sitting with us"; `invoice_date` is when the vendor
+    wrote it and would make a month-old invoice uploaded this morning look
+    untouched for a month. Nullable in, nullable out: a missing timestamp ranks
+    as unknown age rather than as brand new.
+    """
+    created = getattr(inv, "created_at", None)
+    if created is None:
+        return None
+    return created.date() if isinstance(created, datetime) else created
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # The Auditor (§2.3) — approvals, and the whole cash picture (D44)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -390,6 +405,15 @@ def _approval_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
                         question=f"Attach {number} here and show me how you read it — is the total right?",  # hardcode-ok: `number` is an invoice identifier declared on `Why.references`, not money
                         document_id=str(inv.id),
                     ),
+                    # §7.3 / D30's two terms, stated by the emitter that holds
+                    # them rather than inferred by the ranker out of prose. The
+                    # money is the invoice's own total; the deadline is its due
+                    # date, because after it the decision is late rather than
+                    # pending. `since` is when it arrived, which is the aging
+                    # figure D20's collapsed row prints.
+                    stake=amount,
+                    fixable_until=inv.due_date,
+                    since=_arrived_on(inv),
                     certainty=certainty,
                     reversibility=Reversibility.IRREVERSIBLE,
                     currency=currency,
@@ -651,6 +675,14 @@ def _arithmetic_correction(
                     before_rendered=render_amount(stated, currency),
                     after_rendered=render_amount(expected, currency),
                 ),
+                # §7.3: the money at stake on a correction is the size of the
+                # ERROR, not the size of the invoice. A wrong total on a small
+                # invoice is a small problem, and ranking it by the invoice
+                # would push every large invoice's tiny rounding slip above a
+                # genuinely wrong small one. No deadline: a wrong extraction
+                # does not expire, it just keeps teaching the wrong thing.
+                stake=abs(expected - stated),
+                since=_arrived_on(inv),
                 certainty=Certainty.CERTAIN,
                 reversibility=Reversibility.REVERSIBLE,
                 currency=currency,
@@ -710,6 +742,11 @@ def _low_confidence_fields(inv: Invoice, ctx: SkillContext) -> list[Recommendati
                     question=f"Attach {number} here and show me where you read {names} from.",
                     document_id=str(inv.id),
                 ),
+                # No `stake`: there is no computable error size here, and the
+                # invoice total would be the wrong number -- the same reasoning
+                # that keeps `Correction` off this line (§14.3). `None` ranks it
+                # below any line that states money, which is D30 read literally.
+                since=_arrived_on(inv),
                 certainty=Certainty.UNCERTAIN,
                 reversibility=Reversibility.REVERSIBLE,
                 currency=_currency_of(inv, ctx),

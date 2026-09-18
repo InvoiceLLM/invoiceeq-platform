@@ -201,6 +201,11 @@ export function linesResponse(
     lines,
     doubt_checks_run: lines.length,
     doubt_checks_skipped: 0,
+    // BE 34.7f/34.7g. Defaulted high enough that a fixture is never silently
+    // truncated by the rank cut: a test asserting on "the lines" must see the
+    // lines it built, and one that wants the cut sets it explicitly.
+    rank_cut: 50,
+    areas: [],
     ...overrides,
   };
 }

@@ -55,6 +55,7 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "../../lib/apiClient";
+import MissedThis from "@/components/atlas/MissedThis";
 
 // ---------------------------------------------------------------------------
 // Types — mirror BE Gap 464's response shapes
@@ -349,6 +350,25 @@ function RunFileList({ state }: { state: RunFilesState | undefined }) {
             {counts && (
               <p className="mt-1.5 text-[10px] text-slate-500">{counts}</p>
             )}
+
+            {/* FE Gap 703 — D34's "you missed this", on a record rather than on
+                an ATLAS line. This screen is the product's documents list (see
+                this file's page header: `app/documents/page.tsx` was folded into
+                History), so it is where a user looks when a file's outcome does
+                not match what they expected — "this was rejected as not an
+                invoice and it is one", "this loaded and the total is wrong".
+                That is precisely a false negative, and §5.2 says those are
+                invisible unless somebody reports them.
+
+                `file.kind` is the row's own record kind ("invoice",
+                "document", "autopilot_file", "rejected_email") and is passed
+                through unchanged rather than flattened to "invoice": the
+                backend stores whatever kind it is given, and telling it a
+                rejected email was an invoice would put the wrong record id in
+                the evidence. */}
+            <div className="mt-2">
+              <MissedThis entityKind={file.kind} entityId={file.id} />
+            </div>
           </div>
         );
       })}
