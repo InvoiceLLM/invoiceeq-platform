@@ -79,7 +79,11 @@ from services.atlas_actions import (
     record_action,
 )
 from services.atlas_capabilities import AtlasCapability, GrantSet, visible_to
-from services.atlas_collapse import capabilities_held_by_others, collapse
+from services.atlas_collapse import (
+    capabilities_worked_by_others,
+    collapse,
+    group_work_by_capability,
+)
 from services.atlas_ranking import RANK_CUT, rank
 from services.atlas_contract import (
     AtlasContractError,
@@ -173,6 +177,9 @@ class AreaRow(BaseModel):
 
     capability: str
     label: str
+    #: Pieces of **work**, not lines: `len(line_ids)` can legitimately exceed it
+    #: when ATLAS has two things to say about one invoice. See
+    #: `services/atlas_collapse.py` on what real data found here.
     count: int
     untouched: int
     age_unknown: int
@@ -329,8 +336,19 @@ def get_atlas_lines(
         lines,
         grants,
         held_by_others=(
-            capabilities_held_by_others(
-                db, context.tenant_id, exclude_clerk_user_id=context.user_id
+            capabilities_worked_by_others(
+                db,
+                context.tenant_id,
+                exclude_user_id=context.user_id,
+                # The same grouping `collapse()` will use, computed once and
+                # handed over: "which lines are in this area" must have one
+                # answer, or the row's reason and the row's contents describe
+                # two different sets.
+                line_ids_by_capability={
+                    capability: [line.id for line in group]
+                    for capability, group in group_work_by_capability(lines).items()
+                },
+                now=ctx.now,
             )
             if grants.is_admin
             # The query is skipped entirely for a non-Admin, because `collapse()`

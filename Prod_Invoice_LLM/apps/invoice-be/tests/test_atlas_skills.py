@@ -326,3 +326,133 @@ def test_every_line_every_skill_emits_passes_the_whole_contract(pg):
         if line.batchable:
             assert line.certainty.value == "certain"
             assert line.reversibility.value == "reversible"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# What loading real data found — BE Gaps 704 and 705 (2026-09-18)
+#
+# Every one of these would have passed before the fix, because nothing in this
+# file asserted the sentence a person reads or the number they act on. They are
+# written the other way round on purpose: each one names the string or the
+# figure that was wrong on screen.
+# ═════════════════════════════════════════════════════════════════════════════
+
+@postgres_only
+def test_a_duplicate_alert_reads_as_the_sentence_the_pipeline_wrote(pg):
+    """BE Gap 704. `sa_alerts` is JSONB — a list of **dicts** — and `str(a)` put
+    a Python dict repr in front of a finance user on every duplicate-flagged
+    invoice, on every role's screen."""
+    session, tenant, written = pg
+    other = _invoice(
+        session, written, tenant, vendor_name="Rajesh Steel", invoice_number="RAJ-2008",
+        grand_total=437190.0, due_date=TODAY, status="COMPLETED",
+    )
+    inv = _invoice(
+        session, written, tenant, vendor_name="Rajesh Steel", invoice_number="RAJ-2009",
+        grand_total=437190.0, due_date=TODAY,
+        sa_alerts=[
+            {
+                "id": uuid4().hex,
+                "type": "possible_duplicate",
+                "message": (
+                    f"Possible duplicate: Rajesh Steel invoice RAJ-2008 (ID: {other.id}) "
+                    "has the same date and total (437,190.00) but a different number "
+                    "(RAJ-2009). Check whether this is a re-issue."
+                ),
+                "severity": "warning",
+            }
+        ],
+    )
+    line = next(
+        l for l in auditor_lines(session, _ctx(tenant))
+        if l.id == f"audit-approve-{inv.id}"
+    )
+
+    doubt = line.why.doubt or ""
+    assert doubt.startswith("Possible duplicate: Rajesh Steel invoice RAJ-2008")
+    # The three shapes that were on screen, named individually so a regression
+    # says which one came back.
+    assert "{'" not in doubt and "':" not in doubt
+    assert "possible_duplicate" not in doubt
+    assert "severity" not in doubt
+    # The record id is plumbing, and its digit runs are what got declared as
+    # `references` to satisfy §5.3's number check. Neither may survive.
+    assert str(other.id) not in doubt
+    assert "(ID:" not in doubt
+    assert all(len(ref.replace(",", "").replace(".", "")) < 12 for ref in line.why.references)
+
+
+@postgres_only
+def test_no_line_any_skill_emits_ever_contains_a_data_structure(pg):
+    """The guard, asserted where a user would meet it rather than only on the
+    contract: §5.3's boundary is about what reaches prose, so it is checked over
+    everything every emitter produces."""
+    session, tenant, written = pg
+    _invoice(
+        session, written, tenant, vendor_name="Everything Co", invoice_number="4242",
+        grand_total=12345.67, due_date=TODAY + timedelta(days=1),
+        items=[{"total": 1000}], field_confidence={"tax_amount": 0.2},
+        sa_alerts=[{"type": "arithmetic", "message": "Subtotal + Tax does not match Grand Total"}],
+    )
+    for line in auditor_lines(session, _ctx(tenant)) + trainer_lines(session, _ctx(tenant)):
+        for text in line.prose():
+            assert "{'" not in text and '{"' not in text and "':" not in text
+
+
+@postgres_only
+def test_the_cash_line_sums_the_whole_open_book_not_the_decision_queue(pg):
+    """BE Gap 705. **The most damaging failure there is** (§5.2): a wrong number.
+
+    The population is asserted against a direct SQL sum computed here, in the
+    test, from the statuses — not against a literal copied out of the
+    implementation, which would pass for whatever the implementation happened to
+    do.
+    """
+    session, tenant, written = pg
+    payables = {
+        # status -> amount. Everything that has finished extraction and has not
+        # been finalised is money this tenant owes.
+        "COMPLETED": 1107441.80,
+        "AUDIT_REQUIRED": 437190.00,
+        "REVIEW_LATER": 12000.00,
+        "NEEDS_RESUBMISSION": 3000.00,
+    }
+    for status, total in payables.items():
+        _invoice(
+            session, written, tenant, vendor_name=f"Vendor {status}",
+            invoice_number=f"IN-{status}", grand_total=total,
+            due_date=TODAY + timedelta(days=3), status=status,
+        )
+    # Finalised: not a payable any more, in either direction.
+    _invoice(
+        session, written, tenant, vendor_name="Settled", invoice_number="IN-PAID",
+        grand_total=999999.00, due_date=TODAY + timedelta(days=3), status="PAID",
+    )
+
+    receivables = {"VERIFIED": 3449780.00, "NEEDS_REVIEW": 483850.00, "SENT": 200000.00}
+    for status, total in receivables.items():
+        _invoice(
+            session, written, tenant, vendor_name="Us", invoice_number=f"OUT-{status}",
+            grand_total=total, due_date=TODAY + timedelta(days=3),
+            status=status, flow_direction="OUTBOUND",
+        )
+    _invoice(
+        session, written, tenant, vendor_name="Us", invoice_number="OUT-PAID",
+        grand_total=777777.00, due_date=TODAY + timedelta(days=3),
+        status="PAID", flow_direction="OUTBOUND",
+    )
+
+    position = cash_position(session, _ctx(tenant))[0]
+    assert position.payable_due == Decimal(str(round(sum(payables.values()), 2)))
+    assert position.payable_count == len(payables)
+    assert position.receivable_due == Decimal(str(round(sum(receivables.values()), 2)))
+    assert position.receivable_count == len(receivables)
+
+    # And the sentence the user reads carries those figures, not the subset.
+    line = next(
+        l for l in auditor_lines(session, _ctx(tenant))
+        if l.skill == "cash_position_and_runway"
+    )
+    assert "15,59,631.80" in line.why.text     # committed
+    assert "41,33,630.00" in line.why.text     # expecting
+    assert "awaiting a decision" not in " ".join(f.computation or "" for f in line.why.figures)

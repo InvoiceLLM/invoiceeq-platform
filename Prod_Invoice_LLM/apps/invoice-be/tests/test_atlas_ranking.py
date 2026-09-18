@@ -30,7 +30,7 @@ What is asserted, and why each one is here
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -40,12 +40,13 @@ from sqlmodel import select
 
 from dependencies import TenantContext, get_db_session, get_tenant_context
 from main import app
-from models import Invoice, Tenant, User
+from models import AtlasActionLog, AtlasDismissal, Invoice, Tenant, User
 from services.atlas_capabilities import AtlasCapability, GrantSet
 from services.atlas_collapse import (
     COLLAPSE_THRESHOLD,
     UNTOUCHED_DAYS,
-    capabilities_held_by_others,
+    WORKING_WITHIN_DAYS,
+    capabilities_worked_by_others,
     collapse,
 )
 from services.atlas_contract import (
@@ -68,13 +69,19 @@ def _line(
     fixable_until: date | None = None,
     since: date | None = None,
     capability: AtlasCapability = AtlasCapability.AUDIT,
+    entity_kind: str = "invoice",
+    entity_id: str | None = None,
 ) -> Recommendation:
     """A minimal valid line. Only the ranking inputs vary between cases."""
     return Recommendation(
         id=line_id,
         capability=capability,
         skill="test_skill",
-        what=What(headline="A thing", entity_kind="invoice", entity_id=line_id),
+        what=What(
+            headline="A thing",
+            entity_kind=entity_kind,
+            entity_id=entity_id or line_id,
+        ),
         why=Why(text="Because of a reason with no numbers in it."),
         action=Action(kind="open_field_review", label="Look", target_id=line_id),
         verify=Verify(question="Is this right?"),
@@ -207,6 +214,78 @@ def test_volume_alone_collapses_an_area_with_nobody_else_working_it():
     assert rows[0].reason == "there is a lot of it"
 
 
+def test_an_area_counts_work_not_lines():
+    """**The defect real data found (2026-09-18).** "Decisions — 5 pending" on a
+    tenant with two invoices awaiting a decision: two approve lines, two doubt
+    asks about *the same two invoices*, and the cash tile. Two invoices is two
+    pieces of work, and that is the sentence a person acts on."""
+    lines = [
+        _line("audit-approve-a", entity_id="inv-a"),
+        _line("doubt-rate-a", entity_id="inv-a"),
+        _line("audit-approve-b", entity_id="inv-b"),
+        _line("doubt-rate-b", entity_id="inv-b"),
+    ]
+    row = collapse(lines, ADMIN, held_by_others={AtlasCapability.AUDIT}, today=TODAY)[0]
+    assert row.count == 2
+    assert "2 pending" in row.headline
+    # Every line is still reachable by opening the row: the count is about the
+    # sentence, not about what the row contains.
+    assert len(row.line_ids) == 4
+
+
+def test_the_cash_tile_is_not_a_decision_and_is_not_in_the_area():
+    """`audit-cash-INR` declares `AUDIT` (D44), so grouping by capability alone
+    swept a standing position into the decisions queue and counted it as a fifth
+    decision. A tenant-level line is not work, is never collapsed, and stays in
+    the plain list where the Admin can always see it (§2.2, "nothing withheld").
+    """
+    lines = [
+        _line("audit-approve-a", entity_id="inv-a"),
+        _line("doubt-rate-a", entity_id="inv-a"),
+        _line("audit-approve-b", entity_id="inv-b"),
+        _line("doubt-rate-b", entity_id="inv-b"),
+        _line("audit-cash-INR", entity_kind="tenant", entity_id="tenant-1"),
+    ]
+    row = collapse(lines, ADMIN, held_by_others={AtlasCapability.AUDIT}, today=TODAY)[0]
+    assert row.count == 2
+    assert "audit-cash-INR" not in row.line_ids
+
+
+def test_an_area_of_only_tiles_does_not_collapse_at_all():
+    """There is no work in it to fold up, and a row saying "Decisions — 0
+    pending" above a cash position is worse than no row."""
+    lines = [
+        _line(f"audit-cash-{c}", entity_kind="tenant", entity_id="tenant-1")
+        for c in ("INR", "USD")
+    ]
+    assert collapse(lines, ADMIN, held_by_others={AtlasCapability.AUDIT}, today=TODAY) == []
+
+
+def test_a_subject_is_aged_by_its_oldest_line_not_by_each_line():
+    """One invoice with a week-old approve line and a fresh doubt ask is one
+    piece of work, a week old — not "1 untouched, 1 of unknown age"."""
+    old = TODAY - timedelta(days=UNTOUCHED_DAYS + 1)
+    lines = [
+        _line("audit-approve-a", entity_id="inv-a", since=old),
+        _line("doubt-rate-a", entity_id="inv-a"),
+    ]
+    row = collapse(lines, ADMIN, held_by_others={AtlasCapability.AUDIT}, today=TODAY)[0]
+    assert (row.count, row.untouched, row.age_unknown) == (1, 1, 0)
+
+
+def test_the_volume_threshold_counts_work_too():
+    """D41's threshold is about how much there is to do. Counting lines would
+    collapse an area the moment ATLAS had two things to say about six invoices."""
+    lines = [
+        _line(f"audit-approve-{i}", entity_id=f"inv-{i}")
+        for i in range(COLLAPSE_THRESHOLD - 1)
+    ] + [
+        _line(f"doubt-rate-{i}", entity_id=f"inv-{i}")
+        for i in range(COLLAPSE_THRESHOLD - 1)
+    ]
+    assert collapse(lines, ADMIN, held_by_others=set(), today=TODAY) == []
+
+
 def test_the_admins_own_position_is_never_collapsed_away_from_them():
     """§2.2's "nothing withheld". The cash position is not somebody else's work."""
     lines = [
@@ -331,23 +410,27 @@ def test_an_area_row_opens_in_place(pg):
     assert body["areas"], "an Admin over the volume threshold should see an area row"
     ids = {line["id"] for line in body["lines"]}
     for area in body["areas"]:
-        assert area["count"] == len(area["line_ids"])
+        # `count` is pieces of work and `line_ids` is every line about them, so
+        # the count is a bound rather than an equality — ATLAS may have two
+        # things to say about one invoice.
+        assert 0 < area["count"] <= len(area["line_ids"])
         assert set(area["line_ids"]) <= ids
         assert area["headline"].strip()
 
 
-def test_capabilities_held_by_others_reads_the_same_grants_a_request_does(pg):
-    """Resolved through `GrantSet.from_user()`, so a grant read here and a grant
-    read by a route cannot disagree. The caller is excluded from their own count.
+def test_a_colleague_who_merely_holds_the_grant_is_not_working_it(pg):
+    """**The defect real data found (2026-09-18).**
+
+    The old predicate was `capabilities_held_by_others()`: it returned a
+    capability whenever any other *user row* held the grant, so a workspace whose
+    owner was the only person actually working printed "someone else is working
+    this" on every area. D20 is about work in progress, not about permissions.
+
+    A colleague row exists here, with `can_train` granted, and has touched
+    nothing. The answer must be empty.
     """
     session, tenant, _ = pg
     tag = unique_tag()
-    me = User(
-        tenant_id=tenant.id,
-        email=f"admin-{tag}@x.test",
-        role="Admin",
-        clerk_user_id=f"clerk-admin-{tag}",
-    )
     them = User(
         tenant_id=tenant.id,
         email=f"trainer-{tag}@x.test",
@@ -355,24 +438,112 @@ def test_capabilities_held_by_others_reads_the_same_grants_a_request_does(pg):
         clerk_user_id=f"clerk-trainer-{tag}",
         can_train=True,
     )
-    session.add(me)
     session.add(them)
     session.commit()
     try:
-        held = capabilities_held_by_others(
-            session, tenant.id, exclude_clerk_user_id=me.clerk_user_id
-        )
-        assert AtlasCapability.TRAIN in held
-        assert AtlasCapability.ADMIN not in held
-        # Excluding the only other user leaves nothing, which is the solo-owner
-        # case the collapse rule falls out of.
         assert (
-            capabilities_held_by_others(
-                session, tenant.id, exclude_clerk_user_id=them.clerk_user_id
+            capabilities_worked_by_others(
+                session,
+                tenant.id,
+                exclude_user_id=f"clerk-admin-{tag}",
+                line_ids_by_capability={AtlasCapability.TRAIN: ["train-lowconf-x"]},
             )
-            <= {AtlasCapability.AUDIT, AtlasCapability.TRAIN, AtlasCapability.LOAD}
+            == set()
         )
     finally:
-        session.delete(me)
         session.delete(them)
         session.commit()
+
+
+@pytest.mark.parametrize("via", ["action", "dismissal"])
+def test_a_colleague_who_touched_a_line_is_working_that_area(pg, via):
+    """What "actively working" means with the evidence this product actually has:
+    a write in `atlas_action_log`, or a dismissal, by another user, on a line
+    currently in that area."""
+    session, tenant, _ = pg
+    tag = unique_tag()
+    line_id = f"train-lowconf-{tag}"
+    if via == "action":
+        row = AtlasActionLog(
+            tenant_id=tenant.id,
+            user_id=f"clerk-trainer-{tag}",
+            recommendation_id=line_id,
+            action_kind="open_field_review",
+            target_id=tag,
+            succeeded=True,
+            summary="Opened.",
+        )
+    else:
+        row = AtlasDismissal(
+            tenant_id=tenant.id,
+            user_id=f"clerk-trainer-{tag}",
+            recommendation_id=line_id,
+        )
+    session.add(row)
+    session.commit()
+    try:
+        worked = capabilities_worked_by_others(
+            session,
+            tenant.id,
+            exclude_user_id=f"clerk-admin-{tag}",
+            line_ids_by_capability={AtlasCapability.TRAIN: [line_id]},
+        )
+        assert worked == {AtlasCapability.TRAIN}
+        # The caller's own work is never somebody else's work.
+        assert (
+            capabilities_worked_by_others(
+                session,
+                tenant.id,
+                exclude_user_id=f"clerk-trainer-{tag}",
+                line_ids_by_capability={AtlasCapability.TRAIN: [line_id]},
+            )
+            == set()
+        )
+    finally:
+        session.delete(row)
+        session.commit()
+
+
+def test_work_a_colleague_touched_long_ago_is_not_being_worked_now(pg):
+    """"Actively" is a word with a span in it. An action from last month is a
+    record of what happened, not a colleague who has this in hand."""
+    session, tenant, _ = pg
+    tag = unique_tag()
+    line_id = f"train-lowconf-{tag}"
+    row = AtlasActionLog(
+        tenant_id=tenant.id,
+        user_id=f"clerk-trainer-{tag}",
+        recommendation_id=line_id,
+        action_kind="open_field_review",
+        target_id=tag,
+        succeeded=True,
+        summary="Opened.",
+        performed_at=datetime.utcnow() - timedelta(days=WORKING_WITHIN_DAYS + 1),
+    )
+    session.add(row)
+    session.commit()
+    try:
+        assert (
+            capabilities_worked_by_others(
+                session,
+                tenant.id,
+                exclude_user_id=f"clerk-admin-{tag}",
+                line_ids_by_capability={AtlasCapability.TRAIN: [line_id]},
+            )
+            == set()
+        )
+    finally:
+        session.delete(row)
+        session.commit()
+
+
+def test_a_solo_tenant_collapses_nothing_on_the_wire(pg):
+    """The bar from the screen, not from the payload: with one person working,
+    **no area row exists at all**, so nothing on the Admin's screen can say
+    "someone else is working this"."""
+    session, tenant, written = pg
+    for i in range(3):
+        _invoice(session, written, tenant, total=1000.0, due_in=i + 1)
+
+    body = _client(session, tenant).get("/api/v1/atlas/lines").json()
+    assert [area["reason"] for area in body["areas"]] == []

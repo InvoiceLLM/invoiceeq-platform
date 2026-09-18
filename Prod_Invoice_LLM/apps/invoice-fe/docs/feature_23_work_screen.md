@@ -805,3 +805,105 @@ the mock tenant's screen something to act on and are not test data anyone should
 - **`tag` and the date range are still component state**, not URL state.
 - **No "you missed this" on the invoice LIST rows.** The control is on record *screens*; a textarea
   inside a table cell would be a worse version of the same affordance one click away.
+
+---
+
+## 16. As built — what real data exposed on this screen (2026-09-18)
+
+**Additive, per hard rule 4.** Nothing above is rewritten. §1's framing — one screen, and it is the
+app — is what makes the defect below a defect, and it stands exactly as written.
+
+### 16.1 Every line rendered twice, and neither side was wrong on its own
+
+The VPI demo tenant was loaded — 26 real invoices — and the work screen opened as the Admin. All
+nine lines appeared **twice**: once inside the collapsed area they belong to, once in the ranked list
+below it.
+
+**The backend was right.** `areas[].line_ids` and `lines[]` hold the same ids on purpose: collapse
+**groups, never removes** (BE 34 §2.2, D20/D41). That is the property that makes an area openable in
+place with no second request — "coverage is total; volume is not" is only true in a client if the
+contents of a collapsed row are already in the payload.
+
+**This component was right too, twice over.** It rendered `areas` from `areas`, and it rendered
+`lines` from `lines`, in the server's order, filtering nothing — which is this file's own stated rule
+and a correct one.
+
+**So the defect existed only where the two meet, which is exactly the seam §1 exists to close.**
+Neither side could have fixed it alone without giving up something real: the backend could only have
+fixed it by making `areas` a truncation of `lines`, which costs openable-in-place; this component
+could only fix it by holding an opinion about which list owns a line — which is what it now does,
+deliberately, and says so.
+
+**The rule, stated once, in `WorkScreen.tsx`:** *an area owns the lines it stands for; everything
+else is a plain line.* `looseLines` is that sentence as code. The ranking is untouched — `lines`
+keeps the server's order and this filters it, never re-sorts it (BE §7.3, D30). `rank_cut` is applied
+to the list that is actually rendered, because a count of rows above the fold applied to a list the
+areas have taken rows out of would hide lines that were never below any cut.
+
+### 16.2 Why 155 passing tests did not catch a line rendered twice
+
+This is the part worth keeping. The suite had tests for both halves:
+
+- *"opens in place, out of the payload it already holds"* asserted the opened area contains two
+  `atlas-line` nodes. **True.**
+- *"renders the server's order and never re-sorts it"* asserted the list contains the lines the
+  payload carried. **True.**
+
+Both passed, both were correct, and the screen showed everything twice. **Nobody counted the
+screen.** Every assertion was scoped to a subtree or to a prop, and the defect lived in the sum of
+two subtrees — which is not a place any of those tests could look.
+
+The same shape explains the other five defects in this pass (BE Feature 34 §18.1): the suites
+asserted payload shape and component props, and nobody asserted the sentence a user reads or the
+number they act on.
+
+**What the new tests do differently.** `atlas-actions.test.tsx` gains two that are written from the
+screen inwards:
+
+- *"renders a line exactly once, no matter how the area is left"* — counts `atlas-line` nodes with
+  the area **collapsed** (zero, because both lines belong to it) and with it **open** (two, each
+  appearing once), asserting per-id rather than in aggregate so a regression names the line.
+- *"leaves a line no area stands for in the plain list, once"* — the cash tile case, which is what
+  made the duplication visible on real data in the first place: a line carrying the `audit`
+  capability that belongs to no area and must therefore still be on screen.
+
+Both were confirmed to **fail** against the pre-fix component before being kept. A test that passes
+before and after a fix is not evidence of the fix.
+
+### 16.3 What changed on the wire, and what a client must now not assume
+
+One backend change is visible here and is easy to get wrong later (BE Feature 34 §18.5):
+
+> **`AreaRow.count` is pieces of work, not lines.** `count <= line_ids.length`, and the two differ
+> whenever ATLAS has more than one thing to say about one invoice.
+
+This screen prints `area.headline` verbatim and never composes a count, so nothing here had to
+change for it. The invariant is recorded because `count === line_ids.length` is exactly the kind of
+assumption a future component would make while looking reasonable — and a test asserting that
+equality is one of the things that existed, passed, and had to be relaxed.
+
+Also: an area now **excludes** tenant-level lines (the cash position, the runway, the shortfall
+warning). They arrive in `lines` with no area claiming them, so they render in the plain list — which
+is what §1's "a user lands on their work" requires of a standing figure the Admin must always be able
+to see.
+
+### 16.4 Verification
+
+| Check | Command | Result |
+|---|---|---|
+| The two new render-count tests, plus the existing area suite | `npx vitest run tests/unit/atlas-actions.test.tsx` | 25 passed |
+| Whole unit suite | `npx vitest run` | see §16.5 |
+| Types | `npx tsc --noEmit` | clean |
+| Falsification | the same file, with `looseLines` reverted to `payload.lines` | the two new tests fail, the other 23 pass |
+
+Re-driven live against the VPI demo tenant (`00000000-0000-0000-0000-000000000000`) at
+`localhost:3000` with a real backend on `:8000` — not a fixture, not a mock — for all three roles.
+Screenshots and the raw payload are filed in
+`apps/invoice-be/docs/test_evidence/vpi_demo_atlas_2026-09-18/`, beside the originals so the before
+and after read together.
+
+### 16.5 Suite state at the end of this change
+
+Recorded rather than summarised, because "all green" has been claimed in this repo before without a
+run behind it. See the handback and `apps/invoice-be/docs/test_coverage_map.md` for the exact
+numbers from this session's run.

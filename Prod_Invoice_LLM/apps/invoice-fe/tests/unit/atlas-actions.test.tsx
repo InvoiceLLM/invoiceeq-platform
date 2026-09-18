@@ -345,6 +345,53 @@ describe("FE task 4 — collapsed rows for the Admin (BE §2.2, D20)", () => {
     expect(get.mock.calls.filter(([p]) => p === "/atlas/lines").length).toBe(readsBefore);
   });
 
+  /**
+   * **The defect real data found (2026-09-18), asserted the way it was found:
+   * by counting what is on the screen.**
+   *
+   * All nine lines rendered twice — once inside their area, once in the list
+   * below it. The suite had asserted that the area held two lines and that the
+   * list held two lines, and both were true. Nobody counted the screen.
+   */
+  it("renders a line exactly once, no matter how the area is left", async () => {
+    serves(payload);
+
+    render(<WorkScreen />);
+
+    // Collapsed: the two lines belong to the area, so neither is loose.
+    await screen.findByTestId("work-screen-area-headline");
+    expect(screen.queryAllByTestId("atlas-line")).toHaveLength(0);
+    expect(screen.queryByTestId("work-screen-lines")).toBeNull();
+
+    // Opened: each line appears once, inside the area it belongs to.
+    await userEvent.click(screen.getByTestId("work-screen-area-toggle"));
+    expect(await screen.findByTestId("work-screen-area-lines")).toBeTruthy();
+    expect(screen.getAllByTestId("atlas-line")).toHaveLength(2);
+    for (const id of ["train-1", "train-2"]) {
+      expect(
+        screen.getAllByTestId("atlas-line").filter((n) => n.getAttribute("data-line-id") === id)
+      ).toHaveLength(1);
+    }
+  });
+
+  it("leaves a line no area stands for in the plain list, once", async () => {
+    /** The cash tile: `audit` capability, not decision work, in no area. */
+    const tile = { ...auditLine, id: "audit-cash-INR" };
+    serves(
+      linesResponse([...areaLines, tile], {
+        capabilities: ["audit", "train", "load", "admin"],
+        areas: payload.areas,
+      })
+    );
+
+    render(<WorkScreen />);
+
+    await screen.findByTestId("work-screen-area-headline");
+    const loose = screen.getAllByTestId("atlas-line");
+    expect(loose).toHaveLength(1);
+    expect(loose[0].getAttribute("data-line-id")).toBe("audit-cash-INR");
+  });
+
   it("renders no area rows at all when the server sends none", async () => {
     serves(linesResponse(areaLines));
 

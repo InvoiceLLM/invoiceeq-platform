@@ -137,7 +137,14 @@ def shortfalls(
     help a payment run on the 22nd, and a forecast that says otherwise is wrong
     in the direction that costs the customer a missed payment.
     """
-    from services.atlas_skills import _amount, _currency_of, _latest_balances, _live_invoices
+    from services.atlas_skills import (
+        _OPEN_PAYABLE,
+        _OPEN_RECEIVABLE,
+        _amount,
+        _currency_of,
+        _latest_balances,
+        _live_invoices,
+    )
 
     if balances is None:
         balances = _latest_balances(db, ctx)
@@ -157,8 +164,18 @@ def shortfalls(
     for currency, opening in sorted(balances.items()):
         invoices = by_currency.get(currency, [])
         # Only invoices that actually move money in this window.
-        outflow = [i for i in invoices if i.flow_direction == "INBOUND" and i.status in _OWED]
-        inflow = [i for i in invoices if i.flow_direction == "OUTBOUND" and i.status == "SENT"]
+        # BE Gap 705: the same population the cash position uses, from the same
+        # two constants. Two modules that each decided for themselves what an
+        # open payable is are two answers waiting to disagree on one screen --
+        # and they did: the position summed only invoices awaiting a decision
+        # while this walk summed a third set, and a user comparing the two lines
+        # would have been reading two different books.
+        outflow = [
+            i for i in invoices if i.flow_direction == "INBOUND" and i.status in _OPEN_PAYABLE
+        ]
+        inflow = [
+            i for i in invoices if i.flow_direction == "OUTBOUND" and i.status in _OPEN_RECEIVABLE
+        ]
         if not outflow:
             # Nothing leaves, so nothing can run short.
             continue
@@ -201,9 +218,11 @@ def shortfalls(
     return found
 
 
-#: Inbound statuses that still owe money. A REJECTED invoice is not a payable,
-#: and a PAID one has already left the balance the statement reported.
-_OWED = ("AUDIT_REQUIRED", "REVIEW_LATER", "NEEDS_RESUBMISSION")  # hardcode-ok: invoice STATUS tokens, this repo's own status machine (routers/audit.py), not domain data
+#: Removed by BE Gap 705. The inbound population is now
+#: `atlas_skills._OPEN_PAYABLE` and the outbound one `_OPEN_RECEIVABLE`, read
+#: from the module that owns them so the walk and the position cannot describe
+#: two different books. The old tuple here left out `COMPLETED`, which on the VPI
+#: tenant was nine of the eleven open payables.
 
 
 def _biggest_first(invoices: Iterable[Invoice]) -> list[Invoice]:

@@ -1,0 +1,56 @@
+--- 0 ---
+Yes — both returned invoices are flagged as possible duplicates. NAT-2007: "Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue." RAJ-2009: "Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue."
+
+### Query Results
+
+invoice_number | vendor_name | customer_name | flow_direction | status | grand_total | currency | sa_alerts
+--- | --- | --- | --- | --- | --- | --- | ---
+NAT-2007 | National MRO Traders |  | INBOUND | AUDIT_REQUIRED | 79956.80 | INR | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.
+RAJ-2009 | Rajesh Steel Corporation |  | INBOUND | AUDIT_REQUIRED | 437190.00 | INR | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.
+
+--- 1 ---
+Two invoices need attention: NAT-2007 (National MRO Traders, INR 79956.8, invoice_date 2026-08-19) and RAJ-2009 (Rajesh Steel Corporation, INR 437190.0, invoice_date 2026-08-20). Both are marked status = AUDIT_REQUIRED and have "possible_duplicate" sa_alerts warning (check whether these are re-issues).
+
+### Query Results
+
+invoice_number | vendor_name | customer_name | flow_direction | status | grand_total | currency | sa_alerts
+--- | --- | --- | --- | --- | --- | --- | ---
+NAT-2007 | National MRO Traders |  | INBOUND | AUDIT_REQUIRED | 79956.80 | INR | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.
+RAJ-2009 | Rajesh Steel Corporation |  | INBOUND | AUDIT_REQUIRED | 437190.00 | INR | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.
+
+--- 2 ---
+I can't confirm the figure(s) 4750812.60, which do not appear in anything I retrieved for this question -- what I do have on file: NAT-2006 (National MRO Traders); RAJ-2008 (Rajesh Steel Corporation); VPI-OUT-2014 (Vishwa Precision Industries Pvt Ltd); BHA-2003 (Bharat Hardware & Fasteners); NAT-2007 (National MRO Traders). Want me to show you the rows I did find so you can see the figures they actually carry?
+
+### Query Results
+
+invoice_number | vendor_name | customer_name | flow_direction | due_date | grand_total | currency | status | sa_alerts
+--- | --- | --- | --- | --- | --- | --- | --- | ---
+BHA-2002 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-08 | 103191.00 | INR | PAID | 
+OM -2000 | Om Stationery Mart |  | INBOUND | 2026-08-08 | 41654.00 | INR | PAID | 
+SHR-2004 | Shree Packaging Industries |  | INBOUND | 2026-08-08 | 121894.00 | INR | PAID | 
+BHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-09-15 | 103191.00 | INR | COMPLETED | 
+NAT-2006 | National MRO Traders |  | INBOUND | 2026-09-15 | 79956.80 | INR | COMPLETED | 
+NAT-2007 | National MRO Traders |  | INBOUND | 2026-09-15 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.
+OM -2001 | Om Stationery Mart |  | INBOUND | 2026-09-15 | 41654.00 | INR | COMPLETED | 
+RAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-09-15 | 437190.00 | INR | COMPLETED | 
+RAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-09-15 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.
+SHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-09-15 | 121894.00 | INR | COMPLETED | 
+VPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-09-17 | 483210.00 | INR | VERIFIED | 
+VPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-09-17 | 483850.00 | INR | NEEDS_REVIEW | Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)
+VPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-09-17 | 514775.00 | INR | VERIFIED | 
+VPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-09-17 | 514775.00 | INR | VERIFIED | 
+VPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | 
+VPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | 
+VPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | 
+
+--- 3 ---
+I don't have an INR→USD exchange rate on file; I can convert if you provide a rate or a conversion date to use.  
+
+- RAJ-2008 — INR 437,190.00 (grand_total) — status: COMPLETED  
+- RAJ-2009 — INR 437,190.00 (grand_total) — status: AUDIT_REQUIRED; sa_alert: possible duplicate of RAJ-2008
+
+Which invoice(s) should I convert, and please provide the exchange rate (e.g., 1 USD = X INR) or a conversion date to use.
+
+**Citations:**
+[Source: Rajesh Steel Corporation (Page 1)](file:///api/v1/invoices/d5869da2-b3bc-4d41-9356-2c6a02352616/pdf), [Source: Rajesh Steel Corporation (Page 1)](file:///api/v1/invoices/530bd65a-be04-4953-988b-2932f52a6f89/pdf), [Source: Shree Packaging Industries (Page 1)](file:///api/v1/invoices/fbe08368-f644-47af-905b-ec4085211eec/pdf), [Source: Shree Packaging Industries (Page 1)](file:///api/v1/invoices/29a03885-2441-4502-9f29-d4cc05efd1de/pdf)
+

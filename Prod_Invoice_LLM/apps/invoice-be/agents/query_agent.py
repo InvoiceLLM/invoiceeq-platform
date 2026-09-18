@@ -538,6 +538,44 @@ _NAMED_METRICS: dict[str, dict] = {
     },
 }
 
+#: BE Gap 706 — "which invoices need my attention?", and every phrasing of it.
+#:
+#: **Why this is a deterministic link and not a prompt sentence.** On the VPI
+#: demo tenant the real answer is three invoices: two flagged as possible
+#: duplicates, and one outbound invoice whose alert reads "Subtotal (409500.00) +
+#: Tax (73710.00) does not match Grand Total (483850.00)". The live answer named
+#: two, from SQL that filtered
+#: `LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%')` -- a query that
+#: **structurally cannot** return the third, whatever the data says.
+#:
+#: The model did not invent that filter: it is the literal example rule 6 below
+#: gives for casting a JSONB column before LIKE. An example is the strongest
+#: instruction in a prompt, and that one quietly taught "attention means
+#: duplicate". Rule 6's example is now a neutral one, and *which rows need
+#: attention* is decided here, in code, against the schema -- the same mechanism
+#: `link_question_to_schema()` already uses for every other term whose meaning is
+#: a fact rather than a judgement (CONVENTIONS hard rule 3).
+_ATTENTION_PATTERN = re.compile(
+    r"\b(need(?:s)?\s+(?:my\s+|our\s+|your\s+)?attention|needing\s+attention"
+    r"|look\s+at(?:\s+first)?|should\s+I\s+(?:look|review|check)"
+    r"|anything\s+(?:wrong|odd|unusual|suspicious)|what(?:'s| is)\s+wrong"
+    r"|flagged|problem\s+invoices|require\s+(?:my\s+)?review)\b",
+    re.IGNORECASE,
+)
+
+#: What "needs attention" IS, against this schema. Two independent signals, and
+#: the OR between them is the whole fix: an invoice can be flagged by the
+#: extraction pipeline (`sa_alerts`) or be sitting in a state a human has to
+#: clear (`status`), and neither implies the other.
+#:
+#: Stated as the predicate rather than as advice, because a predicate is checkable
+#: and advice is not. `sa_alerts` is JSONB, so the emptiness test is on the cast
+#: text: a row with no alerts stores `[]` or `null`, not SQL NULL.
+_ATTENTION_PREDICATE = (  # hardcode-ok: column names and this repo's own invoice STATUS tokens (routers/audit.py, services/document_comparison.py) -- schema facts, not domain data; a new vendor or document type does not change them
+    "(sa_alerts IS NOT NULL AND CAST(sa_alerts AS TEXT) NOT IN ('null', '[]', '{}')) "
+    "OR status IN ('AUDIT_REQUIRED', 'NEEDS_REVIEW', 'NEEDS_RESUBMISSION')"
+)
+
 #: Rule 11's "details" projection, as a named set the linking block can hand over.
 _DETAILS_PROJECTION = "invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number"
 _DETAILS_PATTERN = re.compile(r"\b(details? (?:of|for|on)|tell me about|pull up|show me (?:the )?invoice|look up invoice|what(?:'s| is) on (?:the )?invoice)\b", re.IGNORECASE)
@@ -549,7 +587,13 @@ def link_question_to_schema(user_message: str) -> dict:
     """What the question's terms ARE, against the schema. Deterministic.
 
     Returns `{attribute: (term, column)|None, tax_term: str|None, metrics: [name],
-    details: bool, payment_status: str|None, line_item_fallback: bool}`.
+    details: bool, payment_status: str|None, attention: bool,
+    line_item_fallback: bool}`.
+
+    `attention` is BE Gap 706: "which invoices need my attention" is a question
+    about a **predicate over two columns**, not about a word to search for, and
+    leaving the model to guess it produced a `LIKE '%duplicate%'` filter that
+    structurally excluded a tax-mismatch alert.
 
     `line_item_fallback` is the inverted default from the C4 design: it is True
     only when NOTHING linked to a column and the question still carries a money
@@ -568,7 +612,8 @@ def link_question_to_schema(user_message: str) -> dict:
     if payment and "outstanding" not in metrics:
         metrics.append("outstanding")
     details = bool(_DETAILS_PATTERN.search(text))
-    linked = bool(attribute or tax_term or metrics or details)
+    attention = bool(_ATTENTION_PATTERN.search(text))
+    linked = bool(attribute or tax_term or metrics or details or attention)
     line_item_fallback = (not linked) and bool(_MONEY_WORD_PATTERN.search(text))
     return {
         "attribute": attribute,
@@ -576,6 +621,7 @@ def link_question_to_schema(user_message: str) -> dict:
         "metrics": metrics,
         "details": details,
         "payment_status": payment,
+        "attention": attention,
         "line_item_fallback": line_item_fallback,
     }
 
@@ -597,6 +643,19 @@ def _schema_linking_block_for(user_message: str) -> str:
         lines.append(f"- metric: {label} -> `{m['column']}`: {m['note']}.")
     if link["details"]:
         lines.append(f"- details question -> select exactly this projection, nothing else: {_DETAILS_PROJECTION}.")
+    if link["attention"]:
+        # Stated as the WHERE clause, not as guidance. BE Gap 706: the previous
+        # state of this prompt left the model to decide what "attention" means,
+        # and it decided "duplicate" -- a filter that could never return the
+        # tax-mismatch invoice that was the third correct answer.
+        lines.append(
+            "- \"needs attention\" is a PREDICATE, not a word to search for. Use exactly this, "
+            f"and nothing narrower: WHERE ({_ATTENTION_PREDICATE}). "
+            "Select sa_alerts and status with the identifying columns. NEVER filter sa_alerts on a "
+            "substring such as '%duplicate%': an invoice can need attention for a tax mismatch, a "
+            "missing field or an arithmetic error, and a duplicate-only filter structurally cannot "
+            "return it."
+        )
     if link["line_item_fallback"]:
         lines.append("- no attribute or metric linked, and the question carries a money/quantity word -> the product/service phrase IS a line-item description: use rule 6d's un-nest shape and filter on the un-nested item's own description. Retrieval only, no SUM.")
     if not lines:
@@ -4699,7 +4758,7 @@ SELECT
   SUM(CASE WHEN flow_direction='OUTBOUND' THEN grand_total ELSE 0 END) AS total_owed_to_us
 FROM invoice WHERE tenant_id = '<TENANT_ID>'
 
-6. JSONB columns (tags, items, sa_alerts) MUST be cast before LOWER/LIKE -- LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%'), LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%'), LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') -- never LOWER(tags): an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. VARCHAR columns (vendor_name, customer_name, status, invoice_number) are text already and must NOT be cast. Always LOWER both sides. Searching these JSON columns is the fallback for a phrase the SCHEMA LINK below did not link to a column.
+6. JSONB columns (tags, items, sa_alerts) MUST be cast before LOWER/LIKE -- LOWER(CAST(tags AS TEXT)) LIKE LOWER('%"hardware"%'), LOWER(CAST(items AS TEXT)) LIKE LOWER('%laptop%'), LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%<the exact word the user used>%') -- never LOWER(tags): an uncast LOWER(tags) aborts the whole query with `function lower(jsonb) does not exist`. VARCHAR columns (vendor_name, customer_name, status, invoice_number) are text already and must NOT be cast. Always LOWER both sides. Searching these JSON columns is the fallback for a phrase the SCHEMA LINK below did not link to a column. This shape is for a word the USER typed. Never invent the word yourself, and never use this shape at all for "which invoices need my attention" or any question like it -- the SCHEMA LINK gives that question its predicate, and a substring filter there silently drops every alert phrased differently (BE Gap 706).
 6a. IMPORTANT -- vendor_name/customer_name filters for a NAMED counterparty: use equality, not a partial match. Write vendor_name = 'Acme' (the backend normalises it to a trimmed, case-insensitive comparison, so casing and stray spaces are already handled). Do NOT write LOWER(vendor_name) LIKE LOWER('%Acme%') for a named counterparty. Reason, found live: a partial match on a name also matches every OTHER counterparty containing it -- "Acme" silently sweeps in "Acme Logistics" and "Acmetech Solutions", and their invoices are summed into one figure presented as Acme's. A wrong total is worse than no rows. If the name the user typed is shorter than the stored one ("Cascade Manufacturing" vs "Cascade Manufacturing Co") the query returns zero rows and the backend then offers the user the closest stored names to confirm -- that recovery is automatic and deterministic, so you do not need to widen the filter yourself. The ONE exception is a question that genuinely means "contains" ("vendors with Logistics in the name", and the category shape in rule 6b) -- there, LIKE is correct because the user asked for a partial match.
 6b. CATEGORY / SUBJECT-MATTER QUESTIONS -- one standard shape, use it every time. When the user asks about a category, spend area or subject rather than a named entity ("how much did we spend on office supplies", "logistics or freight costs", "anything cloud related", "printing costs"), the matching text may live in ANY of several columns and which one it happens to live in varies per invoice -- a vendor can be identifiable by its name alone ("Blue Ridge Logistics"), by its tags, or only by a line-item description. So ALWAYS check the SAME four columns, in ONE parenthesised OR group, never a subset of them:
    (LOWER(CAST(tags AS TEXT)) LIKE LOWER('%<phrase>%')
