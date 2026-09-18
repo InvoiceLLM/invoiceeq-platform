@@ -55,6 +55,21 @@ else:
     engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 
+@pytest.fixture(name="sqlite_session")
+def sqlite_session_fixture():
+    """BE Gap 584: rule 6d has one branch per engine, and three tests below assert the
+    SQLite spelling specifically (`json_each`, no `::jsonb`). They own a SQLite engine
+    rather than the shared fixture, so they keep testing the SQLite branch when
+    TEST_DATABASE_URL points the shared engine at Postgres. The Postgres branch has its
+    own coverage in `test_postgres_variant_of_rule_6d_is_the_one_built_for_a_postgres_bind`.
+    """
+    lite = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(lite)
+    with Session(lite) as session:
+        yield session
+    SQLModel.metadata.drop_all(lite)
+
+
 @pytest.fixture(name="db_session")
 def db_session_fixture():
     if postgres_test_url:
@@ -681,7 +696,7 @@ def _taught_sql(rule_text: str, marker: str) -> str:
     return lines[idx + 1]
 
 
-def test_line_item_rule_teaches_only_the_live_engines_dialect(db_session):
+def test_line_item_rule_teaches_only_the_live_engines_dialect(sqlite_session):
     """The prompt must not offer the model syntax the bound engine cannot parse.
 
     This fixture's session is SQLite, so rule 6d must be the json_each form --
@@ -692,7 +707,7 @@ def test_line_item_rule_teaches_only_the_live_engines_dialect(db_session):
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
-    _run(db_session, llm, "show me the price for training line items", uuid4())
+    _run(sqlite_session, llm, "show me the price for training line items", uuid4())
     prompt = llm.prompts[0]
 
     assert "6d. LINE-ITEM LEVEL EXTRACTION" in prompt
@@ -718,7 +733,7 @@ def test_postgres_variant_of_rule_6d_is_the_one_built_for_a_postgres_bind():
     assert "jsonb_array_elements" in query_agent._line_item_rule(str(MOCK_TENANT_ID), broken)
 
 
-def test_rule_6d_guards_against_null_or_non_array_items(db_session):
+def test_rule_6d_guards_against_null_or_non_array_items(sqlite_session):
     """`items` is nullable and machine-populated. Un-nesting it unguarded aborts
     the whole tenant's query on a single bad row (confirmed by hand: SQLite
     raises `malformed JSON`, Postgres raises on a non-array), and burns an
@@ -726,7 +741,7 @@ def test_rule_6d_guards_against_null_or_non_array_items(db_session):
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
-    _run(db_session, llm, "what is the training amount", uuid4())
+    _run(sqlite_session, llm, "what is the training amount", uuid4())
     assert "json_valid(items) AND json_type(items) = 'array'" in llm.prompts[0]
 
     pg_session = MagicMock()
@@ -749,7 +764,7 @@ def test_rule_6d_selects_currency_per_rule_7(db_session):
     assert "invoice.currency" in shape
 
 
-def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(db_session):
+def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(sqlite_session):
     """The gap's own reported case, executed rather than asserted: an invoice
     whose Training & Onboarding line is 29,302.94 inside a 35,480.59 grand total.
     The taught query must return 29,302.94 and must not surface the unrelated
@@ -762,23 +777,25 @@ def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(
     dashed form the generated SQL carries in production is Postgres' shape and
     is covered by the isolation tests, not this one.
     """
-    _seed_invoice(db_session, invoice_number="US-1", grand_total=35480.59, items=_LINE_ITEM_SEED)
-    _seed_invoice(db_session, invoice_number="US-2", grand_total=500.0, items=None)
-    _seed_invoice(db_session, invoice_number="US-3", grand_total=700.0, items=[])
+    _seed_invoice(sqlite_session, invoice_number="US-1", grand_total=35480.59, items=_LINE_ITEM_SEED)
+    _seed_invoice(sqlite_session, invoice_number="US-2", grand_total=500.0, items=None)
+    _seed_invoice(sqlite_session, invoice_number="US-3", grand_total=700.0, items=[])
     # A value that isn't JSON at all -- the ORM can't produce one, but OCR/LLM
     # extraction writing into a JSON-typed column on an untyped engine can.
-    db_session.exec(
+    sqlite_session.exec(
         text("UPDATE invoice SET items = 'not json at all' WHERE invoice_number = 'US-3'")
     )
-    db_session.commit()
+    sqlite_session.commit()
 
-    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    rows = db_session.exec(text(_taught_sql(rule, _RULE_6D_MARKER))).all()
+    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, sqlite_session)
+    rows = sqlite_session.exec(text(_taught_sql(rule, _RULE_6D_MARKER))).all()
 
     assert len(rows) == 1
     invoice_number, vendor_name, currency, description, qty, unit_price, amount = rows[0]
     assert (invoice_number, currency, description) == ("US-1", "USD", "Training & Onboarding")
-    assert (qty, unit_price, amount) == (40, 732.5735, 29302.94)
+    # BE Gap 584: Postgres returns Decimal for JSONB-derived numerics where SQLite
+    # returns float. The taught SQL is engine-correct either way, so compare by value.
+    assert (float(qty), float(unit_price), float(amount)) == (40, 732.5735, 29302.94)
     assert amount != 35480.59
 
 
@@ -807,8 +824,8 @@ def test_taught_line_item_sql_returns_raw_rows_across_invoices_and_currencies_un
         amounts_by_currency.setdefault(currency, []).append(amount)
 
     assert len(rows) == 3  # one row per matching line, not one row per currency/total
-    assert sorted(amounts_by_currency["USD"]) == [200.0, 29302.94]
-    assert amounts_by_currency["INR"] == [50.0]
+    assert sorted(float(a) for a in amounts_by_currency["USD"]) == [200.0, 29302.94]
+    assert [float(a) for a in amounts_by_currency["INR"]] == [50.0]
 
 
 def test_taught_line_item_sql_runs_on_postgres():
