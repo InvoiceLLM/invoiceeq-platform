@@ -21,6 +21,7 @@ from routers import documents
 from routers import config_features  # Feature 27 R5(a)
 from routers import ingestion_history  # Gap 464: ingestion History screen
 from routers import audit_history  # BE Gap 532 follow-up: Admin-only invoice change history
+from routers import atlas  # BE Gap 691: Feature 34 (ATLAS) -- the work screen's read surface
 from utils.logging_config import TracingAndLoggingMiddleware, setup_structured_logging
 
 logger = logging.getLogger(__name__)
@@ -198,6 +199,7 @@ app.include_router(webhooks.router, prefix="/api/v1")
 app.include_router(billing.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(autopilot.router, prefix="/api/v1")  # Feature 13: Tenant Autopilot
+app.include_router(atlas.router, prefix="/api/v1")  # BE Gap 691 / Feature 34: GET /atlas/lines, POST /atlas/recon -- read-only; the action endpoints are Slice C and deliberately absent
 app.include_router(support.router, prefix="/api/v1")   # Feature 19 / Website Feature 5: Support Tickets & Contact Inquiries
 # Feature 25 (Gap 340): sandbox `inv_test_` keys. POST /sandbox/keys is public
 # and unauthenticated, and the whole router 404s unless SANDBOX_KEYS_ENABLED is

@@ -25,7 +25,7 @@ from sqlmodel import Session, func, select
 from database import get_session
 from dependencies import get_tenant_context, TenantContext
 from models import TenantAutopilotConfig, TenantAutopilotLog
-from services.autopilot_sync import run_sync
+from services.autopilot_sync import run_sync_all_sources
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +292,12 @@ def trigger_sync(
         # Gap 427: 'manual' is stamped on every log row this run writes, so the
         # history table can tell a human pressing Sync Now apart from the
         # unattended scheduled job.
-        summary = run_sync(context.tenant_id, db_session, trigger="manual")
+        # Feature 34 / task 34.13 (D43): every configured source, not just the
+        # first. A tenant may now have several, and a Sync Now that silently
+        # covered one of them would be a button that lies about what it checked.
+        summary = run_sync_all_sources(
+            context.tenant_id, db_session, trigger="manual"
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

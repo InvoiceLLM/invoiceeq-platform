@@ -3,7 +3,8 @@
 //   and calls apiClient (browser Axios).  Next.js requires the client directive
 //   on any component that uses browser-only React hooks or browser APIs.
 
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { useChatSession } from "@/hooks/useChatSession";
 import {
@@ -13,7 +14,19 @@ import {
 import ChatWindow from "@/components/chat/ChatWindow";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
 
-export default function ChatPage() {
+function ChatPageInner() {
+  // FE Feature 23 task 5 -- the Verify affordance. A work-screen line links here
+  // as `/chat?seed=<verify.question>`, and the composer opens holding that
+  // question. `useSearchParams()` already percent-decodes.
+  //
+  // `verify_document_id` rides along and is deliberately NOT acted on yet:
+  // `POST /chat/sessions/{id}/attachments` takes an uploaded FILE and has no
+  // by-id path for a document already in the system, so there is no way to
+  // attach it without re-uploading a second copy of the tenant's own document.
+  // Filed as **FE Gap 640** rather than faked -- see `lib/atlas.ts`.
+  const searchParams = useSearchParams();
+  const seed = searchParams.get("seed");
+
   // FE Gap 110: Chat never had a page title of its own -- it went straight into
   // ChatWindow's own slim agent strip -- which would have left it as the one
   // screen with an unnamed header once every other route started declaring
@@ -182,7 +195,18 @@ export default function ChatPage() {
         attachmentCount={attachmentCount}
         onAttachmentIntent={onAttachmentIntent}
         updatedInsightMessageIds={updatedInsightMessageIds}
+        initialSeed={seed}
       />
     </div>
+  );
+}
+
+// useSearchParams() requires a Suspense boundary in the app router -- same
+// pattern as app/ingestion/page.tsx, which reads its own query string.
+export default function ChatPage() {
+  return (
+    <Suspense fallback={null}>
+      <ChatPageInner />
+    </Suspense>
   );
 }

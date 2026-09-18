@@ -663,6 +663,16 @@ interface ChatWindowProps {
    * `useChatSession`, which is what listens to the stream.
    */
   updatedInsightMessageIds?: string[];
+  /**
+   * FE Feature 23 task 5 (the Verify affordance). A question the composer opens
+   * already holding, seeded from outside the chat -- today, from a work-screen
+   * line's `verify.question` arriving as `/chat?seed=...`.
+   *
+   * It only ever WRITES THE COMPOSER. Nothing is sent: spec §2 says the user
+   * verifies ATLAS themselves, and a deep link that fired a question on arrival
+   * would be ATLAS answering its own audit. The user presses Send.
+   */
+  initialSeed?: string | null;
 }
 
 export default function ChatWindow({
@@ -686,6 +696,7 @@ export default function ChatWindow({
   attachmentCount = 0,
   attachmentHandlers,
   updatedInsightMessageIds,
+  initialSeed = null,
 }: ChatWindowProps) {
   const hasActiveSession = !!activeSessionId;
 
@@ -701,6 +712,13 @@ export default function ChatWindow({
   const seedComposer = useCallback((text: string) => {
     setComposerSeed((previous) => ({ text, nonce: (previous?.nonce ?? 0) + 1 }));
   }, []);
+
+  // FE Feature 23 task 5: the same one-way channel, opened from a URL instead of
+  // a bubble. Re-runs when the seed text changes, so following a second Verify
+  // link from the work screen re-seeds rather than silently doing nothing.
+  useEffect(() => {
+    if (initialSeed) seedComposer(initialSeed);
+  }, [initialSeed, seedComposer]);
 
   // FE Gap 274: the thread list can be hidden entirely (unlike the main
   // app Sidebar's icon-only collapse, per Gap 273 -- the chat window is

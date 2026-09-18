@@ -1081,15 +1081,27 @@ class WebhookDeliveryLog(SQLModel, table=True):
 
 
 # Feature 13: Tenant Autopilot — Ingestion & Scheduled Sync
-# Stores per-tenant cloud folder sync configuration. One config row per tenant
-# (enforced via UNIQUE on tenant_id). Google Drive is the only supported
-# source type (Gap 334 removed Salesforce).
+# Stores per-tenant cloud folder sync configuration. Feature 34 / task 34.13
+# (D43): MANY config rows per tenant -- one per ingestion source. Google Drive is
+# the only supported source type (Gap 334 removed Salesforce).
 # trigger_mode is 'interval' (minutes) or 'cron' (cron expression).
 # flow_direction mirrors Invoice.flow_direction: INBOUND (AP) or OUTBOUND (AR).
 class TenantAutopilotConfig(SQLModel, table=True):
     __tablename__ = "tenant_autopilot_configs"
     __table_args__ = (
-        sa.UniqueConstraint("tenant_id", name="uq_autopilot_config_tenant"),
+        # Feature 34 / task 34.13 (D43): `uq_autopilot_config_tenant` -- UNIQUE on
+        # tenant_id alone -- is GONE. It made one ingestion source per tenant, so a
+        # customer receiving in a Drive folder and a shared mailbox could only
+        # automate one of them, and ATLAS's Loader lines (which are per source,
+        # §2.3/D22) had nothing to be per. Migration a1b2c34d13e5.
+        #
+        # What replaces it is narrower and is the part that was actually load
+        # bearing: the same source may not be registered twice under one tenant.
+        # Registering the same folder twice would double-ingest every file in it.
+        sa.UniqueConstraint(
+            "tenant_id", "source_type", "source_ref",
+            name="uq_autopilot_config_tenant_source",
+        ),
         sa.Index("idx_autopilot_config_tenant", "tenant_id"),
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -1351,6 +1363,10 @@ class TenantAutopilotLog(SQLModel, table=True):
         # read path is "every row of this tenant's batch" / "GROUP BY batch_id
         # for this tenant" -- neither of the two dedup indexes above serves it.
         sa.Index("idx_autopilot_log_tenant_batch", "tenant_id", "batch_id"),
+        # Feature 34 / task 34.13 (D43): "what has this SOURCE been doing" is the
+        # Loader's question now that a tenant can have several. Tenant-led for the
+        # same reason as the two composites above.
+        sa.Index("idx_autopilot_log_tenant_source", "tenant_id", "source_config_id"),
     )
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
@@ -1379,6 +1395,15 @@ class TenantAutopilotLog(SQLModel, table=True):
     # rather than index=True here: every read of this column is already
     # tenant-scoped, so a standalone single-column index would be redundant.
     batch_id: UUID | None = Field(default=None)
+    # Feature 34 / task 34.13 (D43): which configured ingestion source produced
+    # this row -- `tenant_autopilot_configs.id`. Nullable, and NULL means
+    # "written before a tenant could have more than one source", never "no
+    # source": there is no honest back-fill, because the row predates the
+    # distinction it would have to be given. Not a declared foreign key, matching
+    # `batch_id` and `tenant_id` on this table: deleting a source must not take
+    # its ingestion history with it (the history is also the dedup ledger -- see
+    # `hidden_at` below).
+    source_config_id: UUID | None = Field(default=None)
     # Gap 427: 'manual' (POST /autopilot/sync, a human pressed Sync Now) or
     # 'scheduled' (the ACA job). Nullable for the same legacy reason as above.
     trigger: str | None = Field(default=None, max_length=20)
@@ -2002,3 +2027,66 @@ class ChatCorrection(SQLModel, table=True):
     promoted_example_id: UUID | None = Field(default=None)
     created_by: str | None = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AtlasDismissal(SQLModel, table=True):
+    """Feature 34 / D49 — a line the user has handled, so it stops coming back.
+
+    **Why this table has to exist.** D38 recomputes every ATLAS line when the
+    user opens the app: there is no job, no cache and no stored finding. That is
+    deliberate, and it has one consequence the design had no answer for — a user
+    who handles a line (attaches the quotation in chat and compares it, per D47)
+    changes nothing the recompute can see, so the same line is regenerated and
+    **returns forever**. D49 is the answer: a manual dismiss, remembered.
+
+    **Not a snooze and not an automatic resolution** (D49, explicitly). There is
+    no `until`, no expiry and nothing that brings a dismissed line back on its
+    own. The user marked it done; it is done.
+
+    **Keyed on the recommendation id, which is deterministic** —
+    `audit-approve-<invoice id>`, `train-arithmetic-<invoice id>`,
+    `doubt-<invoice id>-<claim>`. There are no per-run UUIDs anywhere in
+    `services/atlas_skills.py`, `atlas_doubt.py` or `atlas_recon.py`, which is
+    the whole reason a dismissal can match the same line across recomputes. If
+    an emitter ever mints a random id, dismissal silently stops working for that
+    line type — so `tests/test_atlas_dismissals.py` asserts id stability
+    directly rather than trusting this paragraph.
+
+    **Scoped per tenant AND per user.** A dismissal is one person saying "I have
+    dealt with this", not a tenant-wide suppression: the Admin is the superset
+    (§2.2) and sees every line type, so an Auditor dismissing their own line
+    must not blind the Admin to it. `user_id` is `TenantContext.user_id` — the
+    identity string every request already carries, present on the API-key path
+    too, where `db_user_id` can be NULL.
+
+    D12's noise pruning ("dismissed 40 times — remove the alert?") is the
+    natural reader of these rows and is still unbuilt; nothing here assumes it.
+    """
+
+    __tablename__ = "atlas_dismissals"
+    __table_args__ = (
+        # One dismissal per person per line. A second click is not a second row
+        # -- the endpoint is idempotent, and a duplicate would make any future
+        # count of dismissals (D12) wrong.
+        sa.UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "recommendation_id",
+            name="uq_atlas_dismissal_tenant_user_line",
+        ),
+        # The only read this table has: "everything this caller has dismissed",
+        # once per open. Tenant-led, like every other composite in this file.
+        sa.Index("idx_atlas_dismissal_tenant_user", "tenant_id", "user_id"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
+    #: `TenantContext.user_id` -- the Clerk user id on a browser request, the
+    #: key identity on an API-key request. A string, not a FK to `users.id`,
+    #: for the same reason `db_user_id` is nullable there: not every
+    #: authenticated caller has a `users` row.
+    user_id: str = Field(max_length=255)
+    #: The deterministic `Recommendation.id`. 255 is generous -- the longest
+    #: shape today is a skill prefix plus a UUID.
+    recommendation_id: str = Field(max_length=255)
+    dismissed_at: datetime = Field(default_factory=datetime.utcnow)
