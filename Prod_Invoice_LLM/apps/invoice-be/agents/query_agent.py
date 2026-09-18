@@ -4,7 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import bindparam, text
 import telemetry
