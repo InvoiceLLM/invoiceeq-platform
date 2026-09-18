@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { SlidersHorizontal, Save, Check } from "lucide-react";
 
 export interface FilterState {
@@ -32,6 +32,21 @@ interface FilterBarProps {
    * both flows on) don't clobber each other's saved state.
    */
   direction?: "inbound" | "outbound";
+  /**
+   * FE Gap 702: filter values this bar must open with, supplied by the page
+   * because they came off the URL.
+   *
+   * **They beat the saved filters, on purpose.** A user who arrived here by
+   * clicking "Put these back in the queue" on an ATLAS line asked for the stuck
+   * list *now*; a filter set they saved last Tuesday is a weaker statement of
+   * intent than the click they just made, and silently restoring it would make
+   * the destination look broken in exactly the way FE Gap 702 recorded.
+   *
+   * Nothing is written to `localStorage` by this: the Save button is still the
+   * only thing that persists a filter set, so a one-off arrival from a link does
+   * not quietly become the user's default.
+   */
+  initialFilters?: Partial<FilterState>;
 }
 
 const LOCAL_STORAGE_KEY = "invoice_dashboard_filters";
@@ -74,6 +89,7 @@ export default function FilterBar({
   compact = false,
   statusFilterDisabled = false,
   direction = "inbound",
+  initialFilters,
 }: FilterBarProps) {
   const isOutbound = direction === "outbound";
   const statusOptions = isOutbound ? OUTBOUND_STATUSES : INBOUND_STATUSES;
@@ -85,11 +101,20 @@ export default function FilterBar({
     dateRange: "all",
     tag: "",
     status: "",
+    ...(initialFilters || {}),
   });
   const [isSaved, setIsSaved] = useState(false);
 
+  // FE Gap 702: an explicit arrival ("open the stuck list") outranks a saved
+  // filter set. Read once, not on every render, because the point is what this
+  // bar MOUNTED with -- a later edit by the user must not re-trigger it.
+  const seededFromUrlRef = useRef(
+    Boolean(initialFilters && Object.values(initialFilters).some((value) => value))
+  );
+
   // Load saved filters on component mount
   useEffect(() => {
+    if (seededFromUrlRef.current) return;
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {

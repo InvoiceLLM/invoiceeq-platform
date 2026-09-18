@@ -208,6 +208,12 @@ describe("recon attach and the four groups (§6)", () => {
     get.mockImplementation((path: string) => {
       if (path === "/atlas/lines")
         return Promise.resolve({ data: linesResponse([uncertainDoubtLine]) });
+      // FE Gaps 700/701: the memory panel and the action log read on mount and
+      // are not what this test is about. Named explicitly rather than left to
+      // the document fall-through below, which would hand each of them a list.
+      if (path === "/atlas/memory")
+        return Promise.resolve({ data: { rules: [], noise_suggestions: [] } });
+      if (path === "/atlas/actions") return Promise.resolve({ data: { entries: [] } });
       return Promise.resolve({ data: [{ id: "doc-1", file_path: "s.pdf" }] });
     });
     post.mockRejectedValue({

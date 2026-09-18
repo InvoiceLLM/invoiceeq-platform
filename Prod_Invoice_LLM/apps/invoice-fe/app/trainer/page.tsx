@@ -44,6 +44,7 @@ import QaChatPanel from "@/components/trainer/QaChatPanel";
 import RulesRail from "@/components/trainer/RulesRail";
 import CommitModal from "@/components/trainer/CommitModal";
 import RuleHistoryDrawer from "@/components/trainer/RuleHistoryDrawer";
+import MissedThis from "@/components/atlas/MissedThis";
 
 /**
  * FE Gap 115 — the plans that include the AI Trainer, mirroring the backend's
@@ -709,6 +710,37 @@ function TrainerContent() {
         hasSession={!!session}
         disabled={isLoadingSession}
       />
+
+      {/* FE Gap 703 — D34's "you missed this", on the record the trainer is
+          looking at. D34 says "on any record"; it shipped on ATLAS lines only,
+          which is the one surface where ATLAS has already spoken.
+
+          WHY THIS SCREEN SPECIFICALLY: the trainer is where somebody sits with
+          one document open and works out what the system got wrong about it.
+          That is the highest-quality false-negative evidence the product ever
+          has, and §5.2 says it is invisible unless somebody reports it.
+
+          THIS IS NOT THE SAME CONTROL AS "Flag missed alert" below, and the two
+          are deliberately both here. `FlagMissedAlertModal` stages a RULE in
+          this sandbox — it is training, scoped to a vendor template, and it
+          produces something the user then commits. This reports a MISS to
+          ATLAS's memory (BE §7.2): one sentence, no rule, nothing staged,
+          nothing to commit. Merging them would make every observation a rule
+          change, which is the friction D34 says stops people reporting at all.
+
+          The entity is the session's invoice when it has one. A transient
+          upload has no `Invoice` row, so the session itself is the record —
+          named as such rather than labelled "invoice", because putting a
+          session id under an invoice kind would file the evidence against a row
+          that does not exist. */}
+      {session && (
+        <div className="px-3 pt-2">
+          <MissedThis
+            entityKind={session.invoiceId ? "invoice" : "trainer_session"}
+            entityId={session.invoiceId || session.sessionId}
+          />
+        </div>
+      )}
 
       {/*
         The workspace. Same flex-row geometry FE Gap 111 established (each panel

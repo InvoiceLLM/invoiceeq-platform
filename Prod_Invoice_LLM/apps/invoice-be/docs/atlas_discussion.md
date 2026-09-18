@@ -69,6 +69,8 @@ FE Feature 22 spec (the four surfaces).
 | D47 | 2026-09-18 | Trust | **Verify does not attach the document — it tells the user to attach and compare in chat.** Closes FE Gap 640 without a new attachment endpoint: the line opens chat with its question seeded and says to attach the document there. The FE never re-uploads a copy of a document the tenant already holds to make a promise look kept | **Yes** (2026-09-18; BE Gap 693, FE Gap 640 closed) |
 | D48 | 2026-09-18 | Structure | **A toggle beside the notification bell switches between the existing tabbed screen and ATLAS mode.** **Partially reverses D10**, which deleted the classic-layout toggle on the grounds that there was no longer a duality to toggle between — there is one again, because ATLAS is an added surface, not a replacement. The existing screens are not removed | **Yes** (2026-09-18; FE Gap 694) |
 | D49 | 2026-09-18 | Today | **Every line carries a dismiss button, and a dismissal persists.** Lines are recomputed on every open (D38), so without this a line the user has already handled — for example by doing the comparison in chat per D47 — returns on the next sign-in. Dismissal is keyed on the recommendation id, which is deterministic (`audit-approve-<invoice id>`), so it matches the same line across recomputes | **Yes** (2026-09-18; BE Gap 695, FE Gap 696) |
+| D50 | 2026-09-18 | Boundaries | **ATLAS suggests corrections and requeues; it never performs them.** `apply_field_correction` and `requeue_invoices` open the right screen with the context, and the person does it. **Narrows D8 further** — one-click acceptance is for the Auditor's decision, not for teaching the extractor or moving work through the pipeline. A wrong correction teaches a rule that then misfires on every future invoice, and a wrong requeue costs pipeline work nobody asked for | No |
+| D51 | 2026-09-18 | Loader | **`retry_ingestion_source` is performable — one click retries.** Re-running a sync is idempotent: it re-reads the folder or mailbox and both dedup layers absorb anything already ingested, so a second run writes nothing new. The Loader's job is unsticking ingestion, and D22 designs that role toward elimination, so this is the one action that actually shortens their work | No |
 
 ## Open questions
 
@@ -729,3 +731,47 @@ and server-side filter) and **FE Feature 23 §13** (D47's hint, D48's toggle, D4
 control). Gaps: **BE 693**, **BE 695**, **FE 694**, **FE 696**, and **FE 640 closed by D47**.
 D48 has no backend at all — the mode lives in `localStorage` and no per-user preference store was
 built, so the cost recorded in §2 above stands as written.
+
+---
+
+## 2026-09-18 — What ATLAS may actually do
+
+**Decisions:** D50–D51 · **Scope:** the action set · **Status:** decided, unbuilt (task 34.7).
+
+The work screen currently proposes eight actions and performs none of them:
+`PERFORMABLE_ACTION_KINDS` is empty and every button renders disabled saying so. These two
+rulings decide which of the eight ever become real.
+
+### The set, after these rulings
+
+| Action | Ruling |
+|---|---|
+| `resolve_invoice` | **Performable.** The Auditor's decision, and the highest-volume line type. `PUT /audit/resolve/{invoice_id}` already exists |
+| `retry_ingestion_source` | **Performable** (D51). `POST /autopilot/sync` already exists; now per source, which D43 made possible |
+| `apply_field_correction` | **Suggest only** (D50). Opens the field review with the context |
+| `requeue_invoices` | **Suggest only** (D50). Opens the stuck list |
+| `open_upcoming_payments`, `open_field_review` | Navigation. Never were writes |
+| `attach_witness_document` | An instruction to the user since D47 — ATLAS never attaches |
+
+### Why the split falls where it does
+
+The two performable actions share a property the two suggest-only ones do not: **being wrong is
+cheap and local.** A wrongly resolved invoice is one record, visible, reversible by the same
+person. A re-run sync writes nothing new at all.
+
+A wrong **correction** is neither — it teaches a rule, and the rule then misfires on every
+future invoice from that vendor, which is D28's "never learns a permanent rule from one
+instance" seen from the other end. A wrong **requeue** spends pipeline work nobody asked for and
+is not undone by clicking again.
+
+So the boundary is not "read versus write". It is **how far the blast radius travels when ATLAS
+is wrong** — which is §5.2's asymmetry applied to actions rather than to findings.
+
+### What this leaves to build in 34.7
+
+Two performable kinds, not eight: a dispatcher mapping an action kind to the endpoint that
+already performs it, the capability check on **acting** (separate from the check on *seeing* —
+the same grant governs both, but they are two decisions and only one is currently made), the
+action log §5.3 requires so that "what ATLAS did" is a real readable list, and
+`PERFORMABLE_ACTION_KINDS` populated one kind at a time, so a button is never enabled before
+its path works.

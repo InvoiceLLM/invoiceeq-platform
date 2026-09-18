@@ -453,3 +453,355 @@ JSON on a full recompute, and **still absent after the backend process was kille
 
 FE Gap 641's lesson was applied to the new tests: anything awaiting an async child waits for the
 child, never for the container.
+
+---
+
+## 14. As built — the screen can act (2026-09-18)
+
+**Additive record; §1–§13 are unchanged** (CONVENTIONS hard rule 4). Branch `feature/atlas`,
+uncommitted, on top of commit `2baf8bb`. **BE Feature 34 §17 owns every contract named here** —
+the act endpoint, the action dispositions, the ranking fields, the collapsed-area row, the
+forecast block and the orientation payload are all defined there and referenced, never restated.
+
+Tasks: **§9 task 4** (collapsed rows), **task 7** (forecast lines with levers), **task 9**
+(cold-start orientation), plus the FE half of BE 34.7 (the action click) and BE 34.14 ("you missed
+this"). **Task 8 is still not built, by ruling** (D42). Tracker entries: **FE Gaps 700–703**.
+
+### 14.1 Files
+
+| File | Task | What it holds |
+|---|---|---|
+| `lib/atlas.ts` | all | `AtlasAreaRow`, `AtlasForecast`, `AtlasLever`, `AtlasOrientation`, `AtlasActionKinds`; `rank_cut` / `areas` / `forecast` on the existing shapes; `actOnAtlasLine()`, `fetchActionKinds()`, `fetchAtlasOrientation()`, `reportMissed()`, `actionDestination()`; `isActionPerformable(kind, known)` |
+| `components/atlas/AtlasLine.tsx` | 4, 7 | The action button, the suggest-only destination link, the forecast block, the "you missed this" control |
+| `components/atlas/WorkScreen.tsx` | 4 | The kinds read, `onAct`, the outcome line, the rank cut and *Show everything*, the collapsed area rows |
+| `components/atlas/ColdStart.tsx` | 9 | §7.1's three parts, the day-one findings, the import offer |
+| `components/atlas/MissedThis.tsx` | — | D34's report control |
+| `app/api/atlas/lines/[id]/act/route.ts` · `actions/kinds/route.ts` · `orientation/route.ts` · `missed/route.ts` | all | `proxyJson` handlers |
+| `tests/unit/atlas-actions.test.tsx` · `atlas-fixtures.ts` | all | 23 new tests |
+
+### 14.2 The one decision that matters most: this app still holds no list of what it can do
+
+`PERFORMABLE_ACTION_KINDS` shipped **empty** in §12 as a deliberate honesty mechanism, and **it is
+still empty**. BE 34.7 made two kinds real, and the obvious change — type them into the constant —
+is the one this build refused.
+
+Instead the screen reads `GET /atlas/actions/kinds` on mount and passes the answer down. A
+hand-maintained copy is precisely what lets a button be enabled ahead of its endpoint, which is the
+failure the empty set was invented to prevent; it is also what silently breaks the day a kind is
+withdrawn on the backend. `isActionPerformable(kind, known)` takes the server's set, and its default
+is the empty one.
+
+**While that read is in flight, or after it fails, every action renders disabled and no error is
+shown.** "I do not know whether I can do this" and "I can" must not look the same, and the safe
+answer to the unknown is the button that does nothing. No error banner, because the line already
+says *"I can see this and explain it, but I cannot do it for you yet"* and a second message above
+the work would push the work down the page to report something the user can already see.
+
+`tests/unit/atlas-actions.test.tsx` asserts `PERFORMABLE_ACTION_KINDS.size === 0` directly. If
+anybody ever "fixes" it by transcribing the backend's list, that test goes red.
+
+### 14.3 The action click, and the line that is a link instead
+
+**Performable (D50/D51 — two kinds).** The button posts `{kind, target_id, params}` from the line
+it was rendered from, then **re-reads `GET /atlas/lines`**. It does not splice the row out: D38
+recomputes every line on open, so whether a resolved invoice still has a line is the server's
+answer. A client-side splice would be this app holding an opinion about a record it did not write,
+and would mask the day the backend stopped agreeing — the same reasoning §13.4 already gives for
+dismissal.
+
+The outcome is the **server's sentence**, printed as sent, in its own line above the list. It is
+kept separate from the error line because *"Invoice approved."* and *"that did not go through"* are
+different facts and a user who sees one must not have to work out which they got.
+
+**Suggest only (D50 — `apply_field_correction`, `requeue_invoices`).** These render as a **`Link`
+to `actionDestination()`**, not a button. There is no `onClick` for a later change to fill in, and
+the note under the line reads *"I will take you there — this one is yours to decide."* rather than
+*"I cannot do it for you yet"*: the first is a ruling and the second is a state that will change,
+and printing the wrong one promises a feature nobody intends to build.
+
+**`Action` still carries no URL** (BE §12.2), so the destinations live in this app's own route
+table. **Flagged rather than invented:** `/invoices` does not read a status query parameter today,
+so "open the stuck list" opens the invoice list and not a filtered one. No query string is appended,
+because a parameter this app sends and no page reads is the F33/F22 seam in miniature. Filed as
+**FE Gap 702**.
+
+### 14.4 Task 4 — collapsed rows for the Admin
+
+The server decides who sees them (BE §17.5); this renders what it was sent and computes nothing.
+An area row prints the backend's `headline` verbatim — every count in it is the server's, for the
+same reason every figure is.
+
+**Opening one is an expansion, not a request.** `line_ids` point into the same payload's `lines`,
+so the rows are already here. There is no loading state inside an expanded area and no way for
+opening one to fail, which is what "coverage is total; volume is not" has to mean in a client.
+
+### 14.5 Task 7 — the forecast with levers
+
+A date, a shortfall and a list. **Never a chart**: BE §7.5 says so in those words, and there is no
+graph, no sparkline and no trend line in the block.
+
+- **The assumption renders unconditionally.** It is required on the contract and it is the half of
+  the answer that is easy to drop — "deterministic and honest are separate properties", and a
+  shortfall date shown without what it assumed is the deterministic half on its own.
+- **A lever is not a button.** BE §5.3: ATLAS never moves money and never sends outside the company
+  unseen. Chasing a customer and deferring a payment are things the person does; rendering them
+  clickable would be this screen claiming an authority the whole feature exists to refuse.
+- Every amount is `lever.amount_rendered`, a string the server formatted. There is no `value` on
+  the type and nothing here adds two levers together.
+
+### 14.6 Task 9 — cold start
+
+`ColdStart` renders §7.1's three parts, the day-one findings and the historical-import offer, and
+**composes none of the words**. Part 3 — *"right now I do not know your vendors… in a month I
+will"* — is a commitment about what the product will do, which is why it is a fixed table on the
+backend and why nothing here shortens or re-orders it.
+
+- **It renders itself away.** `needed` is the server's answer to "has this workspace seen an
+  invoice", so there is no flag for this component to own and nothing for `WorkScreen` to decide.
+- **Not a tour** (D25). No step counter, no "next", no "skip", no completion state, nothing stored.
+- **A failed fetch is silent.** This is an explanation, not work: a failure to load it must not put
+  an error banner above a queue that loaded perfectly well.
+- The import offer is a sentence, never a button or a required step — everything works without it.
+
+### 14.7 "You missed this" (BE 34.14, D34)
+
+One control, one line of text, no category picker, no severity, no required fields beyond the
+sentence. §5.2 says false negatives are already invisible and under-reported, so every field added
+here is a reason somebody does not bother.
+
+The description is sent **exactly as typed** — it is the evidence ATLAS was wrong, and trimming or
+templating it anywhere along the path would be the product editing its own report card. The
+acknowledgement is §5.2's: plain, and then stop.
+
+**Honest limit:** D34 says "on any record". This control is on ATLAS lines only; the invoice,
+trainer and document screens do not carry it. The endpoint takes any `entity_kind`/`entity_id`, so
+that is remaining FE work, not a backend gap. Filed as **FE Gap 703**.
+
+### 14.8 Verification
+
+```
+npx vitest run       → 117 passed | 4 skipped   (was 90 | 4; 23 new tests, plus 4 that the
+                       grep-shaped no-arithmetic guard generates per new component file)
+npx tsc --noEmit     → clean
+```
+
+The new file states its own limit in its header: **a unit test with a mocked `apiClient` cannot
+prove an invoice was resolved.** That is a property of the backend, the browser and Postgres, and
+it is proven in BE Feature 34 §17.11 — a real Chromium click on `/work` that ended with
+`invoice.status = 'PAID'` read back out of the database, plus the `atlas_action_log` row that
+records it.
+
+FE Gap 641's lesson is applied to the new tests: `enabledAction()` waits for the **button's own
+performable state**, not for the container, because the button and the answer that enables it come
+from two different requests.
+
+### 14.9 What is still not built
+
+- **Task 8 (batch accept + undo) — by ruling** (D42). There is still no batch control anywhere in
+  `components/atlas/`, asserted grep-shaped by `atlas-no-client-arithmetic.test.ts`.
+- **No memory surface.** BE 34.10 serves `GET/POST/PATCH/DELETE /atlas/memory` and D12's noise
+  suggestions, and **this app renders none of it**. §7.2's promise is that a user can read, change
+  or delete a wrong lesson, and today they can only do that with `curl`. Filed as **FE Gap 700** —
+  it is the largest honest gap in this slice.
+- **No action-log surface.** `GET /atlas/actions` serves "what ATLAS did" and nothing displays it.
+  §5.3 requires the list to exist and it does; requiring it to be *reachable by a user* is the next
+  step. Filed as **FE Gap 701**.
+- **No behaviour-based forecast**, because the backend does not produce one and the line says so.
+
+## 15. As built — the four surfaces Slice C had no screen for (2026-09-18)
+
+**Additive record; §1–§14 are unchanged** (CONVENTIONS hard rule 4). Branch `feature/atlas`,
+uncommitted, on top of commit `2baf8bb`. **BE Feature 34 §17 owns every contract named here.**
+
+Tracker entries closed: **FE Gaps 700, 701, 702, 703**. Each was a backend Slice C built with no
+screen — a promise the product makes that until this change was kept only with `curl`.
+
+**§14 recorded three of these as honest limits and they are now closed. Those paragraphs are left
+standing rather than rewritten** (hard rule 4): §14.3's "no query string is appended", §14.7's
+"this control is on ATLAS lines only" and §14.9's "no memory surface / no action-log surface" are
+the state of the previous slice, and this section is what changed.
+
+### 15.1 Files
+
+| File | Gap | What it holds |
+|---|---|---|
+| `lib/atlas.ts` | 700, 701, 702 | `AtlasMemoryRule`, `AtlasNoiseSuggestion`, `AtlasMemoryResponse`, `AtlasActionLogEntry`, `AtlasActionLogResponse`; `fetchAtlasMemory()`, `addMemoryRule()`, `editMemoryRule()`, `deleteMemoryRule()`, `fetchAtlasActions()`; `actionDestination()` now filters, plus `INVOICE_STATUS_PARAM`, `INVOICE_VENDOR_PARAM`, `STUCK_INVOICE_STATUS` |
+| `components/atlas/MemoryPanel.tsx` | 700 | List, inline edit, active toggle, hard delete, "tell me something", D12's suggestions with an accept control |
+| `components/atlas/ActionLog.tsx` | 701 | Collapsed panel, newest first, successes **and refusals**, attributed and timestamped |
+| `components/atlas/WorkScreen.tsx` | 700, 701 | Both panels mounted below the work |
+| `app/api/atlas/memory/route.ts` · `memory/[id]/route.ts` · `actions/route.ts` | 700, 701 | `proxyJson` handlers (GET/POST, PATCH/DELETE, GET) |
+| `app/invoices/page.tsx` | 702 | `useSearchParams()` behind a `Suspense` boundary, `urlFilters()`, the seeded first fetch |
+| `components/dashboard/FilterBar.tsx` | 702 | `initialFilters` prop, which outranks the saved filter set |
+| `app/invoices/review/[id]/page.tsx` · `app/trainer/page.tsx` · `components/ingestion/IngestionHistoryTable.tsx` | 703 | `MissedThis` on the record surfaces |
+| `tests/unit/atlas-memory.test.tsx` · `atlas-action-log.test.tsx` · `atlas-destinations.test.tsx` · `atlas-missed-surfaces.test.tsx` | all | 34 new tests |
+
+### 15.2 FE Gap 700 — the memory surface, and the bound that makes it short
+
+§7.2/D31's argument is that *"a wrong lesson that cannot be found haunts the system forever"*. The
+backend has served all four verbs since Slice C; the product's answer to finding a wrong lesson was
+a terminal. `MemoryPanel` is that answer on a screen.
+
+- **Delete is a hard delete and the control says so.** `atlas_memory_rules` has no `deleted_at`
+  column (verified against the live schema, §15.6), the backend removes the row, and this panel
+  **re-reads** rather than splicing — so what the list shows afterwards is what Postgres has. There
+  is no undo, deliberately: an undo implies a copy kept somewhere, which is a soft delete wearing a
+  different name.
+- **Switching a rule off is a different act and is offered separately.** "This is wrong" and "this
+  is right but not now" are different sentences; `active=false` keeps what the rule said.
+- **Inactive rules are listed.** A switched-off rule the user cannot see is one they can neither
+  switch back on nor delete.
+- **D40 is the bound, and it is stated on the screen as well as in the code.** A derived
+  observation — a vendor's usual range — is recomputed at check time and thrown away (D39) and is
+  **not** a memory rule; listing one would invite a user to "edit" a figure computed from their own
+  invoices, which fixing the invoices fixes and editing does not. The panel therefore has exactly
+  **one** source of rows, `GET /atlas/memory`'s `rules`, asserted in `atlas-memory.test.tsx`; and
+  `MEMORY_SCOPE_NOTE` tells the user why the list is shorter than they might expect, because
+  without it an incomplete-looking list reads as a broken one.
+- **D12's suggestions are rendered in their own list and never write themselves.** Accepting one is
+  `POST /atlas/memory` with the server's own sentence — the user agreeing is what turns an offer
+  into a rule. A suggestion that quietly became a rule would be the silent write §5.3 forbids,
+  arriving through the door marked "learning".
+- **A failed read is said out loud.** A memory list that renders empty because a read failed looks
+  exactly like a system that has learned nothing, and a user would conclude their correction never
+  landed.
+
+### 15.3 FE Gap 701 — the action log
+
+§5.3 lists *"what ATLAS did is a real list"* as a **boundary**. A list only a developer can query is
+not visible in the sense that sentence means, so the boundary was not actually held until this
+panel existed.
+
+- **Refusals are rows, not errors.** The 409 a suggest-only kind gets carries D50's reasoning in
+  full; a 403 and the underlying endpoint's own 422 are written too. A log holding only successes
+  answers *"did ATLAS touch this invoice?"* with a confident no on exactly the occasions somebody
+  is asking because something looks wrong. `data-succeeded` is on every row and both variants are
+  proven live (§15.6).
+- **Tenant-wide and unfiltered, because the backend decided that.** This component sorts nothing
+  and drops nothing; a second ordering is the one that eventually disagrees.
+- **It re-reads on open**, since the user opens it to check whether what they just did is really
+  recorded.
+- **It is not the audit trail.** `AuditLog` still records a resolve exactly as the audit queue's
+  own button does. What this answers is the narrower question: which of those came from an ATLAS
+  line, and which line.
+
+### 15.4 FE Gap 702 — both ends of the seam, in one change
+
+§14.3 flagged rather than worked around: a parameter this app sends and no page reads is the
+F33/F22 defect in miniature. So the fix changed both ends together, and the test asserts them
+against **each other** rather than each against its own idea of the parameter name — it takes the
+URL `actionDestination()` produces, hands it to the real `/invoices` page as its search params, and
+asserts the page then asks the backend for the filtered set.
+
+- `requeue_invoices` → `?status=PROCESSING`, because `services/atlas_skills.py::_stuck_in_processing`
+  selects on exactly that. **The hours-since-enqueue half is not expressible as a list filter and is
+  not faked**: the destination is a superset of the line's invoices, and the line already says how
+  many are stuck.
+- `review_unlisted_invoices` → `?vendor=<target_id>`, because the recon emitter puts the vendor in
+  `target_id` and `GET /invoices` filters on `vendor_name`.
+- **`params.invoice_ids` is deliberately not sent.** `GET /invoices` has no id-set filter, so
+  passing one would be inventing a parameter the backend never reads — the same defect again. The
+  filter is the narrowest one both ends genuinely support, and no narrower.
+- **The parameter names are exported from `lib/atlas.ts` and imported by the page.** Two string
+  literals that happen to agree today are how this seam reopens.
+- **The bar SHOWS the filter, it is not just applied behind it** (`FilterBar`'s new
+  `initialFilters`). A list quietly filtered by something the controls do not display is worse than
+  an unfiltered one: the user cannot tell why rows are missing, or clear it.
+- **A URL filter outranks a saved filter set**, and saves nothing to `localStorage`. The click the
+  user just made is a stronger statement of intent than a filter set they saved last Tuesday.
+- Only `status` and `vendor` were lifted into the URL. `tag` and the date range stay component
+  state — a full URL-state refactor is not what this gap asked for.
+
+### 15.5 FE Gap 703 — "you missed this" on a record
+
+D34 says *"on any record"*. It shipped on ATLAS lines only, which is the surface where it is least
+needed: a line is a thing ATLAS already noticed. It is now on the invoice review console, the
+trainer, and `IngestionHistoryTable` — **which is this product's documents list**, since FE Gap 464
+folded `app/documents/page.tsx` into History.
+
+- **Not capability-gated anywhere**, matching the backend (BE §17.7): a miss is noticed by whoever
+  happens to be looking, and §5.2 says that evidence is already the scarcest there is.
+- **Not gated on an invoice being resolved either.** Noticing a miss usually happens *after* the
+  decision, and a control that disappears at the decision is absent for most of the cases it exists
+  to catch.
+- **The record's own kind is passed through unchanged** — `file.kind` on a History row is
+  `"invoice" | "document" | "autopilot_file" | "rejected_email"`, and flattening a rejected email to
+  "invoice" would file the evidence against a row that does not exist. The trainer reports
+  `"invoice"` when the session has one and `"trainer_session"` when it is a transient upload with no
+  `Invoice` row.
+- **It is not the trainer's "Flag missed alert", and both are on that screen on purpose.**
+  `FlagMissedAlertModal` stages a *rule* in the sandbox, scoped to a vendor template, which the user
+  then commits. This reports a *miss* to ATLAS's memory: one sentence, nothing staged, nothing to
+  commit. Merging them would make every observation a rule change, which is the friction D34 says
+  stops people reporting at all.
+
+### 15.6 Verification
+
+```
+npx vitest run     → 155 passed | 4 skipped   (was 117 | 4; 34 new tests, plus 4 the
+                     grep-shaped no-arithmetic guard generates per new component file)
+npx tsc --noEmit   → clean
+```
+
+Three pre-existing tests were updated, not weakened: `atlas-actions.test.tsx` and
+`atlas-work-screen.test.tsx` had fall-through `get` mocks that answered any unknown path with a
+LIST, and the work screen now performs two more reads. That mock handed `ActionLog` an array whose
+`.entries` is `Array.prototype.entries`, which React then invoked as a state updater — so the
+component was also changed to use the functional setter form, which cannot be re-read as an
+instruction. The mocks now name `/atlas/memory` and `/atlas/actions` explicitly.
+
+**The acceptance proof is live, and a unit test is not it.** Real Chromium → `next dev` on `:3077`
+→ the FE route handlers → `uvicorn` on `127.0.0.1:8077` → Postgres on `127.0.0.1:5433`
+(**`127.0.0.1`, never `localhost`** — BE Gap 697). No mocked `apiClient`, no fixture.
+
+```
+D12_SUGGESTION_ON_SCREEN: "You have dismissed invoices waiting on your decision 41 times.
+                           Shall I stop bringing them to you?"   <- computed from 41 real
+                                                                   atlas_dismissals rows
+RULE_CREATED_FROM_UI:                7fba5265-bcdd-416f-9c2c-baffa85a8f82
+RULE_TEXT_AFTER_EDIT_ON_SCREEN:      "FE Gap 700 live proof: EDITED IN THE BROWSER."
+D12_SUGGESTION_ACCEPTED_BECAME_RULE: yes, on the user's click -- not before it
+RULE_GONE_FROM_SCREEN_AFTER_DELETE:  true
+ACTION_LOG_HAS_SUCCESS:              true   ("Invoice approved.", resolve_invoice)
+ACTION_LOG_HAS_REFUSAL:              true   (the 409: "I do not do 'apply_field_correction'
+                                             for you...", plus two 422s)
+INVOICES_REQUEST_STATUS_FILTER:      /api/invoices?limit=8&offset=0&status=PROCESSING
+STUCK_ROW_VISIBLE / NON_STUCK_HIDDEN: true / true
+INVOICES_REQUEST_VENDOR_FILTER:      /api/invoices?vendor_name=Unlisted+Vendor+Pvt+Ltd&limit=8&offset=0
+VENDOR_ROW_VISIBLE / OTHER_HIDDEN:   true / true
+MISSED_CONTROL_ON_INVOICE_REVIEW:    true, and the report was accepted
+PAGE_ERRORS:                         none
+```
+
+Read back out of Postgres afterwards, **not off the screen**:
+
+```
+the deleted rule, by id   -> 0 rows in atlas_memory_rules
+the deleted rule, by text -> 0 rows
+atlas_memory_rules columns -> id, tenant_id, active, created_at, updated_at, created_by,
+                              text, source, origin_ref     <- there is no deleted_at to hide in
+memory after the run      -> ('told', 'You have dismissed invoices waiting on your decision 41...')
+                             ('missed_report', 'I missed this, and you told me: FE Gap 703 live proof...')
+atlas_missed_reports      -> ('invoice', '474b0d2e-...', rule_id 6586c1e6-..., the sentence, unedited)
+atlas_action_log          -> ('resolve_invoice', True,  'user_test_default', 09:01:47, 'Invoice approved.')
+                             ('resolve_invoice', False, ..., 'An ATLAS decision is PAID or REJECTED...')
+                             ('apply_field_correction', False, ..., "I do not do 'apply_field_correction'...")
+```
+
+**Every seeded row was removed afterwards** — two invoices, 41 dismissals, the memory rules, the
+missed report, the action-log rows and the `audit_logs` row the resolve wrote. They existed to give
+the mock tenant's screen something to act on and are not test data anyone should find later.
+
+**No backend file was changed by this work**, so BE Feature 34's own numbers stand unaltered.
+
+### 15.7 What this deliberately does not do
+
+- **No memory settings page.** Both panels live on `/work`, collapsed, below the work — they are how
+  a user checks ATLAS, not work ATLAS is asking for, and either above the queue would push the
+  actual work down the page.
+- **No undo for a deleted rule, and no "what I dismissed" surface.** Both would be a retained copy,
+  which is the soft delete the founder's rule forbids. A rule deleted in error is retyped.
+- **No paging on the action log.** The backend serves the most recent 50; a user needing more than
+  that is asking an audit question, and `audit_logs` is where that is answered.
+- **`tag` and the date range are still component state**, not URL state.
+- **No "you missed this" on the invoice LIST rows.** The control is on record *screens*; a textarea
+  inside a table cell would be a worse version of the same affordance one click away.
