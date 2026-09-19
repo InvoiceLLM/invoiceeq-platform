@@ -3509,3 +3509,369 @@ actually does (cold-start orientation, capability-scoped lines, the duplicate/do
 skills, the self-documenting figures computation field) works and was verified against real data
 this session. The stale doc is a real risk if anyone reads Section 8 as a test script rather than
 history.
+
+## VPI demo -- 11 chat-attachment turns vs README section 5 ground truth (2026-09-19)
+
+Real local stack (Postgres 127.0.0.1:5433, real Azure OpenAI gpt-5.6-luna, real Doc
+Intelligence), VPI tenant 00000000-0000-0000-0000-000000000000, existing 26-invoice
+dataset (unmodified). Founder ask: run the 11 attachment turns from
+showcase/vpi_demo/README.md section 5 and check the answers, not just summarize them.
+Full turn-by-turn grading, root-cause analysis and raw transcripts in
+docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md. Environment note (not a
+code gap): the queue worker (queue_worker/main_worker.py) was not running at the start
+of this session -- every chat attachment sat at extraction_status=PENDING
+indefinitely. Started it mid-session; left running. Score against the README: 1 clean
+match (turn 4), 4 partial, 6 miss, out of 11.
+
+**Status note, 2026-09-19 -- these four were fixed and then the fix was REVERTED on
+founder instruction.** All four (707/708/709/711) were built generically on
+`feature/atlas`, covered by 19 rule-level tests, and put through a 17-case live
+regression (11 blind-authored control scenarios + 6 re-asks of the originally-failed
+turns). Result: the settlement layer the fix targeted was proven correct -- 5 cases,
+including the BHA-2002 `PAID`/`paid_at IS NULL` trap, landed on the right figure and
+excluded the paid invoice -- but 7 cases still failed on two defects *upstream* of it
+(question-to-branch routing for "what do we owe vendor X" with a remittance advice, and
+a single hardcoded template for every BANK_STATEMENT question), and the 711 fix
+introduced a new regression of its own (an attachment asked-against before extraction
+finished stays stuck on "still reading" after it is ready).
+
+The founder's ruling was to keep ATLAS and back the attachment work out, on the
+reasoning that this is Feature 26, not Feature 34, and that repairing
+`agents/query_agent.py`'s intent routing inside an ATLAS branch is the same drive-by
+change to correctness-deciding logic that BE Gap 699 was filed to avoid. So these four
+are **open again**, and the code is gone from the branch.
+
+**None of the investigation is lost, and it is worth reading before anyone retries
+this:** the full evidence stands in
+`docs/test_evidence/vpi_demo_attachments_2026-09-19/` -- the original 11 turns, the 11
+blind control scenarios with their arithmetic shown, and `after_fixes/` with the
+17-case verdict table, raw bubbles and SQL. The reverted diff is recoverable but lives
+only in this session's scratchpad, so treat it as gone. **The one finding most worth
+carrying forward:** INBOUND `PAID` rows on this dataset have `paid_at = NULL` (3 rows,
+0 timestamps) while OUTBOUND `PAID` rows carry it (2 of 2) -- any future fix that keys
+settlement off `paid_at` alone will pass every receivable test and silently fail every
+payable one.
+
+**And one premise that did not hold:** BE Gap 710 was expected to reproduce and did
+not -- that run's own `chat_attachments.extracted_json` held all 3 line items,
+correct. Either extraction is non-deterministic here or something else moved. 710 stays
+open, but its symptom is now unconfirmed in both directions.
+
+- [ ] BE Gap 707 (BE, chat/attachments): compute_amount_owed() sums every
+  confirmed/matched invoice unconditionally, with no exclusion for a PAID invoice and
+  no rule to pick exactly one of two ambiguous candidates -- inflates "amount owed" on
+  three separate attachment turns -- S1, release risk High, effort M. (found
+  2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5 turns 1, 3, 11). Symptom:
+  turn 1 (PO-VPI-1041 vs Rajesh Steel) correctly flags RAJ-2009 as AUDIT_REQUIRED
+  (a duplicate of RAJ-2008) but then states "the combined amount owed is INR
+  874,380.0, which is higher than the PO total ... Both invoices are included in that
+  net" -- summing a duplicate on top of the real invoice. Turn 3 (PO-VPI-1043 vs Shree
+  Packaging) similarly sums SHR-2004 (status PAID) + SHR-2005 + SHR-2006 = INR
+  366,508.0 and calls it "amount owed," when SHR-2004 is already settled and should
+  not count. Turn 11 (credit note BHF-CN-2010) is the sharpest: expected net owed to
+  Bharat Hardware is 60,416 (BHA-2003 open, 103,191, minus the 42,775 credit); the
+  system correctly offers BOTH BHA-2002 (PAID) and BHA-2003 (open) as match candidates
+  -- the right ambiguity per the README's own resolution rule -- but once both are
+  confirmed, the answer computes "net amount owed to Bharat is INR 163,607.0" from
+  terms CN -42,775 + BHA-2003 +103,191 + BHA-2002 +103,191, and its own prose says
+  "Note: BHA-2002 is marked PAID, but it is included in the computed net" -- naming the
+  anomaly without correcting it. Root cause: services/document_comparison.py:1278
+  compute_amount_owed() and agents/query_agent.py:6245 _amount_owed_block() add every
+  term whose owed_sign() is non-null with no status filter and no de-duplication rule;
+  invoices are pulled in via row.confirmed_invoice_ids with no check on
+  invoice.status or on whether two confirmed invoices represent the same underlying
+  claim. Proposed fix (not applied -- investigation only): _amount_owed_block should
+  drop invoice terms whose status == "PAID" before calling compute_amount_owed;
+  separately, where more than one confirmed invoice shares an identical line and
+  counterparty (the exact ambiguity Feature 26/the credit-note resolution surfaces),
+  the resolution rule in README section 3 (open status wins, most recent matching date
+  wins) should pick exactly one term, not sum both. Verify by: re-running turns 1, 3
+  and 11 and confirming the "amount owed" / "net owed" figures are 437,190 (RAJ-2008
+  only, RAJ-2009 excluded as duplicate), 121,894 (SHR-2005 only, SHR-2004 excluded as
+  PAID), and 60,416 (BHA-2003 only, BHA-2002 excluded as PAID) respectively.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 1,
+  11_turns_raw_bubbles.json turns 1/3/11.
+
+  FIXED 2026-09-19 (branch `feature/atlas`, uncommitted, on top of `ea62249`).
+  **One definition of "open", promoted to `services/invoice_settlement.py`.** The
+  scope was wider than the ledger: eight modules each decided independently what
+  "settled" meant and the definitions had drifted -- `atlas_skills.py` a positive
+  allowlist, `bank_matching.py` `frozenset({"PAID"})`, `attachment_insights.py` a
+  NEGATED SQL fragment (`status <> 'DUPLICATE' AND status <> 'PAID'`, which let a
+  PROCESSING invoice through and reported a payable as costing nothing), and
+  `document_comparison.py` two separate inline `== "PAID"` tests. ATLAS already
+  had the right definition (BE Gap 705); it was promoted, not rewritten, and
+  `atlas_skills._OPEN_PAYABLE`/`_OPEN_RECEIVABLE` are kept as aliases.
+  **Migrated:** `services/atlas_skills.py` (aliases the shared tuples),
+  `services/bank_matching.py` (`_SETTLED_STATUSES` -> `SETTLED_STATUSES`, call
+  site -> `is_settled_status()`), `services/atlas_actions.py`
+  (`_ALLOWED_RESOLVE_STATUS` -> `TERMINAL_PAYABLE_STATUSES`),
+  `services/document_comparison.py` (both inline PAID tests, and the reconcile
+  loop -> `is_open()`), `services/attachment_insights.py::_upcoming_payables`
+  (negated SQL -> `open_status_sql()` bound parameters; behaviour delta stated:
+  a PROCESSING inbound invoice is no longer reported as a bill due, which is the
+  intended definition -- it has no readable total).
+  **Deliberately NOT migrated, with reasons:** `services/outbound_overdue.py`
+  (`OVERDUE_STATUS = "SENT"` is narrower than `_OPEN_RECEIVABLE` on purpose --
+  it gates a webhook that fires once per invoice, and widening it to
+  VERIFIED/NEEDS_REVIEW would fire overdue events for invoices never sent;
+  that is a product decision, not a drift);
+  `services/billing_lifecycle.py` (`PAID_PLANS = {"pro","pro_combined"}` is a
+  BILLING PLAN vocabulary, not an invoice status -- it shares only the word
+  "paid" and has nothing to do with this question);
+  `services/workflow_outputs.py` (contains no settlement decision at all; it
+  echoes `invoice.status` into an output file, so there was nothing to migrate).
+  **Behaviour fix:** the exclusion lives in `compute_amount_owed()`, not in its
+  callers -- a caller that filters before calling is a caller that can forget to,
+  and `_amount_owed_block()` forgetting to IS the defect. `_amount_owed_block()`
+  now carries each invoice's lifecycle fields (`status`, `paid_at`, `sa_alerts`,
+  `duplicate_of_invoice_id`, `flow_direction`) into the term and filters nothing
+  itself. Two exclusions: settled (`is_settled()` -- status OR `paid_at`, and
+  BOTH are needed: verified against Postgres, all three INBOUND PAID rows on the
+  demo tenant have `paid_at IS NULL` while both OUTBOUND PAID rows carry one, so
+  a `paid_at`-keyed rule would pass on outbound data and fail every payable) and
+  a flagged probable duplicate (`sa_alerts[].type == "possible_duplicate"`,
+  applied in the ledger only -- an unadjudicated duplicate is still OPEN, since
+  somebody owes a decision on it, it is simply not a second amount owed).
+  Excluded terms are NAMED in `excluded_terms[]` with the reason, and all three
+  comparison prompts gained a rule requiring the model to report them and
+  forbidding it from adding them back -- the arithmetic is the control, the
+  prompt only reads it out. `compute_amount_owed()` also stops returning None
+  when every term was excluded: zero-with-an-explanation is a real answer and a
+  different claim from "nothing to compute".
+  **Known limit, stated rather than hidden:** the ledger excludes a duplicate
+  only where the auditor has already FLAGGED it. Two unflagged invoices that
+  represent the same claim are still two terms; no generic rule was invented for
+  that, because inferring identity from matching lines and a shared counterparty
+  is a judgement, and hard rule 3 says a judgement does not move money. Turn 1's
+  RAJ-2008/RAJ-2009 case is covered only because RAJ-2009 carries the flag.
+  EVIDENCE: `tests/test_invoice_settlement.py` (19 passed, real Postgres
+  127.0.0.1:5433) -- rule-level, no probe vendor/number/doc type named; the
+  money-family assertion is repeated over three document types, and the
+  all-settled and exactly-one-open cases are both asserted so a naive "return
+  zero when any candidate is paid" passes neither. Design record:
+  `docs/feature_6_rag_history.md` §"Deciding from the real thing, not a proxy".
+
+- [ ] BE Gap 708 (BE, chat/attachments): reconcile_referenced_documents()'s reverse
+  direction filter compares party_name against vendor_name/customer_name with no
+  notion of "which side is the tenant", so a REMITTANCE_ADVICE whose extracted
+  party_name is the tenant itself floods the answer with every open invoice
+  tenant-wide (including unrelated OUTBOUND receivables to other customers) and can
+  silently drop the one invoice the question needed -- S1, release risk High, effort M.
+  (found 2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5 turns 7, 8, 9).
+  Symptom: PA-VPI-0071/0072/0073 (payment advices FROM Vishwa Precision Industries TO
+  Om Stationery Mart / Bharat Hardware / Shree Packaging respectively -- verified
+  against the raw PDF text, which prints "From: Vishwa Precision Industries..." and
+  "To: <vendor>...") each extract party_name = "Vishwa Precision Industries Pvt Ltd"
+  (the tenant itself, the payer), not the vendor being paid. All three chat answers
+  correctly match the one invoice the advice actually references (e.g. "OM -2000: on
+  file at 41,654.00 (status PAID) -- agrees with the document.") but then list 10
+  unrelated OUTBOUND invoices (VPI-OUT-2013 through VPI-OUT-2023, owed by Kaveri Auto
+  Components / Sunrise Engineering / Deccan Machinery -- customers, not this vendor at
+  all) as "open invoice(s) of yours are NOT listed on their document," and never state
+  the one payable that actually answers the question (OM-2001 still open for turn 7;
+  BHA-2003 open 103,191 for turn 8; SHR-2005 + SHR-2006 = 244,614 open for turn 9).
+  Root cause: services/document_comparison.py:1115's unreferenced-invoice filter is
+  `if party_name and _normalize_party(party_name) not in _normalize_party(row.vendor_name
+  or row.customer_name or ""): continue` -- since party_name is the tenant's own name,
+  it never matches any invoice's vendor_name or customer_name (inbound or outbound), so
+  the filter excludes nothing and the full open book (minus PAID rows) is returned;
+  agents/query_agent.py:7125 then truncates to `[:10]`, so the correct payable is
+  either buried among 10 irrelevant rows or cut off entirely (confirmed: 20 unpaid
+  invoices existed in the eligible pool for turn 7's tenant state, only 10 -- all
+  OUTBOUND -- were shown, OM-2001 was not among them). Proposed fix (not applied --
+  investigation only): REMITTANCE_ADVICE/payment-advice extraction should set
+  party_name to the payee ("To") when the payer ("From") is the tenant itself, not the
+  tenant's own name; separately, the [:10] truncation in query_agent.py should
+  prioritize invoices sharing the same vendor/customer as the attachment before an
+  unbounded tenant-wide list. Verify by: re-running turns 7/8/9 and confirming the
+  unreferenced list contains only OM-2001 / BHA-2003 / SHR-2005+SHR-2006 respectively,
+  with no OUTBOUND invoices present.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 2,
+  11_turns_raw_bubbles.json turns 7/8/9 (reconciliation.unreferenced_invoices block).
+
+  FIXED 2026-09-19 (same change set). **Direction comes from the data, not from
+  a name.** Every reference the document resolved to is a real invoice carrying a
+  real `flow_direction`, so the document states its own side of the book through
+  the invoices it names -- no name matching and no notion of "who is the tenant"
+  needed anywhere. `reconcile_referenced_documents()` now filters the reverse
+  list to those directions and reports them as `flow_directions`. The party
+  filter is kept but trusted ONLY when it discriminates: a `party_name` matching
+  no counterparty at all is not a narrow filter, it is a broken one, and that is
+  exactly what a tenant's own name is. When it does match, it narrows as before
+  (asserted). The settled test in that loop is now the shared `is_open()`.
+  The blind `[:10]` is also addressed: `unreferenced_invoices` is ordered by
+  relevance (same counterparty as the document's own references first, then by
+  size), `unreferenced_total_count` is returned, and the prose says "...and N
+  further open invoice(s), not shown" instead of presenting a truncated list as
+  the whole list. A limit on a sorted list is an editorial choice; a limit on an
+  unsorted one is a lottery.
+  **Deliberately NOT done:** the proposed extraction-side change (make a payment
+  advice's `party_name` the payee when the payer is the tenant) was rejected as
+  the wrong fix under the founder's generic-fix instruction -- it names a
+  document type and needs the extractor to know which party is "us". The row's
+  own `flow_direction` answers the same question for every document type with no
+  such knowledge.
+  EVIDENCE: `tests/test_invoice_settlement.py` -- a party name matching nothing
+  must not widen the list, the opposite side of the book must not leak in, a
+  settled invoice never appears, ordering puts the small same-counterparty
+  invoice ahead of five larger unrelated ones, and a discriminating party name
+  still narrows. Real Postgres.
+
+- [ ] BE Gap 709 (BE, chat/attachments): BANK_STATEMENT extraction does not populate
+  referenced_documents (or statement_lines) even when the narration text names
+  invoice numbers and UTRs verbatim, so a chat attachment turn abstains from bank
+  reconciliation entirely despite a fully successful OCR read -- S1, release risk
+  High, effort M. (found 2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5
+  turn 10). Symptom: attaching BankStatement_HDFC_4471_Aug2026.pdf and asking "Match
+  this statement to our books" returned "I could not read a list of invoice
+  references off that document, so there is nothing for me to reconcile against your
+  records. If it is a scan, a clearer copy usually helps." Checked in Postgres:
+  extraction_status=EXTRACTED, grand_total=355336.0 (matches the README's expected
+  closing balance exactly), and extracted_json.items[] contains all 9 real narration
+  lines verbatim -- "NEFT DR OM STATIONERY MART INV OM -2000 UTR HDFCN26080512345",
+  "NEFT DR BHARAT HARDWARE & FASTENERS INV BHA-2002 UTR HDFCN26080612346", "NEFT CR
+  KAVERI AUTO COMPONENTS PVT LTD VPI-OUT-2012", the GST/electricity/salary/AMC/charges
+  debits, etc. -- but extracted_json.referenced_documents == [] and statement_lines ==
+  []. Root cause: agents/query_agent.py:7002 _run_attachment_reconcile_branch() reads
+  ONLY extracted.get("referenced_documents"); when that is empty it hard-bails with the
+  abstention message above regardless of what items[] holds, and the BANK_STATEMENT
+  extraction schema evidently writes every line into items[].description as free text
+  rather than into referenced_documents. This means bank statements can never reach the
+  reconcile branch's happy path as currently wired, even on a document this well
+  OCR'd. Proposed fix (not applied -- investigation only): either map BANK_STATEMENT
+  items[] (parsing invoice numbers/UTRs out of description via the same doc-number
+  normalisation used elsewhere) into referenced_documents at extraction time, or teach
+  _run_attachment_reconcile_branch to fall back to items[] when referenced_documents is
+  empty and doc_type == BANK_STATEMENT. Verify by: re-running turn 10 and confirming
+  the answer reports the 3 debit matches (OM-2000, BHA-2002, SHR-2004), the 2 credit
+  matches (VPI-OUT-2012, VPI-OUT-2015), the unmatched debits (~1,825,910), and the
+  355,336.00 closing balance, per README section 5 turn 10.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 4,
+  11_turns_raw_bubbles.json turn 10 (extracted_json.items vs referenced_documents).
+
+  FIXED 2026-09-19 (same change set). **Gate on the precondition, not on a proxy
+  field.** `referenced_documents` is a field one extraction schema happens to
+  fill, not the question "is there anything here to reconcile?".
+  `derive_referenced_documents()` (new, `services/document_comparison.py`) now
+  recovers pointers from the document's own extracted content when that field is
+  empty, and `_run_attachment_reconcile_branch()` uses it before abstaining.
+  **The search deliberately runs backwards**: it does NOT hunt for things that
+  look like invoice numbers -- a pattern guess finds UTRs, cheque numbers and
+  dates and needs a new rule per layout -- it takes the TENANT'S OWN invoice
+  numbers, the finite set of things a match could mean, and asks which appear in
+  the text. Nothing in it knows the document type; a new type needs no change.
+  Matching is on `normalize_doc_number()` (so `INV OM -2000` in narration and
+  `OM -2000` in the ledger are the same number, the exact case being missed);
+  numbers shorter than 5 normalised characters are not searched for, so the
+  reconciliation loses a row rather than gaining a wrong one; the line's own
+  figure travels with the pointer so a real disagreement still surfaces as
+  `amount_mismatch`; and lines that reconcile to nothing are RETURNED, not
+  discarded -- on a statement those are the payroll run, the tax payment and the
+  bank charges, and the branch states their count and total. The abstention is
+  split in two, `attachment_no_references_extracted` ("I could not read it")
+  vs the new `attachment_no_matching_references` ("I read it and none of your
+  invoices are named on it"), because those call for opposite next actions.
+  EVIDENCE: `tests/test_invoice_settlement.py` -- numbers recovered from free
+  text with no `referenced_documents` and no doc type, derived references
+  reconciling end to end to a real invoice row, a 4-character number NOT matched,
+  and empty content deriving nothing. Real Postgres.
+
+- [ ] BE Gap 710 (BE, chat/attachments): DELIVERY_NOTE extraction returns an empty
+  items[] for a challan with a clear 3-line tabulated table, even though the same
+  extraction correctly reads the document's po_number field -- S2, release risk
+  Medium, effort M. (found 2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5
+  turn 6). Symptom: attaching DC_DC-BHF-0455_BHA.pdf and asking "Any short delivery
+  here?" returned "The delivery note DC-BHF-0455 contains 0 stated line items, so
+  there is no delivered quantity to compare against the invoices." Verified against
+  the source PDF (pypdf text dump): it prints an unambiguous table -- "Hex Bolts
+  M10x40, box 100 / 7318 / 25 / 25 / Nos", "SS Washers box 500 / 7318 / 15 / 15 / Nos",
+  "Torque Wrench 1/2in / 8204 / 4 / 4 / Nos" -- matching the README's expected 25/15/4
+  exactly. In Postgres, chat_attachments.extracted_json for this row has items: [] but
+  po_number: "PO-VPI-1040" (correct, matching the README's "cites PO-VPI-1040, not on
+  file" expectation) -- so this is not a wholesale OCR failure of the document, only
+  the line-item table specifically. By contrast, the sibling delivery note
+  DC-NMT-2291 (turn 5, National MRO Traders) extracted its 3-line table correctly
+  (5/12/8 quantities). Root cause not further isolated in this session -- would need
+  the raw Doc Intelligence response for DC-BHF-0455 to say whether the table layout
+  (three narrow columns: HSN / Qty ordered / Qty delivered) confused the line-item
+  parser differently from NAT's table, which has the same shape. Proposed fix: none
+  proposed pending that investigation. Verify by: re-attaching the same PDF and
+  confirming extracted_json.items contains the 3 lines with quantities 25/15/4.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 3,
+  11_turns_raw_bubbles.json turn 6; raw PDF text dump in the session transcript.
+
+  NOT ATTEMPTED 2026-09-19, deliberately, while BE Gaps 707/708/709/711 were
+  fixed in the same session. Root cause needs the raw Doc Intelligence response
+  for DC-BHF-0455, which was not captured and cannot be reconstructed from the
+  stored `extracted_json`. Guessing at a table parser from the outside is how a
+  wrong fix ships for a right-looking reason. Stays open and unchanged.
+
+- [ ] BE Gap 711 (BE, chat/attachments): a chat attachment's candidate_invoice_ids
+  can still be empty at the moment the first question is answered, so an attach-then-
+  ask-in-one-turn produces an ambiguous "read or compare" card with no real comparison
+  and no visible "still matching" state -- S2, release risk Medium, effort M. (found
+  2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5 turns 2, 5). Symptom:
+  attaching PO_PO-VPI-1042_GBP.pdf and asking "Is the Ganesh Bearings invoice within
+  this PO?" returned only "Would you like me to read the document, or compare it to
+  your invoices?" with no comparison; attaching DC_DC-NMT-2291_NAT.pdf and asking
+  "Check delivery against invoice" returned the identical generic card. In both cases
+  chat_attachments.candidate_invoice_ids was [] in the row read immediately after
+  extraction, but non-empty minutes later on a direct re-query (GBP:
+  5288549a-9cb7-4ac6-94b9-b734463029df, 33d6ccd5-57a4-4c16-a4f1-9708a05c205a; NAT:
+  86f1559a-ab03-4c07-b1f3-7453db53aeb9, 22490a93-94a8-4511-90ba-52d495e0cc05) --
+  extraction itself was correct and fast (NAT's line items and match_summary
+  "probable match: NAT-2006" were already right at EXTRACTED time), but whatever
+  populates candidate_invoice_ids runs on a separate, slower path. A user who responds
+  to the ambiguous card immediately (the natural next action) gets the same card again,
+  because the candidates it needs are still not there. Proposed fix (not applied --
+  investigation only): either compute candidate_invoice_ids synchronously as part of
+  extraction (it does not appear to require a model call, since NAT's own
+  match_summary was already correct at EXTRACTED time), or surface a distinct
+  "still matching, try again shortly" state distinguishable from the ambiguous
+  read/compare card. Verify by: re-running turns 2 and 5 and confirming a real
+  comparison (not the ambiguous card) is returned on the first ask, once
+  candidate_invoice_ids populate at the same time as extraction_status=EXTRACTED.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 5,
+  11_turns_raw_bubbles.json turns 2/5; DB query showing candidate_invoice_ids empty
+  then populated for the same rows.
+
+  FIXED 2026-09-19 (same change set). **"Not ready" is not "ambiguous", and it is
+  not "failed" either.** Root cause confirmed and it is a publish-order race, not
+  a slow separate path: `services/attachment_extraction.py::extract_attachment()`
+  committed `extraction_status = "EXTRACTED"` the moment the extractor returned
+  and ran indexing and `match_attachment()` AFTERWARDS -- so anything polling to
+  `EXTRACTED` (browser, probe harness, chat turn) saw a ready document with an
+  empty `candidate_invoice_ids`. A new non-terminal `PROCESSING` value now holds
+  the row for that window: extracted fields persisted, nobody told it is ready.
+  `EXTRACTED` is written only after matching, so the candidates a question needs
+  exist from the same instant the status says ready; `EXTRACTED` and
+  `EXTRACT_FAILED` remain the only terminal values (`models.py` comment updated).
+  `match_attachment()`'s own guard was keyed to `EXTRACTED` and would have
+  skipped the very step whose lateness caused the defect -- the same proxy
+  mistake one layer down -- so it now asks the real question (did extraction
+  FAIL, and is there anything to match on); Gap 444's "an unreadable document is
+  never matched" is unchanged and stated directly.
+  The chat turn previously answered "I wasn't able to read that document well
+  enough to compare it" for BOTH still-working and failed, which are opposite
+  facts. A non-terminal row now returns "I'm still reading that document" plus an
+  `attachment_pending` answer key for the FE to render as progress, never as a
+  question back to the user -- there is nothing for them to decide.
+  `_ATTACHMENT_TERMINAL_STATUSES` is written as "which states are terminal"
+  rather than "which are still working", so a stage added later is treated as
+  not-finished by default instead of falling through to the failure message.
+  Because that guard runs before the intent classifier, B2's read-vs-compare card
+  is now unreachable on a document that is not ready.
+  **Note on the original diagnosis:** the card returned for probe turns 2 and 5
+  was produced by `_classify_attachment_intent()` genuinely returning `clarify`
+  for those two sentences (verified directly), not by the empty candidate list --
+  but the empty candidate list is what left the user with no path forward when
+  they answered it, and the publish-order race is the mechanism behind both. The
+  fix closes the race; the classifier's own behaviour on those two sentences is
+  untouched and is not filed as a defect here.
+  EVIDENCE: `tests/test_invoice_settlement.py` -- the terminal-status predicate
+  (including an unrecognised future stage counting as not-finished), and an
+  end-to-end `extract_attachment()` run whose assertion is taken INSIDE the
+  matching step: at that moment the row must not yet claim to be ready, and on
+  return it must be ready WITH candidates. A genuinely failed extraction is
+  asserted to remain `EXTRACT_FAILED`. Real Postgres.

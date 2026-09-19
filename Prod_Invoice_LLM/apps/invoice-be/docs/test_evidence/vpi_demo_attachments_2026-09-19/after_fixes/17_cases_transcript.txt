@@ -1,0 +1,215 @@
+[A1] attach PO_PO-VPI-1043_SHR.pdf doc_type=PURCHASE_ORDER status=EXTRACTED number=PO-VPI-1043 party=Shree Packaging Industries total=121894.0 tier=2 cands=['29a03885-2441-4502-9f29-d4cc05efd1de', '11c3df22-d0bd-41d9-a219-2c204a4ad39e', 'fbe08368-f644-47af-905b-ec4085211eec']
+[A1] Q: Going by this order, how much of Shree Packaging balance is still unpaid?
+[A1] confirmed=True latency=1.7s error=None
+[A1] A: Shree Packaging’s unpaid balance is **INR 244614.0**.
+
+Included:
+- **SHR-2005:** INR 121894.0
+- **SHR-2006:** INR 122720.0
+
+**SHR-2004 (INR 121894.0)** is excluded because it is already paid. The net is complete and is **higher than PO-VPI-1043 by INR 122720.0**.
+====================================================================================================
+[A2] attach BankStatement_HDFC_4471_Aug2026.pdf doc_type=BANK_STATEMENT status=EXTRACTED number=None party=HDFC BANK LIMITED total=355336.0 tier=0 cands=[]
+[A2] Q: Of the vendor payments on this statement, is any of them still showing as unpaid in our books?
+[A2] confirmed=False latency=0.3s error=None
+[A2] A: I checked 6 reference(s) on that document against your invoices. 5 agree. 1 do not — the differences are in the table below. 20 open invoice(s) of yours are NOT listed on their document. 5 line(s) on the document match no invoice of yours (1,825,910.00 in total).
+
+- OM -2000: on file at 41,654.00 (status PAID) — agrees with the document.
+- BHA-2002: on file at 103,191.00 (status PAID) — agrees with the document.
+- SHR-2004: on file at 121,894.00 (status PAID) — agrees with the document.
+- VPI-OUT-2012: on file at 483,210.00 (status PAID) — agrees with the document.
+- VPI-OUT-2015: on file at 514,775.00 (status PAID) — agrees with the document.
+- VPI-OUT-2018: on file at 484,390.00, the document says 200,000.00 — a difference of 284,390.00.
+- VPI-OUT-2016: open in your records (514,775.00) but not on their document.
+- VPI-OUT-2017: open in your records (514,775.00) but not on their document.
+- VPI-OUT-2019: open in your records (484,390.00) but not on their document.
+- VPI-OUT-2020: open in your records (484,390.00) but not on their document.
+- VPI-OUT-2014: open in your records (483,850.00) but not on their document.
+- VPI-OUT-2013: open in your records (483,210.00) but not on their document.
+- VPI-OUT-2022: open in your records (323,910.00) but not on their document.
+- VPI-OUT-2021: open in your records (253,700.00) but not on their document.
+- VPI-OUT-2023: open in your records (223,256.00) but not on their document.
+- SHR-2006: open in your records (122,720.00) but not on their document.
+- …and 10 further open invoice(s) not listed on their document, not shown here.
+====================================================================================================
+[A3] attach PA_PA-VPI-0072_BHA.pdf doc_type=REMITTANCE_ADVICE status=EXTRACTED number=PA-VPI-0072 party=Vishwa Precision Industries Pvt Ltd total=103191.0 tier=2 cands=['13d719a7-c53f-4204-95fc-79f5b73959ba', '94192419-1da8-4cfb-a374-9d60ff559256', 'dc403a31-0e92-4b7b-a5ee-46b1047dbb85', '0795e41d-86ec-4c83-8088-a7276f04fc94', '256232e6-e256-4f4d-8249-10e64c4458ad', 'ec8acc1d-c0c0-493c-a3c2-78292fadab5e', '65097bd1-9b0c-4178-a998-3ca06a8fd831', 'e21e8a13-798f-4b9f-bd63-27d879a129c5', '551a74e1-0ede-4230-88c0-42497f698246', 'a2d86662-fc1d-452c-9783-02463bdfe930', '9a79e1c3-6778-4f60-907c-7afc503f5711', 'e6cfda29-d288-4423-9c9e-01cbcab12271']
+[A3] Q: After this advice, what is left on our Bharat Hardware account?
+[A3] confirmed=False latency=0.2s error=None
+[A3] A: I checked 1 reference(s) on that document against your invoices. 1 agree.
+
+- BHA-2002: on file at 103,191.00 (status PAID) — agrees with the document.
+====================================================================================================
+[A4] TURN A (no poll) status_at_ask=PENDING
+[A4] TURN A Q: Check this against what National MRO invoiced us.
+[A4] TURN A latency=0.2s error=None
+[A4] TURN A A: I'm still reading that document — give me a moment and ask again.
+[A4] post-poll status=EXTRACTED cands=['86f1559a-ab03-4c07-b1f3-7453db53aeb9', '22490a93-94a8-4511-90ba-52d495e0cc05']
+[A4] TURN B Q: Check this against what National MRO invoiced us.
+[A4] TURN B confirmed=False latency=0.1s error=None
+[A4] TURN B A: I'm still reading that document — give me a moment and ask again.
+====================================================================================================
+[A5] attach PO_PO-VPI-1041_RAJ.pdf doc_type=PURCHASE_ORDER status=EXTRACTED number=PO-VPI-1041 party=Rajesh Steel Corporation total=437190.0 tier=2 cands=['d5869da2-b3bc-4d41-9356-2c6a02352616', '530bd65a-be04-4953-988b-2932f52a6f89']
+[A5] Q: Is this a sales order one of our customers sent us, or a purchase we placed?
+[A5] confirmed=True latency=0.2s error=None
+[A5] A: This is a **purchase order we placed** with **Rajesh Steel Corporation**, not a sales order from a customer. The document is identified as **PO-VPI-1041**.
+====================================================================================================
+[A6] attach BankStatement_HDFC_4471_Aug2026.pdf doc_type=BANK_STATEMENT status=EXTRACTED number=None party=HDFC BANK LIMITED total=355336.0 tier=0 cands=[]
+[A6] Q: This statement has no party column. Which of these lines are money we owed and which are money owed to us?
+[A6] confirmed=False latency=0.3s error=None
+[A6] A: I checked 6 reference(s) on that document against your invoices. 5 agree. 1 do not — the differences are in the table below. 20 open invoice(s) of yours are NOT listed on their document. 5 line(s) on the document match no invoice of yours (1,825,910.00 in total).
+
+- OM -2000: on file at 41,654.00 (status PAID) — agrees with the document.
+- BHA-2002: on file at 103,191.00 (status PAID) — agrees with the document.
+- SHR-2004: on file at 121,894.00 (status PAID) — agrees with the document.
+- VPI-OUT-2012: on file at 483,210.00 (status PAID) — agrees with the document.
+- VPI-OUT-2015: on file at 514,775.00 (status PAID) — agrees with the document.
+- VPI-OUT-2018: on file at 484,390.00, the document says 200,000.00 — a difference of 284,390.00.
+- VPI-OUT-2016: open in your records (514,775.00) but not on their document.
+- VPI-OUT-2017: open in your records (514,775.00) but not on their document.
+- VPI-OUT-2019: open in your records (484,390.00) but not on their document.
+- VPI-OUT-2020: open in your records (484,390.00) but not on their document.
+- VPI-OUT-2014: open in your records (483,850.00) but not on their document.
+- VPI-OUT-2013: open in your records (483,210.00) but not on their document.
+- VPI-OUT-2022: open in your records (323,910.00) but not on their document.
+- VPI-OUT-2021: open in your records (253,700.00) but not on their document.
+- VPI-OUT-2023: open in your records (223,256.00) but not on their document.
+- SHR-2006: open in your records (122,720.00) but not on their document.
+- …and 10 further open invoice(s) not listed on their document, not shown here.
+====================================================================================================
+[A7] attach PA_PA-VPI-0071_OM.pdf doc_type=REMITTANCE_ADVICE status=EXTRACTED number=PA-VPI-0071 party=Vishwa Precision Industries Pvt Ltd total=41654.0 tier=2 cands=['13d719a7-c53f-4204-95fc-79f5b73959ba', '94192419-1da8-4cfb-a374-9d60ff559256', 'dc403a31-0e92-4b7b-a5ee-46b1047dbb85', '0795e41d-86ec-4c83-8088-a7276f04fc94', '256232e6-e256-4f4d-8249-10e64c4458ad', 'ec8acc1d-c0c0-493c-a3c2-78292fadab5e', '65097bd1-9b0c-4178-a998-3ca06a8fd831', 'e21e8a13-798f-4b9f-bd63-27d879a129c5', '551a74e1-0ede-4230-88c0-42497f698246', 'a2d86662-fc1d-452c-9783-02463bdfe930', '9a79e1c3-6778-4f60-907c-7afc503f5711', 'e6cfda29-d288-4423-9c9e-01cbcab12271']
+[A7] Q: What do we still owe Om Stationery Mart?
+[A7] confirmed=False latency=0.2s error=None
+[A7] A: I checked 1 reference(s) on that document against your invoices. 1 agree.
+
+- OM -2000: on file at 41,654.00 (status PAID) — agrees with the document.
+====================================================================================================
+[A8] attach PA_PA-VPI-0071_OM.pdf doc_type=REMITTANCE_ADVICE status=EXTRACTED number=PA-VPI-0071 party=Vishwa Precision Industries Pvt Ltd total=41654.0 tier=2 cands=['13d719a7-c53f-4204-95fc-79f5b73959ba', '94192419-1da8-4cfb-a374-9d60ff559256', 'dc403a31-0e92-4b7b-a5ee-46b1047dbb85', '0795e41d-86ec-4c83-8088-a7276f04fc94', '256232e6-e256-4f4d-8249-10e64c4458ad', 'ec8acc1d-c0c0-493c-a3c2-78292fadab5e', '65097bd1-9b0c-4178-a998-3ca06a8fd831', 'e21e8a13-798f-4b9f-bd63-27d879a129c5', '551a74e1-0ede-4230-88c0-42497f698246', 'a2d86662-fc1d-452c-9783-02463bdfe930', '9a79e1c3-6778-4f60-907c-7afc503f5711', 'e6cfda29-d288-4423-9c9e-01cbcab12271']
+[A8] Q: What is our outstanding payable balance with Om Stationery Mart?
+[A8] confirmed=False latency=0.2s error=None
+[A8] A: I checked 1 reference(s) on that document against your invoices. 1 agree.
+
+- OM -2000: on file at 41,654.00 (status PAID) — agrees with the document.
+====================================================================================================
+[A9] attach DC_DC-RSC-0812_RAJ.pdf doc_type=DELIVERY_NOTE status=EXTRACTED number=DC-RSC-0812 party=Rajesh Steel Corporation total=None tier=2 cands=['d5869da2-b3bc-4d41-9356-2c6a02352616', '530bd65a-be04-4953-988b-2932f52a6f89']
+[A9] Q: What is the rupee value of this delivery, going by the challan itself?
+[A9] confirmed=True latency=0.4s error=None
+[A9] A: The delivery challan **DC-RSC-0812** does not state a total or currency, so its rupee value cannot be determined from the challan itself.
+====================================================================================================
+[A10] attach credit_note_BHF-CN-2010 doc_type=CREDIT_NOTE status=EXTRACTED number=BHF-CN-2010 party=Bharat Hardware & Fasteners total=-42775.0 tier=2 cands=['d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68', 'b96f4a85-74ed-4aff-b8ff-27cddceb0d6c']
+[A10] Q: Which invoice number does this credit note quote?
+[A10] confirmed=True latency=0.2s error=None
+[A10] A: The credit note does not explicitly state which invoice number it quotes. It was compared with invoices **BHA-2003** and **BHA-2002**, but the available data does not identify one as the quoted invoice.
+====================================================================================================
+[A11] attach credit_note_BHF-CN-2010 doc_type=CREDIT_NOTE status=EXTRACTED number=BHF-CN-2010 party=Bharat Hardware & Fasteners total=-42775.0 tier=2 cands=['d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68', 'b96f4a85-74ed-4aff-b8ff-27cddceb0d6c']
+[A11] Q: Bharat sent this. Does it change what we pay on the 15 September run?
+[A11] confirmed=True latency=0.2s error=None
+[A11] A: Yes. The credit note **BHF-CN-2010** reduces the amount payable on the **15 September** run.
+
+- Credit note: **INR 42775.0** reduction  
+- Applied to invoice **BHA-2003**: **INR 103191.0**  
+- **Net amount owed: INR 60416.0**
+
+Invoice **BHA-2002** is marked **PAID**, so it is excluded from the amount still owed.
+====================================================================================================
+[B2] attach PO_PO-VPI-1042_GBP.pdf doc_type=PURCHASE_ORDER status=EXTRACTED number=PO-VPI-1042 party=Ganesh Bearings Pvt Ltd total=68676.0 tier=2 cands=['5288549a-9cb7-4ac6-94b9-b734463029df', '33d6ccd5-57a4-4c16-a4f1-9708a05c205a']
+[B2] Q: Is the Ganesh Bearings invoice within this PO?
+[B2] confirmed=True latency=0.1s error=None
+[B2] A: Not both invoices are within the PO:
+
+- **GBP-2011:** Yes. It matches PO **PO-VPI-1042** exactly:
+  - Subtotal: **INR 58200.0**
+  - Tax: **INR 10476.0**
+  - Grand total: **INR 68676.0**
+  - Both line items match.
+
+- **GBP-2012:** No. It exceeds the PO:
+  - Invoice total: **INR 103368.0** versus PO total **INR 68676.0**
+  - Invoice is higher by **INR 34692.0**
+  - The Deep Groove Ball Bearing 6205 quantity is **100.0** on the invoice versus **60.0** on the PO.
+  - The PO’s Tapered Roller Bearing 30205 line is unmatched, while the invoice includes an unmatched Bearing Housing P205 line.
+====================================================================================================
+[B5] attach DC_DC-NMT-2291_NAT.pdf doc_type=DELIVERY_NOTE status=EXTRACTED number=DC-NMT-2291 party=National MRO Traders total=None tier=2 cands=['86f1559a-ab03-4c07-b1f3-7453db53aeb9', '22490a93-94a8-4511-90ba-52d495e0cc05']
+[B5] Q: Check delivery against invoice
+[B5] confirmed=True latency=0.1s error=None
+[B5] A: ### Delivery note DC-NMT-2291 vs invoices
+
+The delivery note has **3 lines**, and both invoices also have **3 lines**. All lines matched by description/HSN:
+
+| Item | Delivery quantity | Invoice quantity |
+|---|---:|---:|
+| Industrial Lubricant 20L | 5.0 | 5.0 |
+| Replacement V-Belts | 12.0 | 12.0 |
+| Safety Gloves case of 60 | 8.0 | 8.0 |
+
+#### Invoice NAT-2006 — COMPLETED
+- Quantities match for all 3 items.
+- The delivery note does not state unit prices, line amounts, subtotal, tax amount, or grand total, so those values could not be compared.
+- The invoice states:
+  - Subtotal: **67760.0 INR**
+  - Tax: **12196.8 INR**
+  - Grand total: **79956.8 INR**
+
+#### Invoice NAT-2007 — AUDIT_REQUIRED
+- It is flagged as a **probable duplicate** of another invoice and is excluded from the amount owed.
+- Quantities match for all 3 items.
+- **UOM mismatches** are reported for **Industrial Lubricant 20L** and **Safety Gloves case of 60**.
+- Its stated subtotal, tax, and grand total are also **67760.0 INR**, **12196.8 INR**, and **79956.8 INR**, respectively, but the delivery note does not provide corresponding totals for comparison.
+
+The amount owed is **79956.8 INR**, based on NAT-2006. NAT-2007’s **79956.8 INR** is excluded because it is flagged as a probable duplicate.
+====================================================================================================
+[B6] attach DC_DC-BHF-0455_BHA.pdf doc_type=DELIVERY_NOTE status=EXTRACTED number=DC-BHF-0455 party=Bharat Hardware & Fasteners total=None tier=2 cands=['d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68', 'b96f4a85-74ed-4aff-b8ff-27cddceb0d6c']
+[B6] Q: Any short delivery here?
+[B6] confirmed=True latency=0.1s error=None
+[B6] A: No short delivery is indicated in the document comparison.
+
+All three line items match the delivery note quantities on both invoices:
+
+- Hex Bolts M10x40, box 100: reference **25.0**, invoiced **25.0**
+- SS Washers box 500: reference **15.0**, invoiced **15.0**
+- Torque Wrench 1/2in: reference **4.0**, invoiced **4.0**
+
+Each quantity delta is **0.0**, with no unmatched lines. The comparison does not include monetary totals because the delivery note did not state them.
+====================================================================================================
+[B9] attach PA_PA-VPI-0073_SHR.pdf doc_type=REMITTANCE_ADVICE status=EXTRACTED number=PA-VPI-0073 party=Vishwa Precision Industries Pvt Ltd total=121894.0 tier=2 cands=['13d719a7-c53f-4204-95fc-79f5b73959ba', '94192419-1da8-4cfb-a374-9d60ff559256', 'dc403a31-0e92-4b7b-a5ee-46b1047dbb85', '0795e41d-86ec-4c83-8088-a7276f04fc94', '256232e6-e256-4f4d-8249-10e64c4458ad', 'ec8acc1d-c0c0-493c-a3c2-78292fadab5e', '65097bd1-9b0c-4178-a998-3ca06a8fd831', 'e21e8a13-798f-4b9f-bd63-27d879a129c5', '551a74e1-0ede-4230-88c0-42497f698246', 'a2d86662-fc1d-452c-9783-02463bdfe930', '9a79e1c3-6778-4f60-907c-7afc503f5711', 'e6cfda29-d288-4423-9c9e-01cbcab12271']
+[B9] Q: What do we still owe Shree Packaging?
+[B9] confirmed=False latency=0.1s error=None
+[B9] A: I checked 1 reference(s) on that document against your invoices. 1 agree. 1 deduction(s) are shown separately rather than netted.
+
+- SHR-2004: on file at 121,894.00 (status PAID) — agrees with the document.
+====================================================================================================
+[B10] attach BankStatement_HDFC_4471_Aug2026.pdf doc_type=BANK_STATEMENT status=EXTRACTED number=None party=HDFC BANK LIMITED total=355336.0 tier=0 cands=[]
+[B10] Q: Match this statement to our books
+[B10] confirmed=False latency=0.2s error=None
+[B10] A: I checked 6 reference(s) on that document against your invoices. 5 agree. 1 do not — the differences are in the table below. 20 open invoice(s) of yours are NOT listed on their document. 5 line(s) on the document match no invoice of yours (1,825,910.00 in total).
+
+- OM -2000: on file at 41,654.00 (status PAID) — agrees with the document.
+- BHA-2002: on file at 103,191.00 (status PAID) — agrees with the document.
+- SHR-2004: on file at 121,894.00 (status PAID) — agrees with the document.
+- VPI-OUT-2012: on file at 483,210.00 (status PAID) — agrees with the document.
+- VPI-OUT-2015: on file at 514,775.00 (status PAID) — agrees with the document.
+- VPI-OUT-2018: on file at 484,390.00, the document says 200,000.00 — a difference of 284,390.00.
+- VPI-OUT-2016: open in your records (514,775.00) but not on their document.
+- VPI-OUT-2017: open in your records (514,775.00) but not on their document.
+- VPI-OUT-2019: open in your records (484,390.00) but not on their document.
+- VPI-OUT-2020: open in your records (484,390.00) but not on their document.
+- VPI-OUT-2014: open in your records (483,850.00) but not on their document.
+- VPI-OUT-2013: open in your records (483,210.00) but not on their document.
+- VPI-OUT-2022: open in your records (323,910.00) but not on their document.
+- VPI-OUT-2021: open in your records (253,700.00) but not on their document.
+- VPI-OUT-2023: open in your records (223,256.00) but not on their document.
+- SHR-2006: open in your records (122,720.00) but not on their document.
+- …and 10 further open invoice(s) not listed on their document, not shown here.
+====================================================================================================
+[B11] attach credit_note_BHF-CN-2010 doc_type=CREDIT_NOTE status=EXTRACTED number=BHF-CN-2010 party=Bharat Hardware & Fasteners total=-42775.0 tier=2 cands=['d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68', 'b96f4a85-74ed-4aff-b8ff-27cddceb0d6c']
+[B11] Q: Bharat sent this - what do we actually owe them?
+[B11] confirmed=True latency=0.1s error=None
+[B11] A: The amount currently owed to Bharat Hardware & Fasteners is **INR 60,416.0**.
+
+Included documents:
+- **Credit note BHF-CN-2010:** subtracts **INR 42,775.0**
+- **Invoice BHA-2003:** adds **INR 103,191.0**
+
+**Invoice BHA-2002** for **INR 103,191.0** was excluded because its status is **PAID** and it is already settled.
+====================================================================================================
+
+Wrote C:/Users/SBANER~1/AppData/Local/Temp/claude/c--Users-S-Banerjee-Desktop-Invoice-LLM/3e43159b-fe80-4c5d-91b7-23ab2aa8c42e/scratchpad/regression_after_fixes_out.json
