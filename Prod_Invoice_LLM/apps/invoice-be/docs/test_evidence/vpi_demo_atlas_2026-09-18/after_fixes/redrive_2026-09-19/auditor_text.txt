@@ -1,0 +1,123 @@
+Invoice AI
+Dashboard
+Audit Queue
+History
+Chat
+Help
+Collapse
+Your work
+🧭
+ATLAS
+3
+Your work
+Refresh
+audit
+DECISION
+·
+INVOICE_AWAITING_DECISION
+
+Rajesh Steel Corporation #RAJ-2009
+
+Rajesh Steel Corporation is waiting on a decision for ₹4,37,190.00, due 15 September.
+
+4,37,190.00INR
+
+Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.
+
+#RAJ-2009, 2008, 437,190.00, 2009
+
+Approve
+Dismiss
+Attach #RAJ-2009 here and show me how you read it — is the total right?
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+DECISION
+·
+CLAIM_IN_DOUBT_RATE
+
+Rajesh Steel Corporation #RAJ-2009: the quotation or contract would settle this
+
+This is invoice 2 from Rajesh Steel Corporation — there is no history to compare ₹4,37,190.00 against yet. Attaching the quotation or contract settles it in one step.
+
+4,37,190.00INR
+
+I cannot tell whether this is agreed or an error without the quotation or contract.
+
+#RAJ-2009, 2
+
+Attach the quotation or contract
+Dismiss
+Attach #RAJ-2009 here — what did you compare it against, and which invoices are in that range?
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+DECISION
+·
+INVOICE_AWAITING_DECISION
+
+National MRO Traders #NAT-2007
+
+National MRO Traders is waiting on a decision for ₹79,956.80, due 15 September.
+
+79,956.80INR
+
+Possible duplicate: National MRO Traders invoice NAT-2006 has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.
+
+#NAT-2007, 2006, 79,956.80, 2007
+
+Approve
+Dismiss
+Attach #NAT-2007 here and show me how you read it — is the total right?
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+DECISION
+·
+CLAIM_IN_DOUBT_RATE
+
+National MRO Traders #NAT-2007: the quotation or contract would settle this
+
+This is invoice 2 from National MRO Traders — there is no history to compare ₹79,956.80 against yet. Attaching the quotation or contract settles it in one step.
+
+79,956.80INR
+
+I cannot tell whether this is agreed or an error without the quotation or contract.
+
+#NAT-2007, 2
+
+Attach the quotation or contract
+Dismiss
+Attach #NAT-2007 here — what did you compare it against, and which invoices are in that range?
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+DECISION
+·
+CASH_POSITION_AND_RUNWAY
+
+Cash position, next 30 days
+
+Over the next 30 days you are committed to ₹16,24,588.60 across 11 invoice(s), and expecting ₹42,50,646.00 across 10. This assumes every invoice is settled on its due date, and the runway assumes the last 90 days of payments continue.
+
+16,24,588.60INR
+42,50,646.00INR
+
+11, 10, 30, 0
+
+Show what is due
+Dismiss
+Which invoices make up this number, and what did you assume about when they are paid?
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+Compare a vendor statement
+Choose a statement…
+Attach and compare
+What I remember
+What I did
