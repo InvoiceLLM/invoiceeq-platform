@@ -67,6 +67,9 @@
   --border-default: #222D3D;        /* Panel separations and card borders */
   --text-primary: #E2E8F0;          /* High contrast light grey headings */
   --text-muted: #94A3B8;            /* Dull slate grey labels and captions */
+  --scrollbar-thumb: #3E4C63;       /* FE Gap 704: visible on #0B0F19, quieter than text */
+  --scrollbar-thumb-hover: #5A6B87; /* Clearly grabbable under the pointer */
+  --scrollbar-track: rgba(255, 255, 255, 0.04); /* Marks the region as scrollable */
   
   /* Brand/Status Accents */
   --accent-green: #10B981;          /* Save, Success, Complete indicators */
@@ -83,6 +86,9 @@
   --border-default: #1D3557;        /* InfiNevo Slate borders and dividers */
   --text-primary: #F0F6FC;          /* High contrast ice-white headings */
   --text-muted: #8BA3C7;            /* Slate blue labels and captions */
+  --scrollbar-thumb: #35608F;       /* FE Gap 704: InfiNevo slate, visible on #0A1324 */
+  --scrollbar-thumb-hover: #4C7FB5;
+  --scrollbar-track: rgba(255, 255, 255, 0.05);
   
   /* Brand/Status Accents */
   --accent-green: #10CF9B;          /* InfiNevo Mint - Verified, Save, Success */
@@ -241,10 +247,47 @@ td, .table-cell {
    to the OS's default scrollbar chrome, which renders as a stark white box
    with native arrow buttons against this app's dark panels. Applied
    app-wide via `*` rather than a scoped class so no individual scroll
-   container needs to opt in. */
+   container needs to opt in.
+
+   FE Gap 704: the thumb was `--border-default` (#222D3D in the default dark
+   theme) on a transparent track, against a #0B0F19 canvas — about 6% contrast,
+   which reads as no scrollbar at all. Nothing was broken: the ATLAS work screen
+   measured 2307px of content in a 605px pane with `overflow-y: auto`, and
+   scrolled correctly. It just gave the viewer no sign that it could. The app
+   shell scrolls `<main>` rather than the window (FE Gap 270), so the browser's
+   own window scrollbar never appears to compensate — this `*` rule is the only
+   scroll affordance the whole app has, which is why it has to be visible.
+
+   The thumb is now its own token rather than borrowing a border colour: a
+   border and a scroll affordance want different contrast, and reusing one for
+   the other is how it ended up invisible. The track stays subtly tinted so the
+   scrollable region is legible before the pointer arrives. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-default) transparent;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 5px;
+  /* Inset the thumb so it reads as a pill inside the gutter rather than a
+     slab filling it. `background-clip: padding-box` keeps the border
+     transparent against whatever the track is. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 *::-webkit-scrollbar {
@@ -288,6 +331,12 @@ td, .table-cell {
   --border-default: #D6E4F0;
   --text-primary: #0F172A;
   --text-muted: #64748B;
+  /* FE Gap 704: the light theme needs the thumb DARKER than the canvas, not
+     lighter — the same token flipped, which is why it is a token and not a
+     shared border colour. */
+  --scrollbar-thumb: #94AEC9;
+  --scrollbar-thumb-hover: #6B8CAE;
+  --scrollbar-track: rgba(15, 23, 42, 0.05);
   --accent-green: #10CF9B;
   --accent-red: #EF4444;
   --accent-blue: #0F6FC6;
