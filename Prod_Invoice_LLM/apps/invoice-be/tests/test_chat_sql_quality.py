@@ -1082,12 +1082,11 @@ def test_full_record_block_gives_the_answer_step_the_real_cgst_sgst_breakdown(db
     assert summary_prompt.count('"amount": 9000.0') == 2
     # And the other columns the schema block never exposed either.
     assert '"subtotal": 100000.0' in summary_prompt
-    # BE Gap 588 (CH-21) reverses this line. The GSTIN is a tax identifier, and the
-    # founder ruling of 2026-09-16 is that nobody sees payment or tax credentials in
-    # chat -- so `tax_ids` never reaches the prompt at all now. The tax BREAKDOWN
-    # this test exists for (`taxes`, asserted above) is unaffected: that is the
-    # CGST/SGST split, not an identifier.
-    assert "29ABCDE1234F1Z5" not in summary_prompt
+    # BE Gap 588 was CANCELLED on 2026-09-18, superseding the 2026-09-16 ruling this
+    # line used to assert: bank and tax identifiers ARE shown in chat, because the
+    # same GSTIN is printed on the invoice PDF this user can already open. So the
+    # tenant's own `tax_ids` reaches the prompt like any other stored field.
+    assert "29ABCDE1234F1Z5" in summary_prompt
     # Never a licence to invent: the block says so in as many words, because the
     # original live failure (Gap 263) was a FABRICATED CGST/SGST split.
     assert "never derive, split or estimate one" in summary_prompt
@@ -1139,6 +1138,11 @@ def test_full_record_block_cannot_fetch_another_tenants_invoice(db_session):
         invoice_number="OTHER-1",
         grand_total=999999.0,
         taxes=[{"tax_type": "CGST", "rate_percent": 9.0, "amount": 123456.0}],
+        # Given its own GSTIN so this test still has a tax identifier to assert the
+        # ABSENCE of. BE Gap 588's cancellation (2026-09-18) means the caller's own
+        # `tax_ids` now reaches the block, so asserting on a shared value would pass
+        # whether isolation held or not -- see the two assertions below.
+        tax_ids=[{"type": "GSTIN", "value": "07ZZZZZ9999Z9Z9"}],
     )
 
     # Directly: the other tenant's id yields nothing at all, not a partial record.
@@ -1149,10 +1153,13 @@ def test_full_record_block_cannot_fetch_another_tenants_invoice(db_session):
     block = query_agent._full_record_block_for(
         [str(mine.id), str(theirs.id)], str(MOCK_TENANT_ID), db_session
     )
-    # BE Gap 588: `tax_ids` is excluded from the block entirely (see the CGST test
-    # above). The tenant-isolation property this test is actually about is asserted
-    # by the two lines below, which are unchanged.
-    assert "29ABCDE1234F1Z5" not in block
+    # BE Gap 588 was cancelled 2026-09-18, so `tax_ids` IS in the block now (see the
+    # CGST test above). That makes this the sharper isolation check it could not be
+    # while the field was masked: the caller's OWN GSTIN is present, the other
+    # tenant's is not. Flipping the first line to `in` without adding the second
+    # would have left a test that passes even if the other tenant's row leaked.
+    assert "29ABCDE1234F1Z5" in block
+    assert "07ZZZZZ9999Z9Z9" not in block
     assert "Someone Else Ltd" not in block
     assert "123456.0" not in block
 
