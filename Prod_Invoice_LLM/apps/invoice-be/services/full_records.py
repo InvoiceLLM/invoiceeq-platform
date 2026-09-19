@@ -77,14 +77,17 @@ MAX_RECORD_BLOCK_CHARS = 60_000
 # Identity UUIDs never reach a prompt (Gap 294): a tenant id in the answering
 # context is a leak waiting for a model to recite it.
 #
-# BE Gap 588 (CH-21, founder ruling 2026-09-16: "mask on every door -- nobody sees
-# payment credentials in chat") adds `payment_instructions` and `tax_ids`. This is
-# the real control: a model cannot recite a field it was never shown, on any door,
-# for any caller, with no role or clearance logic to get wrong. The regex backstop
-# in `agents/query_agent.py::redact_query_internals` covers the paths this misses
-# (a bank account quoted inside `notes`, or inside a document chunk). AP staff read
-# bank details on the invoice page, which is unchanged.
-PROMPT_EXCLUDED_RECORD_FIELDS = ("id", "tenant_id", "payment_instructions", "tax_ids")
+# BE Gap 588 (CH-21) used to add `payment_instructions` and `tax_ids` here, on the
+# founder ruling of 2026-09-16 ("mask on every door -- nobody sees payment
+# credentials in chat"). **That gap was CANCELLED on 2026-09-18** by a superseding
+# founder ruling: the product is used by a finance department, and every identifier
+# it masked is printed on the invoice PDF the same user can already open -- so the
+# mask withheld nothing from anyone while breaking ordinary questions. It cost the
+# 2026-09-18 eval the `payment_terms_document` case, where the model was asked for
+# net-30 terms and answered that the field was withheld. Both fields are now shown.
+# `agents/query_agent.py::_redact_credentials` was neutered in the same pass; the
+# pre-cancellation body is kept there, unreferenced, if the ruling ever reverses.
+PROMPT_EXCLUDED_RECORD_FIELDS = ("id", "tenant_id")
 
 
 @dataclass(frozen=True)
@@ -268,9 +271,13 @@ _HEADER = (
     "rate_percent and amount -- this is where a CGST/SGST/VAT breakdown lives), "
     "`subtotal`, `discounts`, `deductions`, `notes`, `sa_alerts`, `references`, "
     "`compliance_metadata`, and the full `items` line list.\n"
-    "`payment_instructions` and `tax_ids` are deliberately NOT included (BE Gap 588): "
-    "bank and tax identifiers are never shown in chat. If asked for them, say they are "
-    "on the invoice page and not available here -- do not guess or reconstruct them.\n"
+    "`payment_instructions` (payment terms, methods and bank details) and `tax_ids` "
+    "(GSTIN / VAT / EIN / PAN) ARE included. BE Gap 588 was CANCELLED by the founder "
+    "ruling of 2026-09-18, which supersedes the 2026-09-16 ruling this block used to "
+    "carry: this product is used by a finance department and the same identifiers are "
+    "printed on the invoice PDF the user can already open, so withholding them in chat "
+    "protects nothing and breaks ordinary questions about payment terms and tax "
+    "registration numbers. Answer from them like any other stored field.\n"
     "Use it to answer detail the results table cannot, and quote figures from it "
     "EXACTLY as stored -- never derive, split or estimate one (a tax total halved into "
     "two invented components is the specific failure this block exists to stop). A "

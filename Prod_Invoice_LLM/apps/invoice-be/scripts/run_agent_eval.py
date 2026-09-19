@@ -1346,6 +1346,50 @@ def _region_invoice_chunk_map(region: dict, seeded_ids: dict) -> dict:
     return mapping
 
 
+BASE_CHUNK_INVOICE_NUMBERS = {
+    "chunk-brl-1": "BRL-7702",
+    "chunk-tsd-1": "TSD-620458",
+}
+
+
+def _bound_chunks_for_tenant(tenant_id: str, seeded_by_tenant: dict) -> list[dict]:
+    """`chunks_for_tenant()`, with every chunk addressed to its seeded invoice id.
+
+    The fixtures carry `metadata.invoice_id = None`, because they were written
+    before `_visible_invoice_chunks()` existed. That filter (BE Gap 580, founder
+    ruling 2026-09-16 "exclude deleted everywhere") drops any chunk whose invoice
+    id is absent or unresolvable -- fail closed, because the failure mode it
+    removes is chat answering from a deleted invoice. An unbound fixture chunk is
+    therefore retrieved, recorded by `_EvidenceRecorder` as evidence, and then
+    correctly discarded before it reaches `context_str`, so the model is handed
+    nothing and truthfully answers that it has no document context -- while the
+    graded evidence shows the answer sitting in the context. Seven RAG cases
+    failed that way on the 2026-09-18 run and none of them was an app defect.
+
+    Bound per tenant, never from one flat map: `TSD-620458` is a real invoice
+    number in both the base and US tenants with different totals, which is the
+    same reason `_region_invoice_chunk_map()` is built per region.
+    """
+    from uuid import UUID as _UUID
+
+    raw = chunks_for_tenant(tenant_id)
+    seeded = seeded_by_tenant.get(str(tenant_id)) or {}
+    if not seeded:
+        return raw
+    numbers = dict(BASE_CHUNK_INVOICE_NUMBERS)
+    numbers.update(CHUNK_INVOICE_NUMBERS)
+    bound = []
+    for chunk in raw:
+        invoice_number = numbers.get(chunk.get("id"))
+        invoice_id = seeded.get(invoice_number) if invoice_number else None
+        # Dashed, like production: `_visible_invoice_chunks()` compares the chunk's
+        # `metadata.invoice_id` against `str(Invoice.id)`, which SQLAlchemy renders
+        # dashed. `_seed()` mints `uuid4().hex`, so binding the raw hex leaves every
+        # chunk invisible to that filter and the model is handed nothing.
+        bound.append(_bind_chunk(chunk, str(_UUID(invoice_id))) if invoice_id else chunk)
+    return bound
+
+
 def _priced_model_name(model_under_test: Optional[str]) -> str:
     """`"azure:gpt-5.6-luna"` -> `"gpt-5.6-luna"`; None -> the configured primary."""
     if model_under_test:
@@ -1984,9 +2028,31 @@ def main() -> None:
         f"({sum(len(s.turns) for s in scripts)} turn(s), bucket {MULTI_TURN_PATH!r})"
     )
 
-    engine = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    # BE Gap 685 family: this harness hardcoded `sqlite:///:memory:`, so every chat
+    # eval number this repo has -- local and the ACA nightly alike -- is evidence about
+    # SQLite, which CONVENTIONS hard rule 2 does not accept. `EVAL_DATABASE_URL` opts a
+    # run into the engine the product actually uses; unset, the behaviour is byte-identical
+    # to before, so the existing series is not silently redefined. The guard is the Gap 525
+    # one: localhost and a database whose name says "test", because the tables are dropped
+    # afterwards.
+    eval_db_url = os.getenv("EVAL_DATABASE_URL")
+    if eval_db_url:
+        from urllib.parse import urlparse as _urlparse
+
+        _p = _urlparse(eval_db_url)
+        assert _p.hostname in ("localhost", "127.0.0.1"), (
+            "Gap 525 guard: EVAL_DATABASE_URL must point to localhost or 127.0.0.1."
+        )
+        assert "test" in (_p.path or "").lower(), (
+            "Gap 525 guard: EVAL_DATABASE_URL must name a throwaway database whose name contains 'test'."
+        )
+        print(f"Fixture engine: {_p.scheme} at {_p.hostname}{_p.path} (EVAL_DATABASE_URL)")
+        engine = create_engine(eval_db_url)
+        SQLModel.metadata.drop_all(engine)
+    else:
+        engine = create_engine(
+            "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        )
     SQLModel.metadata.create_all(engine)
 
     # Gap 484. Built before seeding because every id below is read through it;
@@ -2006,6 +2072,7 @@ def main() -> None:
     turns: list[dict] = []
     with Session(engine) as session:
         seeded_ids = _seed(session, ALL_ROWS, tenant_id=_tenant(TENANT_ID))
+        seeded_by_tenant: dict = {str(TENANT_ID): seeded_ids}
         invoice_chunks = _build_invoice_chunk_map(seeded_ids)
         # Wave 3: the India/US/EU banks, each under its own tenant id in this
         # same database. `seeded_ids` is deliberately NOT merged with these --
@@ -2014,6 +2081,7 @@ def main() -> None:
         # silently bind one tenant's document pages to the other's row.
         for region_tenant_id, region in REGION_TENANTS.items():
             region_ids = _seed(session, region["rows"], tenant_id=_tenant(region_tenant_id))
+            seeded_by_tenant[str(region_tenant_id)] = region_ids
             invoice_chunks.update(_region_invoice_chunk_map(region, region_ids))
             print(
                 f"seeded tenant {region['label']} ({_tenant(region_tenant_id)}): "
@@ -2075,7 +2143,7 @@ def main() -> None:
                         # the wrong-grounding-fact failure
                         # `tenant_stats_summary()`'s docstring already records.
                         stats_for_tenant(case.tenant_id),
-                        chunks_for_tenant(case.tenant_id),
+                        _bound_chunks_for_tenant(case.tenant_id, seeded_by_tenant),
                         invoice_chunks,
                         model_under_test=model_under_test,
                         attachment_ids=case_attachments,
@@ -2126,7 +2194,7 @@ def main() -> None:
                     MULTI_TURN_PATH,
                     session,
                     stats_for_tenant(script.tenant_id),
-                    chunks_for_tenant(script.tenant_id),
+                    _bound_chunks_for_tenant(script.tenant_id, seeded_by_tenant),
                     invoice_chunks,
                     model_under_test=model_under_test,
                 )

@@ -1918,7 +1918,7 @@ def _line_item_rule(tenant_id: str, db_session) -> str:
 # via `_detect_invoice_attribute_term` -- would have printed the bank details in
 # the table with nothing in the way. Hidden from the rendered table only: the
 # id-harvest still reads the unfiltered column set, exactly as for `tenant_id`.
-_INTERNAL_ONLY_COLUMNS = {"file_path", "batch_id", "tenant_id", "payment_instructions", "tax_ids"}
+_INTERNAL_ONLY_COLUMNS = {"file_path", "batch_id", "tenant_id"}
 
 # The exact string execute_generated_sql() returns for an empty result set.
 # Named (Feature 21 Phase 1) because three call sites now compare against it --
@@ -1994,7 +1994,25 @@ _CREDENTIAL_PATTERNS = (
 
 
 def _redact_credentials(text_value: str) -> str:
-    """Replace bank/tax identifiers in answer prose. See `_CREDENTIAL_PATTERNS`."""
+    """Return the prose unchanged -- BE Gap 588 was CANCELLED on 2026-09-18.
+
+    Founder ruling 2026-09-18, superseding the ruling of 2026-09-16 that this
+    function was built for: bank and tax identifiers are NOT redacted in chat.
+    The reasoning is that this product is used by a finance department, and the
+    same IBAN / GSTIN / account number is printed on the invoice PDF the user can
+    already open -- so scrubbing it from chat withholds nothing from anyone while
+    breaking ordinary questions about payment terms and tax registration numbers
+    (`payment_terms_document` failed exactly that way on the 2026-09-18 eval).
+
+    Kept as a function rather than deleted at its call site so the reversal is
+    one edit to undo if that ruling ever changes; `_CREDENTIAL_PATTERNS` is kept
+    with it for the same reason.
+    """
+    return text_value
+
+
+def _redact_credentials_disabled(text_value: str) -> str:
+    """The pre-2026-09-18 behaviour, retained unreferenced. See above."""
     for pattern in _CREDENTIAL_PATTERNS:
         if pattern.groups:
             # Labelled form: keep the label, replace only the value after it, so the
@@ -5634,6 +5652,72 @@ _EXPLICIT_ATTACHMENT_INTENTS = {
 }
 
 
+def _attachment_judge_evidence(result: dict, turn) -> dict:
+    """BE Gap 693: the evidence an attachment turn was answered from.
+
+    The four attachment branches return before `run_query_agent()` assembles
+    `judge_evidence`, so `services/online_quality_judge.py` received nothing for
+    them and every attachment turn was scored `faithfulness=0.00` for lack of
+    evidence that was never absent. The 2026-09-18 Dev run shows what that costs:
+    `attach_a1` and `attach_b1` both answered correctly (`accuracy=1.0`) and both
+    failed, and ten more attachment turns were unreadable -- an unscoreable turn
+    and a wrong turn are indistinguishable once both are written down as 0.0.
+
+    Each branch carries its grounding in a different key, because each is a
+    different kind of answer, so the context is assembled from whichever is
+    present rather than from one shared field that does not exist:
+
+      * `evidence`      -- the content branch's page spans, i.e. the document text;
+      * `attachment_pair_comparison` / `attachment_multi_comparison` -- the
+        computed comparison the answer narrates;
+      * `reconciliation` -- the reconcile branch's matched/unmatched result;
+      * `line_items` / `unmatched` -- the rows behind a comparison narrative.
+
+    Returns `{}` when the turn genuinely has nothing to be judged against -- the
+    intent-clarification reply asks a question and asserts nothing -- so the judge
+    skips it rather than scoring it zero. That distinction is the point of the gap.
+    """
+    import json as _json
+
+    parts: list[str] = []
+
+    for span in (result.get("evidence") or []):
+        text = (span or {}).get("text")
+        if text:
+            page = (span or {}).get("page")
+            label = f"DOCUMENT PAGE {page}" if page is not None else "DOCUMENT EXTRACT"
+            parts.append(f"{label}:\n{text}")
+
+    for key, label in (
+        ("attachment_pair_comparison", "DOCUMENT-TO-DOCUMENT COMPARISON"),
+        ("attachment_multi_comparison", "DOCUMENT-TO-INVOICE COMPARISON"),
+        ("reconciliation", "RECONCILIATION RESULT"),
+    ):
+        payload = result.get(key)
+        if payload:
+            parts.append(f"{label}:\n{_json.dumps(payload, default=str, indent=2)}")
+
+    for key, label in (("line_items", "LINE ITEMS"), ("unmatched", "UNMATCHED LINES")):
+        rows = result.get(key)
+        if rows:
+            parts.append(f"{label}:\n{_json.dumps(rows, default=str, indent=2)}")
+
+    if not parts:
+        return {}
+
+    return {
+        "route": "attachment",
+        "context": "\n\n".join(parts),
+        # No SQL is executed on any attachment branch; the key is present and
+        # empty so the judge's "what was asked for" slot is explicit rather than
+        # missing, the same shape the RAG route returns.
+        "executed_queries": "",
+        "answer_gate": str(getattr(turn, "answer_gate", "") or ""),
+        "turn_status": str(getattr(turn, "status", "") or ""),
+        "stop_reason": str(getattr(turn, "stop_reason", "") or ""),
+    }
+
+
 def _run_attached_document_turn(
     *,
     session_id: str,
@@ -7613,6 +7697,12 @@ def _run_query_agent(
                 turn_attachment_ids,
                 data_version=attachment_freshness,
             )
+        # BE Gap 693: attach the evidence before returning, and after the cache
+        # write above -- same ordering as the main path's Gap 304 half (2), so the
+        # cached payload keeps the shape and size it has always had.
+        attachment_evidence = _attachment_judge_evidence(attachment_result, turn)
+        if attachment_evidence:
+            attachment_result["judge_evidence"] = attachment_evidence
         return attachment_result
 
     # C2 (Feature 6.1): a narrowing follow-up is not cacheable and must not be

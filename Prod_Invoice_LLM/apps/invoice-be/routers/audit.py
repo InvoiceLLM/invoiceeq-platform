@@ -34,6 +34,7 @@ from utils.correction_values import (
 )
 from utils.alert_dismissal import dismiss_alerts
 from utils.correction_recheck import MONEY_FIELDS, alerts_raised_by_correction, snapshot_money_fields
+from utils.correction_fields import derive_correctable_fields, entry_name_for
 from utils.rule_schema import (
     build_audit_correction_rule,
     canonical_values_match,
@@ -81,31 +82,7 @@ router = APIRouter(
 # matching exactly what fe_features/feature_4_auditor.md's ReadOnlyField list shows.
 # "date" fields are parsed as ISO YYYY-MM-DD (or a leading date segment of a
 # datetime string), same convention as queue_worker/handlers.py's own date parsing.
-_CORRECTABLE_FIELDS = {
-    "vendor_name": "str",
-    "invoice_number": "str",
-    "po_number": "str",
-    "invoice_date": "date",
-    "due_date": "date",
-    "subtotal": "float",
-    "grand_total": "float",
-    "tax_amount": "float",
-    "items": "list",
-    # BE Gap 531 (founder ruling 2026-09-15: all of them): every other extracted field that has an
-    # Invoice column. `round_off` is extracted but has no column, so there is nothing to correct.
-    "currency": "currency",
-    "discount_amount": "float",
-    "discount_percent": "percent",
-    "tags": "tags",
-    "taxes": "list",
-    "discounts": "list",
-    "deductions": "list",
-    "tax_ids": "list",
-    "payment_instructions": "list",
-    "references": "list",
-    "addresses": "list",
-    "compliance_metadata": "list",
-}
+_CORRECTABLE_FIELDS = derive_correctable_fields(InvoiceExtractionSchema, Invoice)
 
 # BE Gap 531: each list field's entries are checked against the model InvoiceExtractionSchema itself
 # uses for that field (read from the schema, not imported by name — see list_entry_model).
@@ -121,8 +98,9 @@ _LIST_ENTRY_NAMES = {
     "compliance_metadata": "compliance entry",
 }
 _LIST_ENTRY_MODELS = {
-    field: (list_entry_model(InvoiceExtractionSchema, field), entry_name)
-    for field, entry_name in _LIST_ENTRY_NAMES.items()
+    field: (list_entry_model(InvoiceExtractionSchema, field), entry_name_for(field, _LIST_ENTRY_NAMES))
+    for field, kind in _CORRECTABLE_FIELDS.items()
+    if kind == "list"
 }
 
 # BE Gap 532 (founder ruling 2026-09-15): fields a correction may change but never empty.

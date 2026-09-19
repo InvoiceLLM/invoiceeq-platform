@@ -173,13 +173,18 @@ def _process_message(queue_client: QueueClient, msg) -> None:
     tenant_id = None
     slot_acquired = False
     try:
-        request_id_ctx.set(f"worker-{msg.id}")
+        # BE Gap 686: capture the reset tokens. These context vars are bound per
+        # message, but the thread that binds them is reused for the next message by
+        # the pool -- without a reset, one tenant's id stays bound and the following
+        # job's logs, spans and judge scores are attributed to it.
+        request_token = request_id_ctx.set(f"worker-{msg.id}")
+        tenant_token = None
         payload = json.loads(msg.content)
         task_name = payload.get("task")
         kwargs = payload.get("kwargs", {})
         tenant_id = kwargs.get("tenant_id")
         if tenant_id:
-            tenant_id_ctx.set(tenant_id)
+            tenant_token = tenant_id_ctx.set(tenant_id)
 
         # Gap 42: Check per-tenant fair-share throttle limit
         if tenant_id and not _acquire_tenant_slot(tenant_id):
@@ -268,6 +273,15 @@ def _process_message(queue_client: QueueClient, msg) -> None:
     finally:
         if slot_acquired and tenant_id:
             _release_tenant_slot(tenant_id)
+        # BE Gap 686: hand the thread back clean, in the same block that returns the
+        # concurrency slot. reset() is tolerant of a token from another context only
+        # in that it raises -- so each is guarded rather than assumed.
+        for ctx_var, token in ((tenant_id_ctx, tenant_token), (request_id_ctx, request_token)):
+            if token is not None:
+                try:
+                    ctx_var.reset(token)
+                except ValueError:
+                    ctx_var.set("")
 
 
 def _process_redis_chat_tasks(executor: ThreadPoolExecutor) -> None:

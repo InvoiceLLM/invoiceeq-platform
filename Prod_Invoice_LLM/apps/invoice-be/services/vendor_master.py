@@ -41,6 +41,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, Sequence
+from uuid import UUID as _UUID
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,33 @@ class VendorResolution:
         return self.status == "proposed"
 
 
+def _as_tenant_uuid(tenant_id: Any) -> Any:
+    """`tenant_id` as the UUID the columns are typed with.
+
+    BE Gap 693 follow-up: `Vendor.tenant_id` and `VendorAlias.tenant_id` are UUID
+    columns, so comparing them to a `str` makes SQLAlchemy's bind processor call
+    `.hex` on a string and raise `AttributeError: 'str' object has no attribute
+    'hex'`. Every caller below sits inside a `try/except Exception` that degrades
+    to "we could not tell", so the failure was invisible -- a warning per turn and
+    a vendor master that never resolved anything. Only
+    `queue_worker/handlers.py:617` converted; the chat path
+    (`agents/entity_resolver.py:360`) and `services/doc_linking.py:163` did not.
+
+    Coerced here, at the one boundary every caller passes through, rather than at
+    each call site -- a fix at the call sites leaves the next caller to remember.
+    A value that is not a UUID and not a UUID-shaped string is returned unchanged
+    so the existing handler still degrades rather than raising.
+    """
+    if isinstance(tenant_id, _UUID):
+        return tenant_id
+    if isinstance(tenant_id, str):
+        try:
+            return _UUID(tenant_id)
+        except (ValueError, AttributeError, TypeError):
+            return tenant_id
+    return tenant_id
+
+
 def resolve_vendor(name: str, tenant_id: Any, db_session: Any) -> VendorResolution:
     """Which vendor is this name? Bound, proposed, or nothing.
 
@@ -140,6 +168,7 @@ def resolve_vendor(name: str, tenant_id: Any, db_session: Any) -> VendorResoluti
     because a vendor master that is briefly unreadable must degrade to "we could
     not tell", never to a wrong binding.
     """
+    tenant_id = _as_tenant_uuid(tenant_id)
     key = normalise_vendor_name(name)
     if not key:
         return VendorResolution("none", query=name or "", reason="no usable vendor name")
