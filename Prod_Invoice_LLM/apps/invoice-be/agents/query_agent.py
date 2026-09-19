@@ -1,6 +1,8 @@
+import ast
 import hashlib
 import json
 import logging
+import operator
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -1543,6 +1545,58 @@ def _harvest_invoice_ids_from_rows(keys: list, rows: list) -> list[str]:
             if len(out) >= MAX_SNAPSHOT_INVOICE_IDS:
                 return out
     return out
+
+
+def _invoice_ids_from_result_table(db_result: str, tenant_id: str, db_session) -> list[str]:
+    """BE Gap 698: the invoice ids behind a results table, read from the TABLE.
+
+    `_harvest_invoice_ids_via_companion_query()` recovers ids by re-running the
+    generated SQL's own predicates. That is exactly right for the aggregate case
+    it was built for -- and exactly wrong whenever a deterministic fallback
+    rescued the turn, because the query it re-runs is the one that already
+    matched nothing. Re-running a miss produces another miss, `result_invoice_ids`
+    stays empty, and the Gap 310 full-record block silently never builds.
+
+    This reads the answer instead of the question: whatever invoice numbers are
+    in the table the user is about to be shown, resolved to ids. It therefore
+    works for every recovery path at once -- the invoice-number lookup, Gap 306's
+    category search and C3's `narrowing_dropped` probe -- rather than needing a
+    branch in each.
+
+    Best-effort and read-only, the same contract as the companion harvest: any
+    parse or execution problem returns an empty list.
+    """
+    if not db_result or db_result == NO_RECORDS_FOUND:
+        return []
+    try:
+        lines = [ln for ln in str(db_result).splitlines() if ln.strip()]
+        if len(lines) < 2:
+            return []
+        header = [h.strip().lower() for h in lines[0].split("|")]
+        if "invoice_number" not in header:
+            return []
+        column = header.index("invoice_number")
+        numbers = []
+        for line in lines[2:]:  # 0 header, 1 the --- separator
+            cells = [c.strip() for c in line.split("|")]
+            if column < len(cells) and cells[column]:
+                numbers.append(cells[column])
+        if not numbers:
+            return []
+        rows = db_session.execute(
+            text(
+                "SELECT id FROM invoice WHERE tenant_id = :tenant_id "
+                "AND TRIM(LOWER(invoice_number)) IN :numbers"
+            ).bindparams(bindparam("numbers", expanding=True)),
+            {
+                "tenant_id": str(tenant_id),
+                "numbers": [n.strip().lower() for n in numbers[:MAX_SNAPSHOT_INVOICE_IDS]],
+            },
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+    except Exception as e:  # pragma: no cover -- best effort, same as the companion harvest
+        logger.warning("Gap 698: could not resolve invoice ids from the results table: %s", e)
+        return []
 
 
 def _harvest_invoice_ids_via_companion_query(sql: str, tenant_id: str, db_session) -> list[str]:
@@ -4077,6 +4131,22 @@ _DETERMINISTIC_TOTALS_INSTRUCTION = (
 )
 
 
+# BE Gap 696 part 2: the instruction half of the shown-working contract. The
+# checking half is `_gate_supported_derivations()`, and the two only work
+# together -- a gate that accepts shown working, on a model that was never asked
+# to show it, changes nothing.
+_SHOW_YOUR_WORKING_INSTRUCTION = (
+    "SHOWING YOUR WORKING: if you state a figure that you CALCULATED rather than read "
+    "directly from the evidence -- a total, a difference, a per-unit price, a tax amount, "
+    "a converted currency -- put the calculation in brackets immediately after it, using "
+    "only figures that appear in the evidence above. For example: \"12,000 (5,000 + 7,000)\", "
+    "\"1,800 (18% of 10,000)\", \"29,302.94 (40 x 732.57)\". Write the inputs exactly as the "
+    "evidence gives them. A figure you read straight from a row needs no brackets. This is "
+    "how a calculated figure is verified rather than doubted -- an unexplained one that the "
+    "evidence does not contain will be marked unverified in your answer."
+)
+
+
 # Gap 413: the hand-typed schema block, lifted out of the f-string so the
 # ORM-derived supplement below can see which columns it already covers.
 _HAND_TYPED_SCHEMA_BLOCK = """Given the 'invoice' table schema:
@@ -4177,6 +4247,10 @@ _GATE_YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
 _GATE_CURRENCY_CODES = (
     "USD|GBP|EUR|INR|AUD|CAD|JPY|CHF|SGD|AED|NZD|ZAR|SEK|NOK|DKK|HKD|CNY|MXN|BRL"
 )
+#: The same symbols the money pattern below recognises, as a plain tuple so BE
+#: Gap 696's expression normaliser can strip them one by one rather than
+#: re-deriving them from the regex.
+_GATE_CURRENCY_SYMBOLS = ("$", "£", "€", "₹", "¥")
 _GATE_MONEY_MARKED = re.compile(
     r"(?:[$£€₹¥]|\b(?:" + _GATE_CURRENCY_CODES + r")\b)\s*"
     r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+)",
@@ -4279,6 +4353,143 @@ def _gate_evidence_numbers(*texts) -> set:
     return found
 
 
+#: BE Gap 696 (2026-09-19), part 2. A figure the prose derived, with its working
+#: shown beside it: `12,000 (5,000 + 7,000)`. The result is the number
+#: immediately before the bracket; the expression inside is what the model says
+#: it did to get there. An ordinary parenthetical -- "Acme Corp (the vendor)" --
+#: simply fails to parse as arithmetic and costs nothing, so this pattern being
+#: greedy about what it MATCHES is safe; what matters is what it VALIDATES.
+_GATE_DERIVATION_PATTERN = re.compile(
+    r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+)\s*%?\s*\(\s*([^()]{3,200}?)\s*\)"
+)
+
+#: The operators a shown working may use: the four arithmetic ones, and nothing
+#: else. No exponentiation, no function calls, no names -- the point is to check
+#: arithmetic the model did, not to execute whatever it typed.
+#: hardcode-ok: the four arithmetic operators are not a domain fact; a new
+#: vendor, language, item, bank or document type never adds a fifth.
+_GATE_DERIVATION_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+
+#: How the working is written in finance prose rather than in Python: `×` for a
+#: quantity times a unit price, `of` for a percentage of a base, `less` for a
+#: deduction. Rewritten to the four operators above before parsing.
+#: hardcode-ok: these are notations for arithmetic, not domain data. The set is
+#: fixed by how arithmetic is written, not by what the tenant invoices for.
+_GATE_DERIVATION_REWRITES = (
+    (re.compile(r"[×⋅∗]"), "*"),
+    (re.compile(r"[÷]"), "/"),
+    (re.compile(r"(?<=\d)\s*x\s*(?=\d)", re.IGNORECASE), "*"),
+    (re.compile(r"\s+of\s+", re.IGNORECASE), "*"),
+    (re.compile(r"\s+(?:plus)\s+", re.IGNORECASE), "+"),
+    (re.compile(r"\s+(?:minus|less)\s+", re.IGNORECASE), "-"),
+)
+
+
+def _gate_normalise_expression(raw: str) -> str:
+    """The model's shown working, rewritten into something `ast` can parse.
+
+    Only the left side of an `=` is read, so a model that writes the whole
+    equation (`5,000 + 7,000 = 12,000`) is checked on what it claims to have
+    done rather than on its own restatement of the answer -- otherwise the
+    check would be comparing a number against itself and could never fail.
+    """
+    text = str(raw or "").split("=")[0]
+    for symbol in _GATE_CURRENCY_SYMBOLS:
+        text = text.replace(symbol, " ")
+    text = re.sub(r"\b(?:" + _GATE_CURRENCY_CODES + r")\b", " ", text, flags=re.IGNORECASE)
+    for pattern, replacement in _GATE_DERIVATION_REWRITES:
+        text = pattern.sub(replacement, text)
+    # A percentage is a fraction, and writing it as one is what lets "18% of
+    # 5,000" be checked with the same four operators as everything else.
+    text = re.sub(r"(\d+(?:\.\d+)?)\s*%", r"(\1/100)", text)
+    text = re.sub(r"(?<=\d),(?=\d{3})", "", text)
+    return text.strip()
+
+
+def _gate_eval_expression(node):
+    """Decimal arithmetic over the whitelisted operators; raises on anything else.
+
+    Decimal rather than float because the figures either side of this comparison
+    are money, and `0.1 + 0.2` failing to equal `0.3` would fail the gate on an
+    answer that is arithmetically perfect.
+    """
+    if isinstance(node, ast.Expression):
+        return _gate_eval_expression(node.body)
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            raise ValueError("not a number")
+        return Decimal(str(node.value))
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        value = _gate_eval_expression(node.operand)
+        return value if isinstance(node.op, ast.UAdd) else -value
+    if isinstance(node, ast.BinOp) and type(node.op) in _GATE_DERIVATION_OPS:
+        return _GATE_DERIVATION_OPS[type(node.op)](
+            _gate_eval_expression(node.left), _gate_eval_expression(node.right)
+        )
+    raise ValueError("unsupported expression")
+
+
+def _gate_supported_derivations(prose: str, evidence_numbers: set) -> set:
+    """BE Gap 696 part 2: figures the prose showed its working for, and it checks out.
+
+    Two conditions, both required. Every input the working names must itself be
+    an evidence figure -- the model may combine what it was given, never smuggle
+    in a number it was not. And the arithmetic must actually come out to the
+    figure stated.
+
+    That second condition is the one the previous design could not express at
+    all. Before this, every figure had to appear LITERALLY in the evidence, so a
+    model that summed two rows correctly was binned, while a model that summed
+    them WRONGLY passed whenever its wrong answer happened to appear somewhere
+    else in the table. Checking the working inverts both.
+
+    Searching for a relationship instead -- "is this number some combination of
+    the evidence?" -- was considered and rejected (founder, 2026-09-19): two
+    operations over a few hundred row figures is billions of candidates, and at
+    that breadth nearly any number is derivable, which deletes the gate while
+    appearing to keep it. Asking the model to show its work costs one prompt
+    instruction and makes the check exact instead of probabilistic.
+    """
+    if not prose:
+        return set()
+    supported = set()
+    for result_token, expression in _GATE_DERIVATION_PATTERN.findall(prose):
+        result = _gate_normalise(result_token)
+        if result is None:
+            continue
+        # The left of an `=` only, for the same reason the normaliser splits
+        # there: in "5,000 + 7,000 = 12,000" the trailing 12,000 is the model
+        # restating its own answer, not an input it is claiming to have been
+        # given, and demanding it be in the evidence would reject exactly the
+        # working this check exists to accept.
+        claim = str(expression).split("=")[0]
+        inputs = _gate_numbers_in(claim)
+        if not inputs:
+            continue
+        # A small literal is the model writing a divisor or a percent base, not a
+        # figure it is claiming; the same floor that keeps ordinals out of the
+        # prose check keeps them out of this one.
+        if any(n not in evidence_numbers for n in inputs if abs(n) >= _GATE_MIN_MAGNITUDE):
+            continue
+        try:
+            computed = _gate_eval_expression(
+                ast.parse(_gate_normalise_expression(expression), mode="eval")
+            )
+        except (SyntaxError, ValueError, TypeError, ArithmeticError, RecursionError):
+            continue
+        # Rounding tolerance, not slack: a currency conversion or a unit price
+        # carried to more decimals than the answer prints must still validate.
+        tolerance = max(Decimal("0.01"), abs(result) * Decimal("0.005"))
+        if abs(computed - result) <= tolerance:
+            supported.add(result)
+    return supported
+
+
 def _answer_contract_gate(prose: str, evidence_numbers: set, evidence_dates: set | None = None) -> dict:
     """Which figures and dates in the narration are not in the evidence.
 
@@ -4298,7 +4509,13 @@ def _answer_contract_gate(prose: str, evidence_numbers: set, evidence_dates: set
     # BE Gap 590 part 1: below the floor but marked as money or a percentage, so not
     # an ordinal and not a count -- checkable, and previously waved through.
     prose_numbers |= _gate_marked_figures(prose or "")
-    unsupported = sorted(n for n in prose_numbers if n not in evidence_numbers)
+    # BE Gap 696 part 2: a figure the prose derived and SHOWED ITS WORKING for,
+    # where the inputs are evidence figures and the arithmetic checks out, is as
+    # supported as one copied straight from a row. Added to the allowed set
+    # rather than removed from `prose_numbers`, so `checked` still counts it --
+    # it was checked, and it passed.
+    allowed = evidence_numbers | _gate_supported_derivations(prose or "", evidence_numbers)
+    unsupported = sorted(n for n in prose_numbers if n not in allowed)
 
     # BE Gap 590 part 2: dates, checked rather than deleted. Only when the evidence
     # states dates at all -- a turn whose evidence carries none (a pure count, a
@@ -4338,11 +4555,45 @@ def _gate_regeneration_directive(unsupported) -> str:
         f"{'these figures' if len(unsupported) > 1 else 'this figure'}: {figures}. "
         f"{'They do' if len(unsupported) > 1 else 'It does'} not appear anywhere in the "
         "evidence you were given, which means "
-        f"{'they were' if len(unsupported) > 1 else 'it was'} derived or invented. You may "
-        "not compute, sum, convert or estimate a figure -- every number you state must be "
-        "copied exactly from the evidence above. Rewrite the answer using only figures that "
-        "appear there. If the question cannot be answered without a figure that is not "
-        "present, say plainly that it is not available and name what IS on file instead."
+        f"{'they were' if len(unsupported) > 1 else 'it was'} either computed without showing "
+        "the working, or invented. Rewrite the answer one of two ways. If you copied the "
+        "figure from the evidence, use the value exactly as it appears there. If you "
+        "CALCULATED it, you may keep it -- but you must show the calculation in brackets "
+        "immediately after, using only figures that appear in the evidence, e.g. "
+        "\"12,000 (5,000 + 7,000)\". If neither is possible, say plainly that the figure is "
+        "not available and name what IS on file instead."
+    )
+    # BE Gap 696 part 2: this text used to read "You may not compute, sum, convert
+    # or estimate a figure". That rule was the reason a correct total failed the
+    # gate: the model was told never to do arithmetic, and then judged on whether
+    # its arithmetic appeared verbatim in the rows. Computation is now allowed and
+    # is checked instead of forbidden -- see `_gate_supported_derivations()`.
+
+
+def _gate_unverified_notice(claimed) -> str:
+    """BE Gap 696 part 3: the inline caveat that replaced the blanket refusal.
+
+    Three things the refusal could not do, and this does: it keeps the parts of
+    the answer that were right, it names the specific value to distrust rather
+    than casting doubt over the whole reply, and it says where the rest came
+    from. Empty string when there is nothing to name, so the caller can append
+    it unconditionally.
+    """
+    figures = ", ".join(str(c) for c in claimed if str(c).strip())
+    if not figures:
+        return ""
+    plural = len([c for c in claimed if str(c).strip()]) > 1
+    # hardcode-ok: `figures` is not a money value being narrated -- it is the
+    # gate's own list of values it could not verify, quoted back EXACTLY as the
+    # answer printed them. Running it through `money()` would reformat the very
+    # string the user has to locate in the text above, and a date in the list has
+    # no currency at all.
+    return (
+        "\n\n> **Unverified:** I could not match "
+        f"{'these values' if plural else 'this value'} -- {figures} -- to anything "
+        "in the records I retrieved for this question. Treat "
+        f"{'them' if plural else 'it'} as unconfirmed. Everything else above comes "
+        "straight from the data."
     )
 
 
@@ -8038,6 +8289,26 @@ def _run_query_agent(
                     result_invoice_ids.extend(
                         _harvest_invoice_ids_via_companion_query(generated_sql, tenant_id, db_session)
                     )
+                # BE Gap 698: and when THAT came back empty too, read the table.
+                #
+                # The harvest above re-runs the generated SQL's own predicates,
+                # which cannot work on a turn a deterministic fallback rescued --
+                # the query being re-run is the one that already matched nothing.
+                # Measured on `eu_currency_confusion_trap`: the invoice-number
+                # fallback found RIT-2026-0456, the harvest re-ran the failed
+                # predicates and found no ids, the Gap 310 full-record block
+                # therefore never built, and the model was handed the fallback's
+                # five fixed columns -- which do not include `currency`. It
+                # answered "the currency is unspecified" to a question that was
+                # entirely about the currency, while the row said EUR.
+                #
+                # Reading the table covers every recovery path at once rather
+                # than needing a branch per fallback, and is a no-op on the
+                # normal path, where ids were already harvested.
+                if not result_invoice_ids and db_result:
+                    result_invoice_ids.extend(
+                        _invoice_ids_from_result_table(db_result, tenant_id, db_session)
+                    )
                 # Gap 310: every stored field of the invoice(s) just identified --
                 # `taxes`, `subtotal`, `tax_ids`, `discounts`, `deductions` and the
                 # rest of the columns the hand-typed schema block never listed.
@@ -8077,6 +8348,64 @@ def _run_query_agent(
                     # its answer is grounded in, so the online quality judge has
                     # to be shown it too.
                     judge_context_parts.append(computed_figures_block.strip())
+
+                # BE Gap 695, mirror half (2026-09-19): the SQL route also reads
+                # the documents.
+                #
+                # The first half gave the RAG route the rows. This is the same
+                # move in the opposite direction, and it closes the other side of
+                # the same measured failure: two of the eight confirmed failures
+                # on the 2026-09-19 Postgres eval were questions whose answer sits
+                # in the document text while the column that would carry it is
+                # NULL -- payment terms printed on the invoice with
+                # `payment_instructions` empty, a tax exemption reason stated in
+                # the footer with no column for it at all. The SQL route saw the
+                # NULL, reported "not recorded", and never looked at the document
+                # it already had indexed.
+                #
+                # Not a NULL-triggered fallback, deliberately: a rule that fires
+                # only on an empty column has to know WHICH column the question
+                # was about, which is the classification the router already gets
+                # wrong. Retrieving unconditionally has no such dependency -- the
+                # passages are simply there when the rows fall short, exactly as
+                # the rows are now there when the passages do.
+                #
+                # ADDITIVE and fail-soft: the rows, the computed figures and the
+                # full records are untouched and still lead the prompt. An empty
+                # or failed search appends nothing and the prompt is byte-identical
+                # to before, so a turn the rows already answered cannot regress on
+                # retrieval -- only on the model weighing the extra text, which is
+                # measurable, where a missing document is not recoverable.
+                sql_document_block = ""
+                try:
+                    _sql_chunks = _visible_invoice_chunks(
+                        query_invoice_chunks(tenant_id, user_message, limit=5),
+                        tenant_id,
+                        db_session,
+                    )
+                    if _sql_chunks:
+                        # Same wrapper as the RAG route, for the same Gap 388
+                        # reason: this is third-party document text and must be
+                        # delimited and attributed wherever it enters a prompt.
+                        _wrapped_docs = _wrap_retrieved_document_text(
+                            _sql_chunks, tenant_id=tenant_id
+                        )
+                        if _wrapped_docs.strip():
+                            sql_document_block = (
+                                "\n\nDOCUMENT TEXT FROM THE SAME INVOICES (indexed "
+                                "passages, retrieved for this same question -- use "
+                                "these for anything the rows above do not carry, such "
+                                "as payment terms, tax exemption reasons or wording "
+                                "printed on the invoice for which there is no "
+                                "column). The rows remain authoritative for any "
+                                "figure that HAS a column.\n" + _wrapped_docs
+                            )
+                            # Gap 304 half (2): evidence the answer is grounded in
+                            # is evidence the judge has to be shown.
+                            judge_context_parts.append(_wrapped_docs.strip())
+                except Exception as e:  # noqa: BLE001 -- fail soft, same as every other evidence fetch
+                    logger.warning("SQL companion document search failed (non-fatal): %s", e)
+
                 # Formulate final output matching the raw numbers
                 summary_prompt = f"""{CHAT_PERSONA_BLOCK}
 
@@ -8094,10 +8423,11 @@ EXCEPTION -- reconciliation/mismatch questions: the template above asserts an eq
 {PROMPT_REQUEST_SECTION_MARKER}
 {style_block}
 {line_item_total_instruction}
+{_SHOW_YOUR_WORKING_INSTRUCTION}
 {payment_status_block}
 {attribute_term_block}
 Results:
-{db_result}{computed_figures_block}{full_record_block}
+{db_result}{computed_figures_block}{full_record_block}{sql_document_block}
 {rules_block}{chat_rules_block}
 User Query: {_wrap_user_input(user_message, tenant_id)}
 """
@@ -8150,14 +8480,36 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
                     gate_prose = final_res.content
                     gate_outcome = "skipped"
                     if _answer_gate_enabled():
-                        evidence_numbers = _gate_evidence_numbers(
-                            db_result, computed_figures_block, full_record_block
+                        # BE Gap 696 part 1: everything the model was SHOWN, not
+                        # just what the database returned.
+                        #
+                        # The evidence set used to be the three retrieval blocks
+                        # alone, which made the gate blind to two things the model
+                        # can legitimately repeat: a figure the user themself put
+                        # in the question ("why is invoice X 20,000?" -- answering
+                        # "20,000" was scored as invention), and a figure
+                        # established earlier in the same conversation. Found on
+                        # the 2026-09-19 Postgres eval, where a correct answer was
+                        # binned over the user's own number.
+                        #
+                        # Widening it cannot weaken the fabrication guard in the
+                        # way that matters: a number nobody has ever mentioned is
+                        # still unsupported. It only stops the gate calling a quote
+                        # a hallucination.
+                        _gate_evidence_blocks = (
+                            db_result,
+                            computed_figures_block,
+                            full_record_block,
+                            sql_document_block,  # BE Gap 695 mirror half
+                            user_message,
+                            chat_history,
                         )
-                        # BE Gap 590 part 2: the same three evidence blocks, read for
-                        # the dates they state, so a fabricated due date is caught the
+                        evidence_numbers = _gate_evidence_numbers(*_gate_evidence_blocks)
+                        # BE Gap 590 part 2: the same evidence blocks, read for the
+                        # dates they state, so a fabricated due date is caught the
                         # way a fabricated total already was.
                         evidence_dates = set()
-                        for _block in (db_result, computed_figures_block, full_record_block):
+                        for _block in _gate_evidence_blocks:
                             evidence_dates |= _gate_dates_in(_block)
                         verdict = _answer_contract_gate(gate_prose, evidence_numbers, evidence_dates)
                         gate_outcome = verdict["status"]
@@ -8192,23 +8544,27 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
                                 logger.warning("29.9 regeneration failed (non-fatal): %s", e)
                                 gate_outcome = "regeneration_failed"
                         if verdict["status"] == "unsupported" and gate_outcome != "regeneration_failed":
+                            # BE Gap 696 part 3: flag the figure, do not bin the answer.
+                            #
+                            # Discarding the whole narration over one number threw
+                            # away the vendor, the dates and the status that were
+                            # all correct, and handed the user a refusal in place of
+                            # an answer that was 90% right. Naming the figure inline
+                            # keeps the correct part and tells the reader exactly
+                            # which number to distrust, which is strictly more
+                            # information than the refusal carried.
+                            #
+                            # This SUPERSEDES decision 3 (founder, 2026-09-06),
+                            # which ruled abstention. That ruling was made when the
+                            # only alternative on the table was silence -- an
+                            # unqualified wrong figure, or nothing. A qualified
+                            # figure is a third option and was not considered then.
+                            # Recorded here rather than left as drift.
                             _claimed = [str(n) for n in verdict["unsupported"]]
                             _claimed += list(verdict.get("unsupported_dates") or [])
-                            abstention = _abstain_payload(
-                                missing=[
-                                    f"the figure(s) {', '.join(_claimed)}, "
-                                    "which do not appear in anything I retrieved for this question"
-                                ],
-                                on_file=_abstain_on_file_from(result_invoice_ids, full_record_set),
-                                next_step=(
-                                    "show you the rows I did find so you can see the figures "
-                                    "they actually carry"
-                                ),
-                            )
-                            gate_abstention = abstention
-                            gate_prose = abstention["message"]
-                            gate_outcome = "abstained"
-                            turn.stop_reason = "answer_contract_abstain"
+                            gate_prose = gate_prose.rstrip() + _gate_unverified_notice(_claimed)
+                            gate_outcome = "flagged_unverified"
+                            turn.stop_reason = "answer_contract_flagged"
                     turn.answer_gate = gate_outcome
                     response_text = (
                         redact_query_internals(gate_prose, tenant_id)
@@ -8343,6 +8699,71 @@ User Query: {_wrap_user_input(user_message, tenant_id)}
         rag_full_record_block = _full_record_block_for(
             rag_invoice_ids, tenant_id, db_session
         )
+
+        # BE Gap 695 (2026-09-19): the RAG route also queries the rows.
+        #
+        # Measured on the 2026-09-19 Postgres eval: three of the eight confirmed
+        # failures were questions routed to RAG whose answer only exists in the
+        # structured rows -- "which vendors billed us for freight and how much
+        # each", "which two of our three OUTBOUND invoices used reverse charge",
+        # "does any of them include a freight charge". Vector search returns a
+        # handful of spans, so on that route an invoice with no indexed chunk is
+        # not merely under-weighted, it is invisible: the outbound IEQ-EU-8001/2/3
+        # have no chunks at all and the model confidently described two entirely
+        # different (INBOUND) invoices instead.
+        #
+        # This is the mirror of C3, which already re-dispatches SQL -> RAG when a
+        # query returns zero rows. Same principle, opposite direction, and the
+        # same reason: one retrieval mode's blind spot is the other's strength,
+        # and choosing between them up front is a classification this router gets
+        # wrong often enough to matter.
+        #
+        # ADDITIVE, deliberately: the chunks, the full records and the prompt are
+        # exactly what they were: this appends a rows block. A turn that was
+        # answered correctly from chunks alone still has those chunks, so the only
+        # way this regresses a passing case is by the extra evidence confusing the
+        # model -- which is measurable, where a missing row is not recoverable.
+        #
+        # Cost: one extra generation call and one query per RAG turn. Bounded by
+        # `execute_generated_sql`'s own row cap, and the block is dropped entirely
+        # when the query finds nothing, so a document-only question pays the call
+        # and carries no extra prompt weight.
+        rag_rows_block = ""
+        try:
+            _rag_sql_prompt = build_sql_system_prompt(
+                user_message,
+                tenant_id,
+                db_session,
+                chat_history=chat_history,
+                prior_turn_sql=prior_turn_sql,
+                rules_block=rules_block,
+                chat_rules_block=chat_rules_block,
+                tenant_stats=tenant_stats,
+            )
+            _rag_sql = run_sql_generation_loop(
+                llm=fast_llm,
+                system_prompt=_rag_sql_prompt,
+                wrapped_user_message=wrapped_user_message,
+                user_message=user_message,
+                tenant_id=tenant_id,
+                db_session=db_session,
+                prior_turn_sql=prior_turn_sql,
+                max_attempts=1,
+                telemetry_agent_name="chat.rag_companion_sql",
+                on_progress=progress,
+            )
+            _rows = (_rag_sql.db_result or "").strip()
+            if _rows and _rows != NO_RECORDS_FOUND:
+                rag_rows_block = (
+                    "\n\nSTRUCTURED INVOICE ROWS (the database, queried for this same "
+                    "question -- use these for anything the document passages above do "
+                    "not cover, such as totals across invoices, counts, per-vendor "
+                    "figures, or invoices that have no document text indexed):\n"
+                    + _rows
+                )
+                judge_context_parts.append("DATABASE RESULTS:\n" + _rows)
+        except Exception as e:  # noqa: BLE001 -- fail soft, same as every other evidence fetch
+            logger.warning("RAG companion SQL failed (non-fatal): %s", e)
         if rag_full_record_block:
             # Gap 304 half (2): evidence the answer is grounded in must also be
             # evidence the online quality judge is shown, or a correct figure read
@@ -8367,6 +8788,7 @@ when you use one.
 {_INJECTION_GUARD_INSTRUCTION}
 {PROMPT_REQUEST_SECTION_MARKER}
 {context_str}
+{rag_rows_block}
 {rag_full_record_block}
 {tenant_stats}
 {rules_block}{chat_rules_block}

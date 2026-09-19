@@ -497,8 +497,12 @@ def test_routing_override_needs_a_prior_sql_answered_turn(db_session):
         classified_route="RAG",
     )
 
-    assert llm.prompts == [], "SQL route ran with no prior query to narrow"
-    assert result["generated_sql"] is None
+    # BE Gap 695: "no prompt reached the LLM" is no longer the same claim as
+    # "the override did not fire". The RAG route now always makes a companion
+    # SQL call of its own, so the thing to assert is what actually answered
+    # the turn -- a RAG-answered turn carries no `generated_sql`, whether or
+    # not a companion query ran alongside it.
+    assert result["generated_sql"] is None, "SQL route answered with no prior query to narrow"
 
 
 def test_routing_override_leaves_a_fresh_question_alone(db_session):
@@ -509,12 +513,15 @@ def test_routing_override_leaves_a_fresh_question_alone(db_session):
     _seed_turn(db_session, session_id, content="There are 4 cloud invoices.", sql="SELECT 1")
 
     llm = _RecordingLLM([])
-    _run(
+    result = _run(
         db_session, llm, "What does the vendor say about payment terms?", session_id,
         classified_route="RAG",
     )
 
-    assert llm.prompts == []
+    # BE Gap 695, same reasoning as the test above: the override is what is
+    # under test, and it fired or it did not. A companion SQL call from the
+    # RAG route is not the override and must not read as one.
+    assert result["generated_sql"] is None
 
 
 
