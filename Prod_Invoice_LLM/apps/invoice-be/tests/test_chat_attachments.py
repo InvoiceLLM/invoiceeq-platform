@@ -1540,8 +1540,15 @@ def test_the_merged_prompt_forbids_describing_a_difference_between_the_two_docum
         attachment_ids=[str(note.id), str(contract.id)],
     )
 
-    assert "The two documents were NOT compared to each other" in prompt
-    assert "against its own invoices named in" in prompt
+    # BE Gap 700 replaced the flat prohibition with a statement of what each
+    # block IS. The old rule ("the two documents were NOT compared to each
+    # other") described what the branch computed, and stopped being true once
+    # `document_to_document` was supplied alongside the per-document diffs. What
+    # this test is really guarding is that the model is told which comparison is
+    # which, so that is what it now asserts.
+    assert "is ONE attached document against ITS OWN" in prompt
+    assert "invoices, named in 'invoice_numbers'" in prompt
+    assert "never present one as the other" in prompt
     assert "per_document_vs_invoice" in prompt
     # Both vendors reach the prompt, so "which vendor" is answerable at all.
     assert "Northwind Traders" in prompt

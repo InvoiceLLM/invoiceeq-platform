@@ -31,6 +31,11 @@ STATIC_INTERPOLATIONS = {
     "_DOCUMENT_TEXT_GUARD_INSTRUCTION",
     "CONTENT_BRANCH_PROMPT_MARKER",
     "PROMPT_REQUEST_SECTION_MARKER",
+    # BE Gap 700: the shared attachment hard rules. A module-level constant, so
+    # it belongs above the marker -- five branches now interpolate the SAME rule
+    # text rather than each carrying its own near-copy, which is also what makes
+    # the cacheable prefix longer than it was, not shorter.
+    "_ATTACHMENT_EVIDENCE_RULES",
 }
 
 #: How each prompt is found in the source: a unique phrase inside its static half.
@@ -39,7 +44,7 @@ PROMPTS = {
     "rag_answer": "For THIS step you are answering from the invoice DOCUMENTS themselves",
     "attachment_content": "WHAT YOU HAVE:\n1. A short summary of the document, extracted into fields.",
     "attachment_compare": "You are reporting the result of a comparison between a reference document",
-    "attachment_pair": "You are reporting a comparison between TWO documents the user attached",
+    "attachment_pair": "The user has TWO documents attached to this conversation. Neither is",
 }
 
 
