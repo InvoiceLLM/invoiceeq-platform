@@ -1,0 +1,64 @@
+Postgres 127.0.0.1:5433 invoice_db, tenant 00000000-0000-0000-0000-000000000000, 2026-09-19
+
+BEFORE the 17-case run:
+select flow_direction, count(*), sum(grand_total) from invoice
+where tenant_id='00000000-0000-0000-0000-000000000000' and deleted_at is null group by flow_direction;
+ -> ('OUTBOUND', 12, 5248631.0)
+ -> ('INBOUND', 14, 1891327.6)
+
+select vendor_name, count(*), sum(grand_total) from invoice
+where tenant_id='00000000-0000-0000-0000-000000000000' and deleted_at is null and vendor_name ilike '%Bharat%' group by vendor_name;
+ -> ('Bharat Hardware & Fasteners', 2, 206382.0)
+
+select count(*) from invoice where tenant_id=... and (invoice_number ilike '%CN-2010%' or invoice_number ilike '%BHF-CN%');
+ -> (0,)
+
+select invoice_number, status, grand_total, paid_at, flow_direction from invoice
+where invoice_number in ('BHA-2002','BHA-2003','OM -2000','OM -2001','OM -2002','SHR-2004','SHR-2005','SHR-2006','NAT-2006','NAT-2007','RAJ-2008','RAJ-2009') order by invoice_number;
+ -> BHA-2002 PAID    103191.0 paid_at=None INBOUND
+ -> BHA-2003 COMPLETED 103191.0 paid_at=None INBOUND
+ -> NAT-2006 COMPLETED 79956.8 paid_at=None INBOUND
+ -> NAT-2007 AUDIT_REQUIRED 79956.8 paid_at=None INBOUND
+ -> OM -2000 PAID     41654.0 paid_at=None INBOUND
+ -> OM -2001 COMPLETED 41654.0 paid_at=None INBOUND
+ -> OM -2002 COMPLETED 28792.0 paid_at=None INBOUND
+ -> RAJ-2008 COMPLETED 437190.0 paid_at=None INBOUND
+ -> RAJ-2009 AUDIT_REQUIRED 437190.0 paid_at=None INBOUND
+ -> SHR-2004 PAID     121894.0 paid_at=None INBOUND
+ -> SHR-2005 COMPLETED 121894.0 paid_at=None INBOUND
+ -> SHR-2006 COMPLETED 122720.0 paid_at=None INBOUND
+Confirms new_scenarios.md's stated ground truth exactly, including the paid_at IS NULL
+trap on all three INBOUND PAID rows (BHA-2002, OM -2000, SHR-2004).
+
+AFTER the 17-case run (unchanged):
+select flow_direction, count(*), sum(grand_total) ... -> OUTBOUND 12/5248631.0, INBOUND 14/1891327.6 (identical)
+select vendor_name... Bharat -> 2 / 206382.0 (identical)
+CN rows post-run -> (0,)   -- no Invoice row was ever created for BHF-CN-2010 across the 17 cases
+select status, sa_alerts from invoice where invoice_number='BHA-2003' -> ('COMPLETED', [])  -- no line-math
+  alert raised by the credit-note arithmetic (Gap 502 requirement holds)
+uvicorn /health -> 200 (both before and after; backend stayed up the whole run)
+
+Extraction check for B6 (DC-BHF-0455, the "expected still-fail" Gap 710 case),
+queried directly from chat_attachments.extracted_json (not the API's GET response,
+which does not expose extracted_json):
+  items: [Hex Bolts M10x40 box 100 qty 25, SS Washers box 500 qty 15, Torque Wrench 1/2in qty 4]
+-> 3 line items extracted correctly this run, matching the README's own ground truth
+   for this document (25/15/4). Contradicts the task brief's premise that Gap 710
+   (dropped line-item table) is still reproducing -- either non-deterministic
+   LLM extraction, or something already fixed it as a side effect. Flagged, not
+   silently accepted as expected.
+
+A4 (DC-NMT-2291) Turn A / Turn B attachment id 7246a692-24f7-4e0a-98df-3d5e0f3e1b3c,
+queried from chat_attachments directly:
+  extraction_status = EXTRACTED, candidate_invoice_ids = [86f1559a..., 22490a93...]
+  extracted_json.items: 3 lines (Industrial Lubricant 20L qty5, V-Belts qty12, Safety Gloves qty8)
+-> extraction and matching were BOTH complete and correct by the time Turn B ran
+   (a fresh session, sent only after polling to EXTRACTED). The chat layer still
+   answered "I'm still reading that document" on Turn B. Root cause: agents/query_agent.py:5766
+   gates on `attachment.extraction_status != "EXTRACTED"` using whatever ORM
+   object the request's DB session holds for that attachment id; since Turn A's
+   request in the same process had already loaded/cached that row while it was
+   PENDING, Turn B's read of the same primary key returned the stale cached
+   instance instead of a fresh SELECT, even from a brand new chat session/request.
+   B5 (a fresh upload of the same source file, never asked before terminal) did
+   not hit this path and answered correctly the same run.

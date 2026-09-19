@@ -1,0 +1,144 @@
+Invoice AI
+Dashboard
+Ingest
+Audit Queue
+History
+AI Trainer
+Chat Rules
+Chat
+Settings
+Subscriptions
+Help
+Collapse
+Tenant Isolation ID:
+00000000-0000-0000-0000-000000000000
+Your work
+🧭
+ATLAS
+3
+
+Signed in
+
+Vishwa Precision Industries Pvt Ltd (Admin)
+
+Finish setting up your workspace. Four questions: where invoices arrive, who finalises them, where results go, and how you use chat.
+
+Set up workflow
+Your work
+Refresh
+admin, audit, load, train
+Decisions — 2 pending.
+someone else is working this
+DECISION
+·
+CASH_POSITION_AND_RUNWAY
+
+Cash position, next 30 days
+
+Over the next 30 days you are committed to ₹16,24,588.60 across 11 invoice(s), and expecting ₹42,50,646.00 across 10. This assumes every invoice is settled on its due date, and the runway assumes the last 90 days of payments continue.
+
+16,24,588.60INR
+42,50,646.00INR
+
+11, 10, 30, 0
+
+Show what is due
+Dismiss
+Which invoices make up this number, and what did you assume about when they are paid?
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Ganesh Bearings Pvt Ltd #GBP-2012: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#GBP-2012
+
+Check these fields
+Dismiss
+Attach #GBP-2012 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Rajesh Steel Corporation #RAJ-2009: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#RAJ-2009
+
+Check these fields
+Dismiss
+Attach #RAJ-2009 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Rajesh Steel Corporation #RAJ-2008: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#RAJ-2008
+
+Check these fields
+Dismiss
+Attach #RAJ-2008 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Om Stationery Mart #OM -2002: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#OM -2002
+
+Check these fields
+Dismiss
+Attach #OM -2002 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+Compare a vendor statement
+Choose a statement…
+Attach and compare
+What I remember
+What I did

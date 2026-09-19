@@ -28,6 +28,7 @@ import AlertConsole, { AlertCorrectionPreview } from "@/components/audit/AlertCo
 import NotifyEmailPicker from "@/components/audit/NotifyEmailPicker";
 import DetailListEditor from "@/components/audit/DetailListEditor";
 import ChangeHistoryPanel from "@/components/audit/ChangeHistoryPanel";
+import MissedThis from "@/components/atlas/MissedThis";
 import { DetailEntry, INBOUND_DETAIL_LISTS } from "@/lib/correctableDetails";
 
 interface LineItem {
@@ -925,6 +926,26 @@ export default function AuditorReviewPage() {
 
               {/* Admin-only: who changed this invoice, when, and what (routers/audit_history.py). */}
               {isAdmin && <ChangeHistoryPanel invoiceId={invoice.id} refreshKey={historyRefreshKey} />}
+
+              {/* FE Gap 703 — "you missed this" on a RECORD, which is what D34
+                  actually says ("on any record"). It shipped on ATLAS lines
+                  only, which is the one place it is least needed: a line is a
+                  thing ATLAS already noticed. A miss is noticed here, on an
+                  invoice ATLAS said nothing about, by the auditor reading it.
+
+                  Not capability-gated and not gated on `isAdmin` above it: the
+                  endpoint is deliberately open to any grant (BE §17.7) because a
+                  miss is spotted by whoever happens to be looking, and §5.2 says
+                  this evidence is already invisible and under-reported. A gate
+                  would suppress exactly the reports that are scarcest.
+
+                  Not gated on `isResolved` either. Noticing that something was
+                  missed usually happens *after* the decision was made, and a
+                  control that disappears at the moment of the decision is absent
+                  for most of the cases it exists to catch. */}
+              <div className="pt-1">
+                <MissedThis entityKind="invoice" entityId={invoice.id} />
+              </div>
             </div>
 
             {saveNotice && (

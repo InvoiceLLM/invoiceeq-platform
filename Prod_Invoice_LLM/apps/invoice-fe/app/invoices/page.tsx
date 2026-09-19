@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import FilterBar, { FilterState } from "../../components/dashboard/FilterBar";
 import RecentInvoicesTable, { StatusTab } from "../../components/dashboard/RecentInvoicesTable";
 import OutboundFilterBar, { OutboundFilterState } from "../../components/dashboard/OutboundFilterBar";
@@ -9,6 +10,7 @@ import { PageHeaderActions, usePageHeader } from "../../components/layout/PageHe
 import { apiClient } from "../../lib/apiClient";
 import { useAuth } from "../../hooks/useAuth";
 import { toLocalDateString } from "../../lib/utils";
+import { INVOICE_STATUS_PARAM, INVOICE_VENDOR_PARAM } from "../../lib/atlas";
 
 // Relocated from dashboard/page.tsx (Task 4.9, Dashboard/Audit split) --
 // Dashboard is overview-only now; this page is the actual invoice queue.
@@ -33,7 +35,46 @@ function outboundTabToStatusParams(tab: OutboundStatusTab): { status?: string; s
 
 type InvoicesTab = "receiving" | "sending";
 
+/**
+ * FE Gap 702 — THE OTHER HALF OF THE SEAM. This page now reads the two query
+ * parameters `lib/atlas.ts::actionDestination()` sends, and those two functions
+ * were changed in the same commit.
+ *
+ * The gap that produced this was filed rather than worked around precisely
+ * because the tempting fix is to append a query string and stop: a parameter one
+ * side sends and no page reads is the F33/F22 defect class in miniature -- it
+ * looks like the feature works while doing nothing. So the parameter names are
+ * imported from `lib/atlas.ts` rather than retyped here; two literals that agree
+ * today are how the seam reopens.
+ *
+ * Only `status` and `vendor` are read, because they are the only two the ATLAS
+ * destinations send and the only two `GET /invoices` filters on by a single
+ * value. `tag` and the date range stay component state -- lifting them would be
+ * a URL-state refactor nobody asked this change for.
+ */
+function urlFilters(params: ReturnType<typeof useSearchParams>): Partial<FilterState> {
+  const seeded: Partial<FilterState> = {};
+  const status = params?.get(INVOICE_STATUS_PARAM);
+  if (status) seeded.status = status;
+  const vendor = params?.get(INVOICE_VENDOR_PARAM);
+  if (vendor) seeded.vendorName = vendor;
+  return seeded;
+}
+
+/**
+ * `useSearchParams()` opts a page into client-side rendering and Next 14 requires
+ * the boundary to be explicit, so the page body moved down one level rather than
+ * the hook being smuggled in through `window.location`.
+ */
 export default function InvoicesPage() {
+  return (
+    <Suspense fallback={null}>
+      <InvoicesPageBody />
+    </Suspense>
+  );
+}
+
+function InvoicesPageBody() {
   // FE Gap 110: title + SENTINEL badge now live in Shell's one shared header.
   usePageHeader({
     title: "Audit Queue",
@@ -43,11 +84,17 @@ export default function InvoicesPage() {
   });
 
   const { loading: authLoading } = useAuth();
+  // FE Gap 702: read once, at mount. The seed decides what the first fetch asks
+  // for; after that the user's own filter edits own this state, and a later URL
+  // change is a navigation, which remounts.
+  const searchParams = useSearchParams();
+  const [seededFilters] = useState<Partial<FilterState>>(() => urlFilters(searchParams));
   const [filters, setFilters] = useState<FilterState>({
     vendorName: "",
     dateRange: "all",
     tag: "",
     status: "",
+    ...seededFilters,
   });
 
   const [invoices, setInvoices] = useState([]);
@@ -301,6 +348,11 @@ export default function InvoicesPage() {
             availableVendors={uniqueVendors}
             availableTags={uniqueTags}
             statusFilterDisabled={activeTab !== "all"}
+            // FE Gap 702: the bar must SHOW the filter the URL asked for, not
+            // just have it applied behind the scenes. A list quietly filtered by
+            // something the controls do not display is worse than an unfiltered
+            // one -- the user cannot tell why rows are missing, or clear it.
+            initialFilters={seededFilters}
           />
 
           <RecentInvoicesTable

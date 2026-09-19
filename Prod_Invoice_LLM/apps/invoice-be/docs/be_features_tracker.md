@@ -48,6 +48,7 @@ This document tracks the implementation progress of the reconciled backend featu
 - `[x]` [Feature 29: LLM Optimisation — model roles, chat accuracy with and without attachment, generic answering architecture, knowledge layer](feature_29_llm_optimisation.md) — **CLOSED 2026-09-07** (founder: "delete terra and complete feature 29 development"). Final roles: primary/fast = `gpt-5.6-luna`, judge + chat_summary = `gpt-5-mini`; **no long_doc role** — 29.10 hand-graded Luna 3/3 vs Terra 3/3, Terra deleted, `AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME` removed (Gap 489); 29.11 entity resolver built behind `ENABLE_ENTITY_RESOLVER=false` (Gap 490, 17 Postgres tests); 29.20 rollout plan in spec §10.1, not applied. 29.13–29.19 moved to Feature 30. Open and filed: Gaps 477, 478, 480, 488, FE Gap 470. Spec written 2026-09-06 from the five-model matrix (`runs/matrix-20260905T092330Z/decision.md`), the chat report (as-is vs full-record: gpt-5-mini 22.2% → 52.8%), the 16-turn attachment probe (same 5 turns failed on Luna / gpt-5-mini / Terra), Gaps 470–473, `docs/architecture/knowledge-layer-plan.md` and `docs/architecture/chat-generic-answering-research.md`. Roles: primary/fast = gpt-5.6-luna, judge = gpt-5-mini, long_doc = Terra pending 5 golden cases, full-record chat summary = gpt-5-mini, no escalation. 20 tasks in five tracks (migration close-out, evidence + answer contract, attachments, grounding + generic layer, rollout); **all 9 decisions ruled 2026-09-06** (cap 25; split summary model; abstain names the gap + next step; calibration 30 now/100 before planner; global examples; parameterised tenant WHERE; session drafts cards, founder spot-checks; planner on attachments first; keep Terra, delete Sol/Astra). **Founder build go 2026-09-06 ("Approved to implement the whole feature solution to Azure env … Hardstop after 2 hr"); build in progress under `.claude/tasklists/senior-dev-be29-llm-optimisation.md`.** Dev only; `params.prod.json` untouched by every task.
 - `[~]` **Feature 32 (placeholder): CANCELLED 2026-09-14 — MERGED into Feature 33 §3.7, founder ruling** ("the analyst agent is for getting the user's business profile along with helping the user understand priorities better"). Discover / Propose / Configure below are now Feature 33 tasks 33.22–33.24 and its onboarding scope; the open cadence question is Feature 33 §8 Q9. No spec was ever written for this number and none will be. Original: Business profile discovery and guided configuration — founder idea 2026-09-09: "think of something to understand the customer docs well as a first step and then the system should align itself to show what additional is needed and end client can configure it thru trainer". Three stages: **Discover** (profile the tenant from its own documents: doc types, vendors, currencies, tax regimes, fields present/missing, payment habits, document chains), **Propose** (plain-language rules with defaults the system needs from the tenant, e.g. default terms per vendor, treat proformas as commitments, auto-apply credit notes, enable partial payments), **Configure** (accept/edit/reject each in the Trainer; the Trainer becomes where the business's conventions live). Discussion deferred by the founder ("lets handle it later just keep a feature placeholder"); open question when resumed: onboarding scan vs continuous learning vs both. No spec, no code. **Amended 2026-09-15:** the merged scope now also covers the **routine questionnaire** — Feature 33 tasks 33.28–33.31, spec §3.7 *Ask the owner* — six questions about how the business actually runs (payment run day, PO-before-invoice, invoice approval, month-close day, collections owner, approval threshold), stored in the new `tenant_profile_rule` table with `source="atlas_onboarding"`, listed read/edit in the Trainer, re-asked only on a detected contradiction. This is the **Discover half the original placeholder did not have**: Discover reads what the documents say, the questionnaire asks what only the owner knows. The cadence question (Q9) stayed as ruled — after the first ingest batch settles, not first login — now with an hourly debounce on the material-coverage re-trigger (33.33).
 - `[ ]` [Feature 33: The Analyst Agent (ATLAS) — one investigative loop at three scopes: the chat bubble (resolve-first plan replaces the doc-type dispatch), the owner's tenant-wide intelligence (weekly + event-driven, producing Today's lines and briefing; Gap 30's LLM-authored dashboard panel removed) and onboarding (business profile + conventions)](feature_33_analyst_agent.md) — **SPEC APPROVED IN INTERVIEW 2026-09-15, awaiting build go-ahead. All 9 open decisions closed; build not started; three flagged slices A→B→C, full BE suite on real Postgres at each checkpoint.** Rulings 2026-09-15: (1) facts persist after TTL — the document row expires, `Fact` rows stay; hard delete still cascades in-transaction; (2+3) clearance **by role** (every Admin `exec`, Auditor/Trainer `ops`, **no Executive role**) + **Option C** sharing (a payment fact on an invoice ops already sees flows down as `ops`; the statement and every non-invoice line stay `exec`); (4) planner **on for tenant + onboarding only**, attachment stays `plan_by_rule()` until Feature 29 CP2; (5) statements are **chat attachment only** — staleness becomes an input request, no ingest door; (6) figures-only gate accepted for v1, claim-level verifier deferred; (7) scope is **full FP&A** — capabilities `pnl_by_period` / `margin_per_customer` / `margin_per_item` / `budget_variance_per_account` / `expense_category_trend`, new `budget` fact kind + `emit_budget`, P&L projection beside cash runway, each card `NOT_CHECKED` → input request, never an empty tile; (8) name is **ATLAS**, authored in a new `agents/atlas_prompts.py`, pairs with SAGE; (9) Discover runs **after the first ingest batch settles** (`ANALYST_ONBOARD_MIN_DOCS` = 10), **not first login**, re-running on material coverage change. Beyond the nine: **conventions are answered on Today**, not in the Trainer (`/today/{id}/accept|edit|reject`, rule written to the existing store with `source="atlas"`; Trainer only lists it); new **§3.8 Actions** — `kind="action"` capabilities, confirm-then-execute, role-gated (Admin setup / Auditor record / Trainer rule), every execution logged to `action_log`, never autonomous in v1 (tasks 33.25–33.27); defaults ruled — per-currency forecasts with no conversion, weekly job Monday 06:00 UTC, Gap 30 panel returns template text until FE 22 ships, Today lifecycle + `ANALYST_SUPPRESS_AFTER`=3, attachment `follow_ups`=1, `/today/{id}/dismiss` + `/scenario`; `AnalystScope.kind` corrected to three kinds. Retained from the 2026-09-10 spec: persistent facts from chat attachments (D2/D3 kept), one clearance predicate on every read path, dependency table → input requests, forecast tiers certain/committed/recurring/estimated, SAGE answers while ATLAS investigates, advises and (on confirmation) acts. 28 tasks (33.1–33.27 + 33.14a). New §9 records the approved six-step UX walkthrough. Prerequisites: Feature 30 §11.7 (Gap 477 → 30.19 → 30.20); ~~Feature 31~~ cancelled 2026-09-14. FE counterpart: FE Feature 22. **Amended 2026-09-15 (walkthrough rulings), spec §8.2 — marker stays `[ ]` until Slice A's checkpoint passes.** Ten rulings, one sentence each: (1) a **routine questionnaire** of six questions (`payment_run`, `po_before_invoice`, `invoice_approval`, `month_close_day`, `collections_owner`, `approval_threshold`) asked once at first login on the Setup path or right after the first Discover on the Ingest path, chip or free text, every one skippable, stored in a **new `tenant_profile_rule` table** with `source="atlas_onboarding"`, edited in the Trainer, re-asked **only on a detected contradiction**, driving five deterministic Today effects (tasks 33.28–33.31); (2) an **Admin "Run now"** — `POST /today/run`, Admin-only, once per 10 minutes per tenant via a **Redis key TTL** (no rate-limit library exists in this backend; `slowapi` absent), 429 with `retry_after_seconds` (33.32); (3) a **Discover debounce** — material-coverage re-trigger at most once per hour per tenant, a suppressed re-trigger logged and never queued for later (33.33); (4) **upload mechanics** — the browser's native file picker to the existing ingestion / chat-attachment endpoints, a typed request yielding an `attach_prompt` bubble with the target and `_accepted_content_types()`, **ATLAS never opens the disk**, the Ingestion page stays under Records (33.34, spec §3.9); (5) an **input-request phrasing contract** — every request names an exact document kind and a quantified unlock from `unlock_value()` via `render_input_request()`, one template per `INPUT_KINDS` entry, asserted at all three emission moments (33.35, amends 33.12); (6) the **classic layout** is a per-user switch to the existing sidebar nav plus a `Today` item, landing `/dashboard`, placed beside the theme toggle in the header and persisted through `/me/preferences` (FE 22.21 + BE **33.39**, the new `User.ui_prefs` store); (7) the **credit note `BHF-CN-2010` is demo attachment turn 11** — a `card_net_position` bubble against BHA-2003 plus a new `auto_apply_credit_notes` convention proposal, **not** an excluded document and **not** a revival of Feature 31 (33.36, 33.40); (8) **June + July bank statements** generated beside the existing Aug one so `recurring` / `estimated` have ≥3 months of depth, Aug left byte-identical, plus a `showcase/vpi_demo/README.md` rewrite owned by business-analyst (33.38); (9) a **pre-onboarding Today state** — below `ANALYST_ONBOARD_MIN_DOCS` (10), `GET /today` returns `{state: "pre_onboarding", docs_seen, docs_required}` and nothing else (33.37, spec §3.10); (10) **non-Admin first login** is welcome + short tour only, persisted via `first_run_seen` / `tour_seen` in `user.ui_prefs` (FE 22.14 + BE 33.39). **Five founder defaults recorded 2026-09-15 (spec §8.3, "default, founder to override")**: the questionnaire gets its **own `tenant_profile_rule` table** rather than a stretched `TenantChatRule`; the approval threshold is a **sixth question** defaulting to **₹1,00,000 in tenant currency**; `collections_owner` is a **user picker bound to a `User` row** with a free-text fallback; the classic-layout toggle **stays indefinitely** with no retirement trigger; and a **non-Admin sees the same ranked Today list** filtered by clearance and role with the owner-facing lines hidden — no separate section set (closes FE Feature 22 §7 Q4). **New task range 33.28–33.40; total 28 → 40 tasks.** Revised slice membership: **A** = 33.7–33.11 + 33.39 (its columns ride in the same migration `a1b2c3f33001`, which now also adds `tenant_profile_rule`, `tenant_chat_rules.source` and `user.ui_prefs`); **B** = 33.1–33.6, 33.12–33.20, 33.25–33.27, 33.32–33.35, 33.37 (sub-sequenced: loop → numbers → job/routes → cleanup/actions); **C** = 33.22–33.24, 33.28–33.31, 33.36, 33.38, 33.40, then 33.21. New config: `ANALYST_RUN_NOW_COOLDOWN_SECONDS=600`, `ANALYST_DISCOVER_DEBOUNCE_SECONDS=3600`, `ANALYST_APPROVAL_THRESHOLD_DEFAULT=100000`. Ground-truth corrections folded into the spec so nobody re-derives them: `queue_worker/main_worker.py` dispatch is a string `if/elif` chain (~line 197 + a `data.get("task")` branch ~line 290) with **no handler registry**, so 33.15 adds an explicit branch and import; `routers/today.py` is confirmed **absent** from `routers/` (correct as specced); no rate-limit library and no per-user preference store exist today. Sequencing, checkpoints and per-specialist gates are spec §6.1; the **VPI demo E2E on a real stack (Day 1 → Day 30 plus all 17 README §6 SAGE questions re-asked post-ATLAS) is the acceptance gate**. **No Gaps filed by this amendment** — per `feedback_no_code_without_gap` a Gap is filed for any defect found *during* the build, in the same change as its fix; Feature 33's own tasks are spec tasks and do not need Gap entries.
+- `[~]` [Feature 34: ATLAS — the analyst that recommends: a per-role guide that notices, recommends the next action, explains why in the user's terms, does it on one click, and teaches the user to verify it](feature_34_atlas.md) — **SPEC APPROVED 2026-09-17 (decision record `atlas_discussion.md`, D1–D33 / Q1–Q14). Build started 2026-09-17 on branch `feature/atlas`, Slice A only; nothing merged. Marker flipped `[ ]` → `[~]` the same day, when Slice A's verification passed against real Postgres (`31 passed`, `tests/test_atlas_contract.py`) — never `[x]` while Slices B and C are unbuilt.** **Supersedes Feature 33** (and, with FE Feature 23, FE Feature 22); both files are kept, not deleted — they hold the reasoning this spec reverses. **This spec owns every contract between the two apps** (payload shapes, field lists, enum values); FE Feature 23 consumes them and never restates them, because the F33/F22 seam — a live event promised by two specs and published by neither, a field the FE read that the BE never emitted — is where this session's worst defects lived. **Ground truth established at build start and worth not re-deriving: Feature 33 was never built.** There is no `agents/atlas_prompts.py`, no `services/analyst*`, no `services/clearance.py`, no `routers/today.py`, no capability registry and no `AnalystScope` anywhere in `apps/invoice-be` (repo-wide grep over `*.py` for `ATLAS|analyst|AnalystScope|/today` hits only `benchmarks/extraction/*`, `routers/dashboard.py` and `scripts/run_extraction_benchmark.py`, all unrelated). **Spec §8 ("What Feature 33 loses") is therefore a no-op** — there is no clearance service, no dual analyst run and no `actionable` flag to delete — and §3.1's "keep 2, move 6 off screen, build the rest" reduces to *build all of it*. §8 is flagged here rather than rewritten (CONVENTIONS hard rule 4, additive only); the spec body carries the same note in §8. What §2.1 builds on **does** exist: the grant flags `can_audit` / `can_train` / `can_load` / `can_send_invoices` are real columns (`models.py:669-676`, `RoleMapper.ROLE_PERMISSION_DEFAULTS`, `TenantContext` at `dependencies.py:39`, resolved via `resolve_permissions()` at `dependencies.py:312` — Feature 1.1 / Gap 73). **12 tasks (34.1–34.12), three slices** (`.claude/tasklists/senior-dev-be34-atlas.md`): **A** = 34.1–34.2 (the capability declaration and the recommendation contract) · **B** = 34.3–34.5 (Auditor / Trainer / Loader skills, vendor-statement recon, the claim → witness rule) · **C** = 34.6–34.12 (hooks, assignment/collapse/escalation, batch accept + undo, forecast-as-warning, visible memory, notifications, cold start). **34.8 is BLOCKED on Q6** ("how is a batch acceptance undone?") and does not start — D8 cannot ship without it; the contract built in Slice A therefore ships the batch *guard* (`assert_batch_acceptable`) without any batch endpoint to call it. **Slice A, built 2026-09-17:** `services/atlas_capabilities.py` (`AtlasCapability`, `GrantSet`, `visible_to()` — a line whose capability the user lacks is **absent**, never disabled, and zero grants means zero lines, D3) and `services/atlas_contract.py` (`Recommendation` = what / why / action / verify, a line missing any of the four failing construction; `batchable` **computed**, never supplied, from certainty × reversibility per D26/D29; `assert_single_currency` per §7.4/D32; `assert_figures_are_witnessed` + `assert_no_undeclared_numbers` per §5.3 — both deterministic code, not prompt rules, per CONVENTIONS hard rule 3, because "never invents a number" is the easiest boundary to break by accident when prose comes from a model). `ops` / `exec` clearance is **not introduced at all** (D1) — the removal task is satisfied by never building it. Verified `tests/test_atlas_contract.py` against real Postgres at `localhost:5433/invoice_db` — **`31 passed`**, with `test_grants_resolve_from_real_user_rows` confirmed **PASSED not SKIPPED** under `-v` (a bare "31 passed" does not prove the file's one Postgres test ran). All six §11 invariants covered, with one caveat stated rather than papered over: "an outbound message cannot be sent by a batch endpoint" is asserted against `assert_batch_acceptable`, **because there is no batch endpoint** — 34.8 is blocked on Q6 — and must be re-verified end-to-end when one exists. No migration: Slice A persists nothing, and a table with no writer would be speculative. **One Gap filed from this build: BE Gap 689** (a transient Postgres connection error turns a Postgres-only test into a silent SKIP, in 31 test files — BE Gap 666's failure mode, caught when two runs of the same file minutes apart reported `31 passed` and then `1 skipped`). **No other Gaps filed by Slice A** — per `feedback_no_code_without_gap` a Gap is filed for any defect found *during* the build, in the same change as its fix; Feature 34's own spec tasks are spec tasks and do not need Gap entries. FE counterpart: FE Feature 23 (`apps/invoice-fe/docs/feature_23_work_screen.md`), not started, gated on this. **Amended 2026-09-17 (founder rulings, all 13 open questions closed) — marker stays `[~]`, nothing is merged.** Decisions D34–D46 in `atlas_discussion.md`; effect on the spec is new §13, which supersedes §9's question table and §10's task list without rewriting either. Eleven questions ruled, two (Q3 `clearance` columns, Q8 `ENABLE_ANALYST_ACTIONS`) found **moot** — both were written against Feature 33 code that was never built, confirmed by grep over `models.py`, `alembic/versions/` and the whole `*.py` tree. **What the rulings delete:** all of §6 and task 34.11 — **ATLAS has no notification channel and speaks only when a user opens the app** (D36, reverses D27); §4's event hooks and absence clock, so 34.6 collapses to a sign-in recompute and absence becomes a query rather than a clock (D38, reverses D23); escalation (D37 — §2.2/D20 already makes the Admin the superset); and batch accept, so **nothing is batchable in v1** and 34.8 leaves the critical path (D42, narrows D8). **What they add:** the Auditor sees the **full cash position, forecast and runway** (D44, **reverses D2 for that role**; FP&A and margin stay chat-only per D16); a tenant may have **many ingestion sources**, dropping `uq_autopilot_config_tenant` and giving ingestion paths a source id — new task **34.13**, and the one schema change these rulings require (D43, unblocks D13); a Trainer's correction line shows the invoice **before and after** the fix (D45, the concrete form of D21's "proof the teaching worked"); and a "you missed this" affordance as the only false-negative detector — new task **34.14** (D34). **Claims and vendor baselines are derived at check time, not stored** (D39, no new tables), with each line **showing its own working** — "4× their usual ₹40–60k across 14 invoices" — which bounds §7.2/D31 rather than breaking it (D40) and needs no contract change, since Slice A's `Figure(source=COMPUTED, computation=...)` already carries that provenance. §7.3's volume threshold reuses §2.2/D20's collapse-by-area rather than a queue mode (D41), and there is **no quiet floor** — ranking pushes small uncertain items down, never hides them (D35). **Task count 12 → 9 built + 2 new + 2 not built.** **Three consequences were put back to the founder as risks and accepted as stated, recorded in §13.4 so they are not later read as oversights:** a derived baseline cannot be corrected (answered by D40); absence is noticed only on sign-in, so a vendor who stops billing goes unnoticed until a visit (D46 — the same trade D36 already makes); and a user-reported miss under-reports badly, leaving the miss rate unknown including whether it is worsening (D34, accepted deliberately). **No Gaps filed by this amendment** — these are spec tasks, not defects; per `feedback_no_code_without_gap` a Gap is filed for any defect found *during* a build, in the same change as its fix. **Slice B built 2026-09-17 (34.13, 34.3, 34.4, 34.5) — marker stays `[~]`, nothing merged, nothing committed.** Spec §14 is the as-built record. **34.13 (D43):** migration `a1b2c34d13e5` drops `uq_autopilot_config_tenant`, adds `tenant_autopilot_logs.source_config_id` + index, and adds `UNIQUE(tenant_id, source_type, source_ref)` in its place (registering the same folder twice would double-ingest it); `services/autopilot_sync.py` gains `list_ingestion_sources()`, `run_sync(config_id=…)` and `run_sync_all_sources()`, the incremental watermark becomes **per source** (it filtered on `source_type`, so a success against one Drive folder would have moved another folder's `since` forward and permanently skipped every file added before that instant), `run_sync_for_all_due_tenants` now names the source it iterates (it looped per config but called `run_sync(tenant_id)`, which re-resolved to the first config — correct with one source, a bug with two), retention prunes per tenant at the **longest** of that tenant's windows, and `POST /autopilot/sync` covers every source. `GET`/`PUT /autopilot/config` stay single-source deliberately — the add-a-second-source surface is FE work, stated in §14.2 rather than hidden. **34.3:** `services/atlas_skills.py` — Auditor lines carry the **full cash position, forecast and runway** and declare `AUDIT` (D44's reversal of D2 *is* that one word, since the Admin is the superset); Trainer correction lines carry the invoice **before and after** (D45) via the new contract `Correction` block, and a low-confidence field line carries **no** correction because there is no computable "after" and the after is the value the click writes; Loader lines are **per ingestion source** (D43), with the fix and not the fault, plus a stuck-vs-in-flight line that is deliberately tenant-wide. **34.4:** `services/atlas_recon.py` — the four buckets, decided by `Decimal` arithmetic (hard rule 3), matched on invoice number and never on amount, with a second digits-only pass that **refuses to pair when it is ambiguous**; no line is emitted for agreement; short payments name a likely reason from a fixed percentage table; "they show and we do not" is `LEAVES_COMPANY` so it can never batch. **34.5:** `services/atlas_doubt.py` — §3.3's three steps as code with **no new tables** (D39): claims derived from extracted fields through the fixed witness mapping, the vendor baseline computed at check time (excluding the invoice under test, per currency), holding the witness means **check silently and emit nothing**, and each ask **shows its working** (D40) as `Figure(source=COMPUTED, computation=…)`. **Contract extended twice, deliberately and reported:** `Correction` (+ optional `Recommendation.correction`, both halves flowing through `prose()` so §5.3's number rules cover them) and `numeric_tokens()` made public, used only to declare numbers inside a string ATLAS reproduces **verbatim** (an extraction alert) rather than composes. **Verified on real Postgres at `127.0.0.1:5433/invoice_db`** (127.0.0.1, never `localhost` — BE Gap 689): `test_atlas_contract.py` + `test_atlas_skills.py` + `test_atlas_recon.py` + `test_atlas_doubt.py` = **59 passed**. **34.13 is code-complete but UNVERIFIED on the database — BE Gap 690 filed and blocking:** `alembic upgrade head` fails with `Can't locate revision identified by 'a1b2c3f33003'`, a revision in no branch, so the migration could not run; `tests/test_autopilot.py` is **40 passed / 3 failed** and `tests/test_atlas_ingestion_sources.py` is **6 errors**, every one of them `column source_config_id does not exist` and nothing else. Those tests are left **red and naming the gap** rather than skipped (BE Gap 689's rule), and no DDL was hand-applied — re-stamping `alembic_version` changes shared state on a judgement about an unaccounted-for revision and is the founder's call. **34.8 and 34.11 remain NOT BUILT** (D42, D36) with no skeleton of either, and Slice C (34.6, 34.7, 34.9, 34.10, 34.12, 34.14) is untouched. **AMENDMENT 2026-09-18 (additive — nothing above is rewritten): Slice C is built.** Tasks 34.7 (a–g), 34.9, 34.10, 34.12 and 34.14 landed on branch `feature/atlas`, uncommitted, on top of commit `2baf8bb`; **ATLAS can now act, on exactly two kinds** (`resolve_invoice`, `retry_ingestion_source` — D50/D51), lines arrive **ranked** (D30), and the Admin's screen collapses other grant-holders' work by area (D20/D41). **34.8, 34.11, escalation and every background job are ruled out, not pending** (D42, D36, D37, D38) and no skeleton of any of them exists. The marker stays `[~]` — every buildable task is done, but two new backend surfaces have no FE at all: nobody can read or edit a memory rule (§7.2's whole promise) or see the action log (§5.3's "what ATLAS did is a real list") outside `curl` — FE Gaps 700 and 701. See the section "ATLAS Slice C (2026-09-18)" below and BE Feature 34 §17; the end-to-end proof is §17.11 (a real browser click on **Approve** that ended with `invoice.status = 'PAID'` read back out of Postgres). **AMENDMENT 2026-09-18 (additive — nothing above is rewritten): the six defects the VPI demo tenant exposed are fixed as Feature 34 work, on the founder's instruction that they are the feature being finished rather than a gap pass.** Three were already filed and are now closed — **BE Gaps 704, 705, 706**, each with its fix and its evidence in the entries below. Three were not filed and are deliberately not being filed now, because the founder scoped them as feature work: **(a)** §2.2's collapse predicate asked whether a capability *existed* rather than whether another user *held the work*, so every area read "someone else is working this" on a one-person tenant — `capabilities_held_by_others()` is replaced by `capabilities_worked_by_others()`, which reads `atlas_action_log` and `atlas_dismissals`; **(b)** an area's count counted lines, so "Decisions — 5 pending" meant two invoices, two doubt asks about the same two, and the cash tile — it now counts distinct work subjects and excludes tenant-level tiles from areas entirely; **(c)** the double render, which is the FE's (FE Feature 23 §16). **`AreaRow.count` is now pieces of work, not lines** — `count <= len(line_ids)`, a wire-visible change. **Every one of the six passed 149 backend and 155 frontend tests**; they were found by one person looking at one screen. The new tests assert the rendered sentence and the acted-on number, and each was confirmed to fail against the pre-fix code. Full account in **Feature 34 §18**. Marker stays `[~]`: this pass fixed what real data exposed, it did not close the remaining task list.
 - `[~]` [Feature 31: Invoice-family sub-types (credit / debit notes, proformas, receipts)](feature_31_credit_debit_notes.md) — **CANCELLED 2026-09-14, founder ruling.** "Only invoice documents should be ingested" is user training, not code: ingestion doors are for invoices; notes / proformas / receipts are attached in chat, where Feature 26 comparison + Feature 30 cards (existing `card_net_position` for CN/DN) tell the user the effect on the impacted invoice and the user decides manually. Both drafts (2026-09-09 adjustment lifecycle; 2026-09-14 ledger-scope routing) are retired; no routing, schema or lifecycle change will be built. Guidance goes in Help Center articles (FE Gap 259), FE Feature 22 `FirstRun`, and Feature 33 §3.5 input requests. Accepted, not a gap: no bubble card yet for `PROFORMA_INVOICE` / `RECEIPT` attachments (comparison turn still runs); file under Feature 30 only if customers attach those. **Amended 2026-09-15 (walkthrough ruling 7), cancellation unchanged:** the credit note `BHF-CN-2010` is now **demo attachment turn 11** — the existing `card_net_position` bubble (`services/attachment_insights.py:952`) against BHA-2003, plus a new Feature 33 `auto_apply_credit_notes` **convention proposal** (Feature 33 tasks 33.36 / 33.40, spec §3.7 *Propose*). This **does not revive Feature 31**: no sub-type lifecycle, no CN/DN routing, no partial payments, no schema change; D2 / D3 still hold (no `Invoice` row is written, no aggregate moves — asserted by 33.36's test). The demo README's "credit note removed from scope 2026-09-09, see Feature 31" line is stale and is rewritten by business-analyst. The "no bubble card yet for `PROFORMA_INVOICE` / `RECEIPT`" note above **stands**.
 - `[x]` [Feature 30: Business Intelligence — temporary insight block for non-invoice financial documents attached in chat](feature_30_business_intelligence.md) — split from Feature 29 tasks 29.14–29.19 on 2026-09-07; spec authored, not approved for build. **Amended 2026-09-07 evening (spec §8)** from the founder's Chat-Attachment Intelligence Spec: ten rulings — lifecycle for every finding (no pin), eight doc types incl. bank statement with a ledger table and challan/GRN, two-stage sync→async bubble over SSE, five bubble actions incl. hold/dispute/paid, bank match ±1 unit / ±5 days with tenant override, per-tenant vendor master, prerequisites as phase 0 (30.0a–g), thresholds as code constants with tenant override. Still not approved for build. **BUILD STARTED AND PARTIALLY LANDED 2026-09-08** (founder go: "comit and start development"; tasklist `.claude/tasklists/senior-dev-be30-business-intelligence.md`, 4 h hard stop). **Done, all behind `ENABLE_ATTACHMENT_INSIGHTS=False`:** phase 0 items 30.0a/0d/0e/0f/0g (one add-only migration `a1b2c3f30001` — `insight`, `bank_statement_line`, `vendor`, `vendor_alias`, `tenant_insight_setting`, + 5 `chat_attachments` columns; `services/insight_thresholds.py`, `services/insights.py`, `services/vendor_master.py`, `services/region.py`; TTL sweep skips retained rows; `GET /chat/insights`, `POST /chat/insights/{id}/transition`, `GET /chat/insights/{id}/discuss`, `POST /chat/vendors/aliases/confirm`), and the bubble itself — **30.1, 30.2, 30.12, 30.17** (`services/attachment_insights.py` with six deterministic cards, two-stage sync→async runtime, `enqueue_insight_job()`/`handle_insight_job()`, `insight_update` over the existing SSE channel, `MessageResponse.insights` additive). **89 tests passed on real Postgres** across 6 new files; neighbours `test_chat_progress/test_chat_doc_content_branch/test_h16_answer_contract/test_answer_contract/test_full_records/test_entity_resolver` **137 passed** (one expectation updated for the new contract key). **Not done at the hard stop:** 30.0b, 30.0c (table only, no extractor output), 30.3–30.11, 30.13–30.15, 30.18; 30.16 deferred by spec. **Deviations recorded in spec §9:** the REFERENCE discriminator was NOT extended (F27 taxonomy frozen — `STATEMENT_OF_ACCOUNT` used for R2's bank statement); one migration for all of phase 0; retention follows OPEN *or SNOOZED*. **Open: BE Gap 491** (R4's hold/dispute are not real `Invoice.status` values). **PASS 2 (2026-09-08 afternoon, founder: "feature 30 BE full completed") FINISHED THE FEATURE.** Added: 30.0b (`services/doc_linking.py` + first-link confirmation endpoints), 30.0c (REFERENCE schema widened — **Gap 493** — plus `services/bank_ledger.py`), 30.3/30.4 (migration `a1b2c3f30002`: `v_vendor_spend`/`v_overdue`/`v_tax_summary`/`v_3way_match`; `services/semantic_views.py` with the import-time tenant-parameter guard), 30.5 (`services/bank_matching.py`, R5 tolerances via `threshold()`, POSSIBLE_DUPLICATE for a bill paid twice), 30.6 + 30.18 (ten async cards, each reporting the R9 threshold it used), 30.7 (`services/knowledge.py`, glossary-aware narration), 30.8 (migration `a1b2c3f30003`: `certified_sql_example`; only certified rows retrievable), 30.11 (`services/rule_cards.py`, eight deterministic checks, a card naming a missing check never passes), 30.10 (**5 EU/US cards from sources actually fetched 2026-09-08**), 30.13 (`chat_correction` + flywheel endpoints + 2 workbook panels + `insight_bubble`/`insight_feedback` telemetry), 30.15 (`insight_golden.json` 20 cases + `run_insight_eval.py`; **deterministic run 20/20 cases, 21/21 figures exact, 0 fabrications**). **Gap 492 carried through everything: the bubble is information only — nothing in Feature 30 writes `Invoice`, asserted in three test files; Gap 491 withdrawn.** **Verification: 278 passed across the 16 Feature 30 test files on real Postgres, no live model.** New defects found by this build and filed: **Gap 493** (REFERENCE schema could not carry `payment_terms` etc., so `card_terms_check` was structurally dead) and **Gap 494** (semantic-view `UUID`/`date`/`Decimal` values broke the bubble at COMMIT; central `jsonable()`). **Still open: 30.9** — the three India cards are `status: unverified` skeletons with no rule text because every CBIC/GSTN primary source was unreachable (JS-only pages, TLS failure, WAF); founder call needed. **30.14 not done by its own precondition** (no Feature 29 recall instrumentation showing ranking is the limit). 30.16 deferred by spec. One neighbour test was updated rather than worked around: `test_invoice_builder.py::test_the_notes_column_is_a_migrated_column_on_a_single_head` pinned the Alembic head to `e7f8a9b0c1d2` BY NAME, so any later migration failed it; it now asserts what its own docstring says it protects — exactly ONE head (no branching) with `e7f8a9b0c1d2` in its ancestry. Full suite after Feature 30: **6 failed, 3738 passed, 13 skipped**; the 5 remaining failures are environment-dependent and pre-existing (**Gap 495**). **Founder rulings 2026-09-08 evening:** 30.14 closed as not needed (no reranker); Gap 495's five tests deleted; 30.9 India cards await the founder's pasted CBIC/GSTN wording — the only open BE task. **BUILD 2026-09-13/14 (founder: "develop, test, review and verify"; 1 h hard stop 11:37–12:37):** tasks **30.19** (`CheckLog` PASS/FAIL/NOT_CHECKED, unchecked subjects reach `checks_not_run`), **30.20** (`Claim` + `CLAIM_TEMPLATES` + `money_text()`), and the **L1 claim verifier** (`verify_claims()`, `Claim.asserts`) landed; cards migrated: terms_check, bank_reconcile, agreed_vs_billed, cash_cover, open_po_value, cash_out_timing, delivery_vs_order, compliance; new cards payment_application (Gap 518) and linked_duplicates (Gap 517.3). Gaps 509/510/511/512/513/515/517/518/519 closed (each entry carries its evidence). **30.9:** all four CBIC/GSTN primary sources probed 2026-09-14 — `einvoice1.gst.gov.in` ECONNRESET, `tutorial.gst.gov.in/userguide/einvoice/` 404, `cbic-gst.gov.in` JS shell redirecting to `taxinformation.cbic.gov.in`, which fails TLS (`unable to verify the first certificate`); the three IN cards stay `unverified` and `card_compliance` now surfaces them as `NOT_CHECKED` naming the rule and its source instead of "no IN rule card applies" (`tests/test_insight_track_b.py`). **Verification (real Postgres):** F30 file set + guards 210 passed; Track C/D + chat neighbours 272 passed; new `tests/test_insight_claims.py` 22, `tests/test_insight_track_b.py` 16, `tests/test_no_hardcoding.py` 4/4. Full 1h23m suite NOT re-run inside the hour (last full run 3787 passed before Tracks B–D). **Also done:** FE Gap 472's BE half (`insight_id` stamped on every finding; rows opened before the payload is written, both stages). **Not done:** 30.15 live narration eval RAN 12:01–12:06 (`--narrate`, gpt-5-mini): **18/20 cases, 21/21 figures exact, 0 fabricated figures, 20/20 contract gate held.** The two failing cases are golden expectations that encode pre-30.19 behaviour and need a founder call before the golden bank is edited: `statement_four_matches_in` expects `bank_reconcile:unmatched_debit:*` as a FINDING (Gap 515.2 made it NOT_CHECKED by design) and `credit_note_net_position_in` expects `compliance` SKIPPED (the IN cards now surface as NOT_CHECKED, status ok). The run also exposed **Gap 522** (17/20 model verdicts print raw floats — narration was left out of 30.20's one-renderer rule), Track E STILL OPEN at the 12:37 hard stop: FE Gap 470 (render provenance/abstention), FE Gap 471 (spec §2 table correction), FE Gap 472's FE half (drop the mount-time join, read `insight_id`); FE Gap 478 collision RESOLVED (theme entry renumbered to FE Gap 496). Golden bank re-baselined on founder's word ('re-baseline'): deterministic 30.15 run **20/20**. (Previously: Gap 514 + FE 478 — FE 478 needs a fresh number first, it collides with the theme gap filed on the other machine), Gap 516 **CLOSED IN FULL 2026-09-14** (half 2, the classifier miss, spec §12.8; half 1, the `BANK_STATEMENT` type split, spec §12.9, after the founder's narrow unfreeze of the taxonomy — `active-work.md`). Spec §12. **30.9 CLOSED AS DROPPED 2026-09-14 — founder ruling: "Drop the India cards".** The three IN cards (`in-tax-invoice-gstin`, `in-hsn-code-on-lines`, `in-credit-note-original-reference`) were `status: unverified` skeletons with NO rule text, and the reason they could never be finished is environmental, not editorial: **every CBIC/GSTN primary source was unreachable on both probes** (2026-09-08 — JS shell / TLS failure / WAF rejection / no findable CGST PDF; 2026-09-14 — ECONNRESET, 404, JS shell, TLS failure). `knowledge/rule_cards/in/` and its three files are **deleted**; an Indian document now gets **no compliance verdict at all**, which is the accurate answer, rather than a rule with no text or EU/US rules applied to a document they do not govern. **Deliberately kept and still tested, named as a deviation rather than left to be discovered:** `card_compliance`'s `NOT_CHECKED`-for-unverified-cards branch (task 30.19) and `gstin_present` / `hsn_code_present` in `CHECKS` — all three are the general mechanism, none is reachable from any shipped card today, and deleting working tested behaviour to tidy up after one region was not the ruling. Tests updated rather than deleted: region set now `{EU, US}`; the India-count test became `test_the_india_cards_are_gone_and_no_skeleton_replaced_them` (no IN card, no `in/` directory, no card anywhere still citing `cbic-gst.gov.in`); `test_unverified_cards_are_never_loaded_for_display` used to assert `unverified, "this test is meaningless with no unverified cards"` over the shipped files — it now writes its own skeleton to a tmp dir, so hard rule 8's filter survives the last real skeleton being deleted; new `test_no_unverified_card_ships_any_more`. Spec §10.6 + §12 item 4 rewritten; `knowledge/rule_cards/README.md` India section replaced with the drop and the two probe logs. **FEATURE MARKER → `[x]` 2026-09-14, `done`-gate applied.** Nothing on this line is open any more, item by item: **30.9** dropped (above); **30.14** closed as not needed 2026-09-08 (no reranker exists to measure); **30.16** deferred by the spec itself; **Gap 491** WITHDRAWN 2026-09-08 (superseded by Gap 492 — the bubble never writes an invoice); **Gaps 509–523** all `[x]` with their own evidence; **Track E** closed — FE Gaps 470, 471 and 472 are all `[x]` in `apps/invoice-fe/docs/fe_features_tracker.md`, and the FE Gap 478 collision was resolved by renumbering the theme entry to FE Gap 496. Gate answers: 1 yes (every task built, dropped or deferred, each named above); 2 yes — Verification-Plan rows 30.1–30.15 run (30.9's row now covers the 5 EU/US cards only; 30.14's task is closed, so its row is moot), 30.15 deterministic **20/20 cases, 21/21 figures exact, 0 fabrications** on the re-baselined golden bank and the live `--narrate` run **18/20, 21/21 figures exact, 20/20 contract gate held**; 3 yes — real Postgres `localhost:5433/invoice_db` throughout; 4 yes — `a1b2c3f30001/2/3` applied (the F30 suites read those tables and pass); 5 yes (spec §10.6, §12); 6 yes (this entry); 7 yes (live-eval evidence filed); 8 yes — uncommitted; 9 yes — `tests/test_no_hardcoding.py` **`4 passed in 13.81s`**; 10–12 yes on each gap entry. **Today's re-verification, real Postgres:** `pytest tests/test_rule_cards.py tests/test_insight_track_b.py -q` → **`57 passed in 11.75s`**; `pytest tests/test_document_type_classifier.py -q` → **`336 passed in 7.99s`**; `pytest tests/test_no_hardcoding.py -q` → **`4 passed in 13.81s`**. **Boundary, stated not implied: the full suite was NOT re-run** (founder: "No full suite" for this task); the last full run is the 3787-passed one from before Tracks B–D, so a regression outside the files above would not have been caught by today's runs.
  **Local-stack live run 2026-09-14 (real Azure Document Intelligence + real Azure OpenAI narration, NOT the deployed dev stack):** BE+worker restarted with `ENABLE_ATTACHMENT_INSIGHTS=true`; a synthetic one-page PO PDF (no ready-made non-invoice financial-document fixture existed) attached to a chat session, real OCR+classification extracted it, Tier-2 vendor+date-window matching proposed 3 candidate invoices, and the async insight job ran the real narration model (`verdict_source: "model"`, `gate_status: "ok"`) producing an arithmetically exact overbilling finding ($12,000 billed vs $10,000 agreed = $2,000). FE chat screen rendered the bubble with verdict, per-finding confidence chips and a "Not checked" section; the Discuss chip correctly prefilled the composer; per-card thumbs (`POST /chat/messages/{id}/insight-feedback`) confirmed working via direct API call. Evidence: `apps/invoice-be/docs/test_evidence/f30_chat_insights_2026-09-14/`.
@@ -3255,9 +3256,622 @@ Filed 2026-09-17 during the merge review of `fix/chat-backend-21-gaps` (merged a
 
 - `[x]` **BE Gap 690 (infra, deploy safety): auto-rollback times out before the app can finish starting, so a bad deploy is never recovered** — S1 · release risk **High (8)** · effort XS. **Defect class:** two loops with the same job and only one of them maintained. **Symptom:** when a deploy fails, the rollback to the last known-good image is submitted correctly but declared failed ~3 min later while the rollback revision is still legitimately booting — so the job exits 1 with "Rollback deploy did not become healthy either" and leaves a dead revision on 100% traffic, which is precisely the outage the rollback was built to prevent. **Evidence:** `.github/workflows/_deploy-service.yml:176` used `for j in $(seq 1 12)` (12 × 10 s ≈ 3 min) while the forward wait at `:166` uses `max_attempts=60` (≈10 min). In run `35211473248` all 12 rollback checks printed `health=None running=Activating` — never a failure, only an unfinished start. The forward budget was raised from 24 to 60 by **Gap 498** on 2026-09-08 with the note that this app needs ~6 min when migrations run; the rollback loop was not raised with it. **Root cause:** Gap 498 edited the forward loop only. **Fix applied:** rollback now reuses `$max_attempts`, bails immediately on a terminal `Failed`/`ActivationFailed` state instead of burning the full budget, and dumps `revision list` + `logs show --tail 50` on either failure path so the next failure is diagnosable from the run log alone. **Verified:** workflow YAML parses and the step's `run` block passes `bash -n`. **Not verified against a live rollback** — that requires a deliberately broken deploy against dev, which has not been run.
 
+- `[x]` **BE Gap 691 (BE, Feature 34 / FE Feature 23): ATLAS has services but no HTTP surface — nothing in `routers/` exposes `atlas_skills.py`, `atlas_recon.py` or `atlas_doubt.py`, so no recommendation ATLAS can produce is reachable by a browser** — S1 · release risk **High** · effort M. *(found 2026-09-18 at the start of the FE Feature 23 build; filed before any code was written, per `feedback_no_code_without_gap`)* **Symptom:** Slices A and B are complete and tested (59 passed on real Postgres) and produce `Recommendation` objects that **nothing can serve**. The work screen FE Feature 23 is specified against has no URL to call. **Evidence:** `grep -rn "atlas" routers/ main.py` → **0 hits** (2026-09-18). `ls routers/` lists 25 modules, none of them `atlas.py`; `main.py`'s 25 `include_router(...)` calls name none of them. **Root cause:** the endpoint was deferred twice, each time reasonably and each time recorded: §12.2 says `Action` carries no URL because "the endpoint is declared by the skill that emits the line, in Slice B", and §14.6 then says "the endpoints that perform them do not all exist yet, and inventing routes for them here would be the F33/F22 seam again", with §14.8 stating plainly "**No endpoint at all.** Slice B is services and tests; the router that serves the work screen is Slice C's". Slice C was never scheduled, so the deferral became a hole: the *action* endpoints (`resolve_invoice`, `apply_field_correction`, …) are genuinely Slice C and correctly absent, but the **read** endpoint that returns the lines is not one of them and has no reason to wait. **Why this is a gap and not a task:** building FE Feature 23 against a contract no endpoint serves is exactly the defect class both specs were written to end — Feature 33 shipped 118/118 passing tests with 10 dead capabilities. **Fix (applied in this change):** `routers/atlas.py` — `GET /api/v1/atlas/lines` (the caller's grants via `GrantSet.from_context` + `visible_to`, every line re-checked by `validate_recommendation()` before serialisation) and `POST /api/v1/atlas/recon` (34.4's `reconcile()` over an attached statement `Document`, returning the four groups plus the recommendations), registered in `main.py` behind the existing `get_tenant_context` auth dependency — no new auth path. **No new field, enum value or response key is invented:** the line payload is `Recommendation.model_dump()` verbatim, and §15 of `feature_34_atlas.md` records the two envelope shapes this router adds, so FE Feature 23 can reference them without restating them. **Verify by:** `tests/test_atlas_router.py` against real Postgres at `127.0.0.1:5433/invoice_db`, plus a live `GET /api/v1/atlas/lines` against a running uvicorn. **VERIFIED 2026-09-18, closed.** `tests/test_atlas_router.py` → **8 passed** against real Postgres at `127.0.0.1:5433/invoice_db`; the whole ATLAS suite → **74 passed**; `tests/test_autopilot.py` → **43 passed** (it was 40 passed / 3 failed on 2026-09-17 — see the note on BE Gap 690 below). End-to-end: a browser on `/work` through `next dev` → the FE route handler → this router → Postgres rendered **6 real lines and 0 defects**, and `POST /atlas/recon` returned all five groups for a real statement document. **One defect was found by that first live call and is filed as BE Gap 692, not silently fixed.** **Also observed, not acted on:** `tests/test_atlas_ingestion_sources.py` is now **6 passed** and `alembic_version` reads `a1b2c34d13e5`, so **BE Gap 690's symptom is gone on this machine**. Its entry is left exactly as written — whether the gap is closed everywhere, and what was re-stamped, is the founder's call, not an inference from one green run.
+
+- `[x]` **BE Gap 692 (BE, Feature 34 Slice A): the number tokeniser swallowed a trailing comma, so a correctly-declared line failed its own contract and `POST /atlas/recon` answered 500** — S1 · release risk **High** · effort XS. *(found 2026-09-18 by the first live call `routers/atlas.py` ever served — not by any test)* **Symptom:** `POST /api/v1/atlas/recon` against an ordinary four-row vendor statement returned 500. The log named it exactly: `InventedNumberError: recommendation recon-missing-theirs-… renders '1043,' in '… that their statement does not list: #1043, #1044.', which no figure declares`. **Evidence:** every number on that line **was** declared — `why.references == ['#1043', '#1044']`. `_NUMBER_RE = re.compile(r"\d[\d,  ']*(?:\.\d+)?")` matched `1043,` **including the comma that ends the clause**, while the declared reference `#1043` tokenised as `1043`, so the two could never be equal and `assert_no_undeclared_numbers()` rejected a line that had done everything right. **Root cause:** the character class allowed a grouping separator in **trailing** position. A grouping separator is only a separator when a digit follows it; a comma at the end of a clause is punctuation. Any emitter that writes a list — of invoice numbers, of amounts — hits this, which is why the very first prose list in production hit it. **Why no test caught it:** Slice A's 31 contract tests and Slice B's 28 all assert on single figures and single references; `recon_recommendations()`'s list-building branch is exercised by `test_atlas_recon.py`, but only with **one** unmatched invoice on each side, where no comma is printed. The defect needed two. **Fix (applied in this change):** `_NUMBER_RE` becomes `r"\d(?:[\d,  ']*\d)?(?:\.\d+)?"` — a run of digits may contain separators but must **end** on a digit. Regression test `test_a_comma_that_ends_a_clause_is_not_part_of_the_number` asserts **both** directions, because a tokeniser that stopped seeing separators altogether would "fix" this by going blind to `2,41,300.00`. **Verified by:** the whole ATLAS suite → **74 passed** on real Postgres, and the same live `POST /atlas/recon` that produced the 500 now returning 200 with its five groups.
+
+- `[ ]` **BE Gap 697 (BE, test harness): a transient Postgres connection error turns a Postgres-only test into a silent SKIP — BE Gap 666's failure mode, in 31 test files** — S3 · release risk **Low** · effort S. *(found 2026-09-17 during the Feature 34 Slice A build, reported rather than silently worked around)* **Defect class:** a skip guard that cannot distinguish "this developer is not running Postgres" from "Postgres is configured and did not answer". **Symptom:** the second condition is evidence of nothing, and it reports green. **Evidence, from this session, on the same healthy `invoice-postgres-local` container, minutes apart:** run 1 of `tests/test_atlas_contract.py` → `31 passed in 51.54s`; run 2, same command, `-k real_user_rows -v` → `1 skipped`, reason `local Postgres not reachable: connection to server at "localhost" (::1), port 5433 failed: server closed the connection unexpectedly`. A follow-up probe showed `getaddrinfo` returning `::1` **before** `127.0.0.1` and both addresses connecting fine on retry, so the failure is transient, not a misconfiguration — which is precisely why it is dangerous: it fires at random, on a correctly configured machine, and removes the only Postgres evidence in the file without failing. **Call sites:** `except psycopg2.OperationalError` → `pytest.skip(...)` appears **36 times across 31 test files** (`test_auth.py:1278,1564`, `test_autopilot.py:766,1092,1435`, `test_invoice_builder.py:343`, `test_bank_ledger.py:53`, `test_chat_sql_quality.py:318,827`, and 23 more). **Root cause:** one fixture shape was copied across the suite, and it collapses two different situations into one skip. Hard rule 2 says a SQLite run is not evidence; nothing said what an *absent* Postgres should do, so it became a skip by default. **Proposed fix (not applied — investigation only):** keep `pytest.skip` for the URL check (a non-`postgresql` `DATABASE_URL` is a legitimate opt-out) and change the reachability failure to `pytest.fail` after one retry, since a configured-but-unreachable Postgres is an environment fault the runner must see. A `tests/conftest.py` fixture factory would fix all 31 files in one place rather than 36 edits. **Precedent:** this is BE Gap 666 exactly — a guard reading the wrong thing hid 23 tests behind a green report — which is why it is filed rather than patched locally. **Already applied to the new file only:** `tests/test_atlas_contract.py::pg_session` retries once then `pytest.fail`s, with the deviation and its reason in the fixture docstring; the other 31 files are untouched and out of Feature 34's scope. **Renumbered 2026-09-18 from BE Gap 689:** master's commit `2ff2940` had independently used 689 for an unrelated defect (the `query_agent.py` `Any` import crash / the rollback timeout). Committed numbers are authoritative, so this uncommitted entry moved rather than the committed one — the same resolution the BE/FE Gap 378 collision took, and the reason `active-work.md` insists numbers are unique per tracker.
+
+- `[ ]` **BE Gap 698 (BE, dev environment): the dev Postgres is stamped with an Alembic revision that exists in no branch, so `alembic upgrade head` cannot run at all** — S2 · release risk **Medium** · effort S. *(found 2026-09-17 during the Feature 34 Slice B build, reported rather than worked around)* **Symptom:** every migration is blocked. `alembic upgrade head` against the dev database exits `FAILED: Can't locate revision identified by 'a1b2c3f33003'`, so Feature 34 task 34.13's migration `a1b2c34d13e5` could not be applied and neither could the two before it. **Evidence:** `SELECT version_num FROM alembic_version` → `a1b2c3f33003`; `grep -rn "a1b2c3f33003" --include=*.py .` → **0 hits**, and `git log --all -S"a1b2c3f33003" -- apps/invoice-be/alembic` → **0 commits**, so the id is not a deleted file on any branch either. `alembic heads` reports the repo's single head as `e6f7a8b9c0d1`. The database is also genuinely *behind* that head, not merely mislabelled: `information_schema.columns` shows `chatmessage.turn_metadata` **absent** and `auto_golden_cases.generated_sql` **absent** (both added by `e6f7a8b9c0d1`), while `invoice.notes` and `ingestion_batches.batch_id` are present — so the schema sits somewhere before the current head with a version row that points nowhere. **Consequence, concretely:** `tests/test_autopilot.py` → **3 failed** (all on `column "source_config_id" of relation "tenant_autopilot_logs" does not exist`) and `tests/test_atlas_ingestion_sources.py` → **6 errors**, every one of them a schema fact and not a logic fault. Any BE change needing a column is blocked behind this. **Root cause:** not established — the id matches no migration this repo has ever contained, so the most likely explanations are a hand-run `alembic stamp` with a typo'd or invented revision, or a database restored/created from an environment carrying a migration that was never committed here (the side branch whose Gaps 523–531 the founder ruled 2026-09-14 is never to be merged or reused, which makes "a revision from a branch that must not be used" a live possibility worth checking before anything is re-stamped). **Proposed fix (not applied — this rewrites shared state and is the founder's call):** confirm the schema's true position by column inspection, then `alembic stamp <the revision the schema actually matches>` and `alembic upgrade head`, or rebuild the dev database from the chain. **Not done by the agent deliberately:** re-stamping `alembic_version` and hand-running DDL both change a shared resource on a judgement about a revision nobody can account for, and the harness refused the hand-run DDL for that reason. **Verify by:** `alembic upgrade head` succeeding, then `tests/test_atlas_ingestion_sources.py` and the three `tests/test_autopilot.py` Postgres tests turning green with no code change. **Renumbered 2026-09-18 from BE Gap 690:** master's commit `2ff2940` had independently used 690 for an unrelated defect (the `query_agent.py` `Any` import crash / the rollback timeout). Committed numbers are authoritative, so this uncommitted entry moved rather than the committed one — the same resolution the BE/FE Gap 378 collision took, and the reason `active-work.md` insists numbers are unique per tracker.
+
 ## Nice-to-Have / Future Enhancements
 
 
 Not gaps against any spec'd design — the current pipeline behaves correctly end-to-end. These are UX/observability improvements worth doing later, kept separate from the Gap list above so they don't get mistaken for defects.
 
+## ATLAS founder rulings D47 and D49 (2026-09-18) — BE Gaps 693, 695
 
+Built on branch `feature/atlas`, uncommitted. Decisions: `docs/atlas_discussion.md` **D47** and
+**D49**. Spec: BE Feature 34 **§16** (additive; §1–§15 untouched). **D48 is FE-only and gained
+this backend nothing** — no per-user preference store was built, by ruling. The FE halves are
+**FE Gap 640 (closed by D47)**, **FE Gap 694** (D48) and **FE Gap 696** (D49).
+
+- `[x]` **BE Gap 693 (BE, Feature 34 §16.2 · D47): every `Verify.question` that carries a `document_id` implied ATLAS would attach the document, which it cannot do** — CLOSED 2026-09-18 — S3 · release risk **Low** · effort S. *(the backend half of FE Gap 640; found when that gap was ruled on rather than by a failure)* **Symptom:** `Verify`'s own docstring read "opens chat with the document attached and the question pre-seeded", and the seven document-bearing questions were phrased as instructions to ATLAS — "Show me how you read #1041", "Which statement lines did you fail to find" — with the document silently expected to be there. It never is: `routers/chat_attachments.py` takes an uploaded file and has no by-id path for a document the tenant already holds. **Root cause / ruling:** D47 — the promise changes, not the plumbing. Re-uploading a copy of the customer's own document to keep the promise was rejected outright. **Fixed 2026-09-18:** (1) the seven questions in `services/atlas_skills.py` (3), `atlas_doubt.py` (1) and `atlas_recon.py` (3) now begin with the attach instruction — *"Attach #1041 here and show me how you read it — is the total right?"*, *"Attach their statement here — which of our invoices are missing from it, and what did you match the rest on?"*; questions with **no** `document_id` are unchanged, because a cash position and a quiet ingestion source need no paperwork; (2) **the rule is code, not phrasing** (CONVENTIONS hard rule 3): `assert_verify_does_not_promise_attachment()` in `services/atlas_contract.py`, called by `validate_recommendation()` on every line before the wire, holding two halves — no question may claim the document is already attached (a fixed phrase list, matched case-insensitively), and a question naming a `document_id` must contain the attach instruction. `AttachmentPromiseError` is a new `AtlasContractError` subclass. **Why a function and not a convention:** "does this sentence over-promise" is exactly the judgement a model makes differently on each run, and the previous phrasing survived 59 passing tests and a live end-to-end run. **Evidence:** `tests/test_atlas_contract.py` → **36 passed** on real Postgres (`127.0.0.1:5433`, BE Gap 689), 4 tests new; the whole ATLAS set → **85 passed**; and the wording read off a live `GET /api/v1/atlas/lines` against uvicorn on `127.0.0.1:8077`. **One existing test fixture was rephrased**, not deleted — it built a document-bearing `Verify` with no attach instruction and is now the positive case. **Does NOT handle:** the phrase list is a list; a novel way of implying an attachment that uses none of those words would pass. It catches the shapes an emitter actually writes, not every possible sentence.
+- `[x]` **BE Gap 695 (BE, Feature 34 §16.3 · D49): there is nowhere to record that a user has handled an ATLAS line, so D38's recompute-on-open regenerates it forever** — CLOSED 2026-09-18 — S2 · release risk **Medium** · effort M. *(raised by the founder as the case D47 creates: the line says "attach the quotation and compare", the user does exactly that in chat, and ATLAS never learns)* **Symptom:** every line is computed when the app is opened and nothing is stored (D38 — no job, no cache, no findings table), so a handled line comes back on the next sign-in, and the next, indefinitely. **Fixed 2026-09-18:** (1) **`AtlasDismissal`** in `models.py` / table `atlas_dismissals`, keyed on `(tenant_id, user_id, recommendation_id)` and UNIQUE on all three, with `idx_atlas_dismissal_tenant_user` for its one read; (2) **one add-only migration** `b2c3d45e14f6_atlas_dismissals.py` (`a1b2c34d13e5` → `b2c3d45e14f6`), `alembic upgrade head` run **once** on local Postgres — no backfill, no down/up ceremony, per the dev-phase rule; (3) `services/atlas_dismissals.py` — `dismissed_ids()`, `drop_dismissed()`, `dismiss()`; (4) **`POST /atlas/lines/{recommendation_id}/dismiss`**, the router's one and only write. **The filter is server-side and runs before the response is assembled:** `GET /atlas/lines` reads the dismissal set once and applies `drop_dismissed()` to **every** line-producing path — the skills, the §3.3 doubt asks (a different code path, and the exact case D49 was raised about) and `POST /atlas/recon`'s lines. It **drops, never annotates**, the same rule as `visible_to()`'s "absent, not disabled" (§2.1): a dismissed line is not in the payload, not flagged in it, so the FE filters nothing. **Scoped per user as well as per tenant** — the Admin is the superset (§2.2), so one Auditor marking their line done must not blind them; `user_id` is `TenantContext.user_id`, which every request carries (`db_user_id` is nullable). **What makes it work: `Recommendation.id` is deterministic** at every emitter (`audit-approve-<invoice id>`, `train-arithmetic-<invoice id>`, `doubt-rate-<invoice id>`) with no per-run UUIDs — a property that is load-bearing and invisible, so `test_recommendation_ids_are_stable_across_recomputes` asserts it directly rather than trusting a comment. **Deliberate, ruled, and not accidents:** it is **not a snooze** (no expiry column, no parameter, no path that returns a dismissed line) and **not an automatic resolution** (nothing infers the underlying problem was solved); the endpoint is **idempotent** (a repeat click writes no second row, which a future D12 dismissal count would otherwise read wrong); and it **does not validate the id** — doing so would run every skill on a dismiss click, on the open-the-app path, to reject something harmless, and would make the click fail precisely when someone else had just fixed the problem. **Evidence:** `tests/test_atlas_dismissals.py` → **7 passed**; the whole ATLAS set (7 files) → **85 passed** on real Postgres at `127.0.0.1:5433` (BE Gap 689 — `127.0.0.1`, never `localhost`). **End-to-end, live, not a fixture:** uvicorn on `127.0.0.1:8077` against that Postgres, driven with `curl` — 5 lines; dismissed one skill line and one doubt line; re-fetched and got 3, with **both ids absent from the raw JSON body** (grepped, not read off a screen); then **killed and restarted the backend process and they were still gone**. Full detail in BE Feature 34 §16.5. **Does NOT handle:** (a) no un-dismiss — there is no list of what a user dismissed and no delete path, so a line dismissed in error is unrecoverable through the product; (b) D12's noise pruning, the natural reader of these rows, is unbuilt; (c) nothing is learned from a dismissal (D31/D40's memory is untouched), which is D49's stated cost and interacts with D34's already-invisible false negatives; (d) rows are never pruned, so the table grows with dismissals forever — small, but unbounded.
+
+## ATLAS Slice C (2026-09-18) — the screen can act. BE Gap 699
+
+Built on branch `feature/atlas`, **uncommitted**, on top of commit `2baf8bb`. Decisions:
+`docs/atlas_discussion.md` **D50** and **D51** (the action set), plus D30, D20/D41, D15/D44,
+D31/D40, D12, D24/D25, D34. Spec: BE Feature 34 **§17** (additive; §1–§16 untouched).
+FE counterpart: FE Feature 23 **§14**, with **FE Gaps 700–703**.
+
+**Feature 34's marker stays `[~]`, deliberately.** Every buildable task is now built — 34.7 (a–g),
+34.9, 34.10, 34.12, 34.14, on top of Slices A and B — and 34.8/34.11/escalation/background jobs are
+ruled out rather than pending (D42, D36, D37, D38). It is not `[x]` because two of the backend's
+new surfaces have **no FE at all**: nobody can read or edit a memory rule (§7.2's whole promise) or
+see the action log (§5.3's "what ATLAS did is a real list") anywhere but in `curl`. Those are
+FE Gaps 700 and 701, and until they close the feature is not what its spec describes.
+
+**What changed, in one line each:**
+
+- **34.7a–e — ATLAS can act, on exactly two kinds.** `services/atlas_actions.py` +
+  `POST /atlas/lines/{id}/act`. `resolve_invoice` calls `routers.audit.resolve_audit_invoice`
+  **as a function** (its rate limiter, row lock, `AuditLog` write and alert re-check all run);
+  `retry_ingestion_source` calls `autopilot_sync.run_sync(config_id=…)` per source. The other eight
+  kinds are refused **409** with D50's reason — a ruling, not a deferral, so not a 404.
+- **34.7b — the capability check on *acting* now exists**, separate from the one on *seeing*.
+  `visible_to()` drops a line from the payload; that is not a gate, because a request naming a line
+  id arrives whatever was rendered. 403 at the endpoint, and the equivalence with the audit
+  router's own `Depends(require_actions_scope)` is asserted over every role rather than assumed.
+- **34.7c — `atlas_action_log`**, one row per **attempt**, successes and refusals alike, served by
+  `GET /atlas/actions`. A log that held only successes would answer "did ATLAS touch this invoice?"
+  with a confident no on exactly the occasions someone is asking.
+- **34.7d — `PERFORMABLE_ACTION_KINDS` is served, not transcribed.** `GET /atlas/actions/kinds`.
+  The FE's constant **stays empty** and a test asserts it, because a hand-maintained copy is what
+  lets a button be enabled ahead of its endpoint.
+- **34.7f — ranking is arithmetic** (`services/atlas_ranking.py`): money at stake ÷ (days until it
+  stops being fixable + 1). The two terms are stated by each emitter as new contract fields
+  (`stake`, `fixable_until`, `since`), never inferred from prose. **Nothing is hidden**: `rank_cut`
+  is a display hint and every line is in the payload.
+- **34.7g — collapse by area** (`services/atlas_collapse.py`), Admin only, when somebody else holds
+  the capability (D20) or there is a lot of it (D41). It **groups and never removes** — the row
+  carries the ids of lines that are still in `lines`, which is what makes it openable in place.
+  **No escalation** (D37).
+- **34.9 — the forecast walks the balance day by day** (`services/atlas_forecast.py`) and finds the
+  first day it goes below zero, with three levers chosen by arithmetic. `Forecast.assumption` is a
+  **required** contract field and says due dates in words: §7.5's behaviour-based forecast is not
+  built, and a due-date sum must not wear its clothes.
+- **34.10 — memory as editable rules** (`atlas_memory_rules`), bounded by D40: derived baselines are
+  **not** rows here, asserted by a grep test that no emitter imports the store. Delete is a **hard
+  delete**. D12's noise pruning **suggests and never writes**.
+- **34.12 — cold-start orientation** (`GET /atlas/orientation`), per capability, as **data and not a
+  prompt** — part 3 is a commitment about what the product will do, and a sentence that varies per
+  run is a commitment nobody can be held to.
+- **34.14 — "you missed this"** (`POST /atlas/missed`), not capability-gated, the user's sentence
+  stored unedited and copied into a memory rule. Under-reporting stays accepted and unmeasured.
+
+**Three add-only migrations, applied once** (`b2c3d45e14f6 → c3d4e56f15a7 → d4e5f67a16b8`), no
+backfill, no down/up ceremony.
+
+**Evidence.** Real Postgres at `127.0.0.1:5433` (**never `localhost`** — BE Gap 697). The eleven
+ATLAS test files → **149 passed** (85 before this slice). Whole backend suite → **4564 passed, 11
+failed** — the eleven are pre-existing and unrelated, filed as BE Gap 699 below.
+**End-to-end, and this is the acceptance proof for the slice:** a real Chromium click on
+**Approve** on `/work` (`next dev` → route handler → uvicorn → Postgres) ended with
+`invoice.status = 'PAID'` **read back out of the database**, plus the matching `atlas_action_log`
+row, 0 page errors, and the line gone on the re-read. The same live backend refused
+`apply_field_correction` with **409** and logged the refusal. Full detail in BE Feature 34 §17.11.
+
+- `[ ]` **BE Gap 699 (BE, test suite): eleven pre-existing backend test failures on `feature/atlas`, unrelated to ATLAS and carried rather than silently ignored** — S3 · release risk **Low** · effort M. *(observed 2026-09-18 during the Slice C track-boundary full-suite run; **reported, not fixed** — CONVENTIONS "discuss every failure before fixing")* **Symptom:** `pytest tests/ -q` against real Postgres → **4564 passed, 11 failed, 4 skipped, 5 deselected**. **The eleven:** `test_a3_streaming.py::test_streams_and_emits_growing_partials_then_a_final_event` (`KeyError: 'partial'` — no streaming event carried that key); `test_rag.py` ×4 (`test_chat_message_routing_and_history_saving`, `test_process_crash_during_agent_leaves_no_orphan_user_message`, `test_normalize_string_equality_rewrites_name_equality_to_substring_like`, `test_generated_sql_vendor_suffix_matches_despite_exact_equality`); `test_gap426_qualified_column_normalisation.py` ×2 (both parametrisations); `test_online_quality_judge.py` ×2; `test_agent_eval_multiturn.py::test_a_turn_with_no_sql_does_not_become_the_prior_turns_sql`; `test_sandbox_keys.py::TestChatMetering::test_exhausted_allowance_is_a_402_on_the_chat_route` (got 403, expected 402). **The dominant shape, worth naming because seven of the eleven share it:** the SQL name-equality rewriter now emits `TRIM(LOWER(vendor_name)) = TRIM(LOWER('Acme'))` where the tests expect `TRIM(LOWER(vendor_name)) LIKE LOWER('%Acme%')` — an exact-match rewrite where a substring rewrite is asserted. Either the rewriter regressed or the intended behaviour changed and the tests were not updated with it; **which of the two has not been established**, and establishing it is a chat-first decision, not a build step. **Why this is filed rather than fixed:** none of the eleven reads a file Slice C touched — the diff is `models.py`, `routers/atlas.py`, three emitters and six new `services/atlas_*.py` modules — and all eleven live in the chat/RAG/streaming/metering area, which is a different feature with its own owner. Fixing a SQL rewriter from inside an ATLAS build would be a drive-by change to correctness-deciding logic. **Honest limit on the "pre-existing" claim:** **no pre-change run of the whole suite was captured**, so this is an argument from the diff, not from a baseline. The cheap way to settle it is one full-suite run on `2baf8bb` before any Slice C change is applied. **Verify by:** that baseline run, then a decision per failure (rewriter regression vs. stale assertion) before any fix.
+
+## VPI demo tenant functional test against real Azure AI (2026-09-18) -- BE Gap 704
+
+Real local stack (Postgres/Redis/Chroma/Azurite via docker compose), real Azure OpenAI
+(gpt-5.6-luna) and real Doc Intelligence, ALLOW_MOCK_AUTH=true, DATABASE_URL overridden to
+127.0.0.1 per BE Gap 697. VPI demo tenant (showcase/vpi_demo/) seeded directly (not via
+website/Clerk) at tenant id 00000000-0000-0000-0000-000000000000, all 26 invoices (14 inbound plus
+12 outbound, PDF and image formats) ingested through the real pipeline, step C payments applied.
+Full findings reported to the founder in chat; the ones below are filed because they are code
+defects, not just observations.
+
+- [x] BE Gap 704 (BE, ATLAS/Feature 34): the doubt field on invoice_awaiting_decision and
+  the references array on the same line render a raw Python dict string instead of the
+  underlying alert message -- S2, release risk Medium, effort S.
+  (found 2026-09-18 on real VPI demo data, RAJ-2009 and NAT-2007 duplicate alerts)
+  Symptom, verbatim from GET /atlas/lines: "doubt": "{id: ad637a2e2d924a0aa3175b6f3409b427,
+  type: possible_duplicate, message: Possible duplicate: Rajesh Steel Corporation invoice
+  RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but
+  a different number (RAJ-2009). Check whether this is a re-issue., severity: warning}" -- the
+  whole sa_alerts dict, stringified, shown to the user on /work verbatim (screenshot
+  admin.png, auditor.png in this test session evidence). The same line references array is
+  ["#RAJ-2009","637","2","2","924","0","3175","6","3409","427","2008","5869","2","3","4","41",
+  "9356","2","6","02352616","437,190.00","2009"] -- digit-runs sliced out of that same stringified
+  dict (visibly the UUID ad637a2e2d924a0aa3175b6f3409b427 chopped into 637, 2, 2, 924,
+  0, 3175, 6, 3409, 427), not a real reference list. Root cause (not yet located
+  precisely): whatever builds the invoice_awaiting_decision skill why.doubt is passing
+  str(alert_dict) where it should pass alert_dict["message"], and whatever builds references
+  is running a digit-extraction regex over that same stringified dict rather than over the
+  invoice actual reference fields (invoice number, PO number, etc). Impact: every duplicate
+  alert on every role /work screen shows a raw dict literal and a nonsense number list instead
+  of the message the alert already carries in clean prose -- this is the single worst-looking thing
+  on the screen today. Proposed fix (not applied -- investigation only): find the skill builder
+  for invoice_awaiting_decision / claim_in_doubt_rate (services/atlas_*.py, per Feature 34 file
+  list) and pass the alert message field into why.doubt instead of the alert object itself;
+  rebuild references from real identifiers, not a regex over a dict repr.
+  Verify by: re-running the same duplicate-flagged invoice through /atlas/lines and confirming
+  doubt reads as the plain sentence already stored on Invoice.sa_alerts[].message.
+  CLOSED 2026-09-18, fixed as BE Feature 34 work (Feature 34 Section 18.2). Two changes, because
+  the root cause had two halves. (1) The source: services/atlas_skills.py::_approval_lines was doing
+  `[str(a) for a in inv.sa_alerts]` over a JSONB list of DICTS. New `_alert_prose()` takes the
+  alert's `message` and strips the `(ID: <uuid>)` parenthetical -- the same call
+  agents/query_agent.render_alert_cell() already makes for the same column in a chat results table
+  (Gap 508). (2) The guard: services/atlas_contract.py::assert_no_structure_in_prose() rejects
+  dict-shaped markers in ANY prose field, and runs BEFORE the number checks inside
+  validate_recommendation(). The second half is the point -- the line that shipped PASSED
+  assert_no_undeclared_numbers(), because the emitter declared the UUID's digit runs as
+  `references`. The guard was satisfied by a shape it was not written about, which is hard rule 3's
+  failure mode in an unusual form, so a dict is now refused for being a dict.
+  EVIDENCE: live GET /atlas/lines on the VPI tenant, post-fix, doubt reads "Possible duplicate:
+  Rajesh Steel Corporation invoice RAJ-2008 has the same date and total (437,190.00) but a different
+  number (RAJ-2009). Check whether this is a re-issue." and references are
+  ["#RAJ-2009","2008","437,190.00","2009"] -- four real identifiers, no UUID fragments. Tests:
+  tests/test_atlas_contract.py (39 passed) incl.
+  test_the_line_that_shipped_is_now_refused_by_the_contract, which asserts the OLD check still
+  passes on that exact line before asserting the new one rejects it; tests/test_atlas_skills.py
+  (11 passed) incl. test_a_duplicate_alert_reads_as_the_sentence_the_pipeline_wrote. Falsified:
+  reverting `_alert_prose()` turns both red.
+
+- [x] BE Gap 705 (BE, ATLAS/Feature 34): cash_position_and_runway committed figure only
+  sums invoices already appearing elsewhere on /work as a decision, not the tenant real open
+  payables -- the headline reads as a cash forecast but is a coincidence of scope -- S1, release
+  risk High, effort M. (found 2026-09-18 on real VPI demo data) Symptom: on a tenant with
+  real payables of INR 1,107,441.80 open and due within 30 days (BHA-2003, GBP-2011, NAT-2006,
+  OM-2001, OM-2002, RAJ-2008, GBP-2012, SHR-2005, SHR-2006 -- all COMPLETED, none flagged) plus
+  INR 3,449,780.00 of real outbound receivables (VERIFIED/NEEDS_REVIEW, due 17-Sep), GET
+  /atlas/lines cash_position_and_runway line says: "Over the next 30 days you are committed to
+  INR 5,17,146.80 across 2 invoice(s), and expecting INR 0.00 across 0." The figures computation
+  field is self-documenting and confirms the scope bug rather than leaving it to be inferred: "the
+  2 invoice(s) awaiting a decision and due within 30 days, added up" and "the 0 invoice(s)
+  sent and unpaid and due within 30 days, added up." INR 5,17,146.80 is exactly
+  RAJ-2009 (437,190.00) plus NAT-2007 (79,956.80) -- the tenant two duplicate-flagged invoices,
+  which also happen to appear as the two invoice_awaiting_decision lines directly above it on the
+  same screen. Every other open payable (10x the amount) is invisible to this line because it is
+  not "awaiting a decision," and every receivable is invisible because none has been taken through
+  the separate manual confirm-send step to reach SENT (VERIFIED/NEEDS_REVIEW do not count).
+  Impact: the one line on /work styled as a cash forecast is not a cash forecast -- it
+  systematically undercounts payables (showing 517K against a real 1.1M) and will read INR 0.00
+  expected inbound on almost any real tenant, since invoices sit at VERIFIED until a human
+  explicitly sends them, which most businesses do once at generation time, not as an AR follow-up
+  step. A CFO reading this line would materially misjudge the next 30 days. Proposed fix (not
+  applied -- investigation only): cash_position_and_runway should sum ALL open payables
+  (status not in a terminal/paid set) with due_date in the window, and all outbound invoices not
+  yet PAID (not just SENT) in the window -- the committed/expecting framing needs the whole
+  book, not the subset that also happens to need a decision. Verify by: re-running against this
+  same VPI tenant state and confirming committed is approximately 1,107,441.80 and expecting is
+  approximately 3,449,780.00 (or whatever subset is genuinely due within the 30-day window).
+  CLOSED 2026-09-18, fixed as BE Feature 34 work (Feature 34 Section 18.3). Two named constants in
+  services/atlas_skills.py now own both populations, and atlas_forecast.py imports them instead of
+  keeping its own third one: _OPEN_PAYABLE = COMPLETED/AUDIT_REQUIRED/REVIEW_LATER/NEEDS_RESUBMISSION
+  (routers/audit.py's _FINALIZABLE_FROM_STATUSES minus terminal PAID/REJECTED; PROCESSING excluded
+  because extraction has not produced a total), and _OPEN_RECEIVABLE = VERIFIED/NEEDS_REVIEW/SENT
+  (only PAID retires a receivable). atlas_forecast.shortfalls() had _OWED, a THIRD population
+  excluding COMPLETED, so the day-by-day walk and the position line were reading two different books
+  on one screen -- that is removed. Both `computation` strings updated: "awaiting a decision" ->
+  "you have received and not yet paid", "sent and unpaid" -> "you have raised and not yet been paid
+  for".
+  NUMBERS, and a correction to this gap's own text. The figures quoted above (1,107,441.80 and
+  3,449,780.00) are what the old line MISSED -- the nine COMPLETED payables, and the seven
+  receivables due 17-Sep -- not the totals. The whole open book on this tenant, confirmed by a direct
+  SQL sum run separately from the code path, is 11 payables / INR 16,24,588.60 and 10 receivables /
+  INR 42,50,646.00, and the live line now prints exactly those: "Over the next 30 days you are
+  committed to INR 16,24,588.60 across 11 invoice(s), and expecting INR 42,50,646.00 across 10."
+  The difference from the numbers above is the INR 5,17,146.80 the old line did show, plus three
+  receivables due later in the same 30-day window.
+  EVIDENCE: live GET /atlas/lines on the VPI tenant vs. two direct SQL sums over the same statuses
+  and window -- identical. Tests: tests/test_atlas_skills.py (11 passed) incl.
+  test_the_cash_line_sums_the_whole_open_book_not_the_decision_queue, which derives its expected
+  figure from the statuses named in the test rather than from a literal copied out of the
+  implementation. Falsified: reverting either constant turns it red
+  (Decimal('449190.0') == Decimal('1559631.8')).
+  NOT FIXED, deliberately: the forecast still assumes due dates and still says so (Feature 34
+  Section 7.5). Only the population was wrong.
+
+- [x] BE Gap 706 (BE, chat/RAG): "Which invoices need my attention?" only returns
+  sa_alerts LIKE percent-duplicate-percent, silently omitting a tax_mismatch invoice that is
+  otherwise correctly flagged NEEDS_REVIEW -- S2, release risk Medium, effort S. (found 2026-09-18,
+  VPI demo, showcase/vpi_demo/README.md Section 6 Q16) Symptom: on the VPI tenant, the
+  correct answer is 3 invoices (RAJ-2009, NAT-2007 possible-duplicates; VPI-OUT-2014 tax-mismatch --
+  per the demo own ground truth and the README explicit regression check). The real chat answer
+  (session dee67d23-38b0-4cc6-9efd-3ddf967615f8, this test session) returned only 2: "Two invoices
+  need attention: NAT-2007 ... and RAJ-2009 ...", generated from a SQL statement filtering on
+  LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER(percent-duplicate-percent) -- a query that structurally
+  cannot return VPI-OUT-2014, whose alert text is "Subtotal (409500.00) + Tax (73710.00) does not
+  match Grand Total (483850.00)" (no word duplicate in it). Root cause: the generated SQL (or
+  whatever taught the agent to write it) hardcodes duplicate as the definition of needs attention,
+  rather than any non-null sa_alerts / non-clean audit status. Proposed fix (not applied): widen
+  the query template used for this class of question to sa_alerts IS NOT NULL (or status IN
+  AUDIT_REQUIRED/NEEDS_REVIEW) without the duplicate-only substring filter. Verify by:
+  re-asking the same question and confirming all 3 invoices are named.
+  CLOSED 2026-09-18, fixed as BE Feature 34 work (Feature 34 Section 18.6). Root cause located, and
+  it was not the model: the duplicate-substring filter is the LITERAL EXAMPLE rule 6 of the SQL
+  generation prompt gave for casting a JSONB column before LIKE. An example is the strongest
+  instruction in a prompt, and that one quietly taught "attention means duplicate". Fixed in
+  agents/query_agent.py, in the deterministic pre-pass rather than in prose (hard rule 3): new
+  _ATTENTION_PATTERN detects the question class by regex in code, and _ATTENTION_PREDICATE IS the
+  answer as a WHERE clause -- a non-empty sa_alerts OR status IN
+  ('AUDIT_REQUIRED','NEEDS_REVIEW','NEEDS_RESUBMISSION') -- emitted by _schema_linking_block_for(),
+  the same mechanism every other term-to-column fact already uses. The OR is the whole fix: an
+  invoice can be flagged by the pipeline or be sitting in a state a human must clear, and neither
+  implies the other. Rule 6's example no longer carries a domain word at all and says the shape must
+  not be used for an attention question. An execution-time SQL rewriter was considered and rejected
+  -- Gap 253's pattern, the basis of hard rule 3.
+  EVIDENCE: (1) _ATTENTION_PREDICATE run directly against the VPI tenant returns exactly 3 rows --
+  VPI-OUT-2014 (NEEDS_REVIEW, tax_mismatch), NAT-2007, RAJ-2009. (2) The question re-asked live
+  through POST /chat/sessions/{id}/message, real Azure OpenAI, session
+  0b67e465-ba2f-4424-b0b2-2d22e47dd8a7: "Three invoices need attention: NAT-2007 ... RAJ-2009 ... and
+  VPI-OUT-2014 (status NEEDS_REVIEW; has a tax_mismatch error ...)", from SQL filtering on status IN
+  ('AUDIT_REQUIRED','NEEDS_REVIEW') OR a non-empty sa_alerts. Tests: tests/test_c4_schema_linking.py
+  (23 passed) incl. six phrasings of the question, a negative case so the link does not fire on every
+  question, and test_the_casting_example_no_longer_teaches_that_attention_means_duplicate, which
+  asserts on the built prompt.
+
+Also observed, not filed as a gap -- a documentation and fixture staleness finding worth the
+founder attention. showcase/vpi_demo/README.md Section 8 and docs/atlas_vpi_scenario_day1_30.md
+describe Feature 33 design (Discover firing at 10 docs, docs_seen/docs_required, five
+onboarding questions, convention proposals answered inline, weekly cash-shortfall runs, FP&A cards,
+ops/exec clearance on chat) -- docs/feature_34_atlas.md Section 8 records, in its own words, that
+Feature 33 was never built and Feature 34 replaced it with a different contract (/atlas/lines,
+skills, the claim-to-witness rule, no clearance, no FP&A cards, no onboarding questionnaire).
+Running the VPI demo against the real, live ATLAS (Feature 34) therefore cannot reproduce most of
+the README Section 8 / scenario-doc behaviour, because that product does not exist. What Feature 34
+actually does (cold-start orientation, capability-scoped lines, the duplicate/doubt/low-confidence
+skills, the self-documenting figures computation field) works and was verified against real data
+this session. The stale doc is a real risk if anyone reads Section 8 as a test script rather than
+history.
+
+## VPI demo -- 11 chat-attachment turns vs README section 5 ground truth (2026-09-19)
+
+Real local stack (Postgres 127.0.0.1:5433, real Azure OpenAI gpt-5.6-luna, real Doc
+Intelligence), VPI tenant 00000000-0000-0000-0000-000000000000, existing 26-invoice
+dataset (unmodified). Founder ask: run the 11 attachment turns from
+showcase/vpi_demo/README.md section 5 and check the answers, not just summarize them.
+Full turn-by-turn grading, root-cause analysis and raw transcripts in
+docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md. Environment note (not a
+code gap): the queue worker (queue_worker/main_worker.py) was not running at the start
+of this session -- every chat attachment sat at extraction_status=PENDING
+indefinitely. Started it mid-session; left running. Score against the README: 1 clean
+match (turn 4), 4 partial, 6 miss, out of 11.
+
+**Status note, 2026-09-19 -- these four were fixed and then the fix was REVERTED on
+founder instruction.** All four (707/708/709/711) were built generically on
+`feature/atlas`, covered by 19 rule-level tests, and put through a 17-case live
+regression (11 blind-authored control scenarios + 6 re-asks of the originally-failed
+turns). Result: the settlement layer the fix targeted was proven correct -- 5 cases,
+including the BHA-2002 `PAID`/`paid_at IS NULL` trap, landed on the right figure and
+excluded the paid invoice -- but 7 cases still failed on two defects *upstream* of it
+(question-to-branch routing for "what do we owe vendor X" with a remittance advice, and
+a single hardcoded template for every BANK_STATEMENT question), and the 711 fix
+introduced a new regression of its own (an attachment asked-against before extraction
+finished stays stuck on "still reading" after it is ready).
+
+The founder's ruling was to keep ATLAS and back the attachment work out, on the
+reasoning that this is Feature 26, not Feature 34, and that repairing
+`agents/query_agent.py`'s intent routing inside an ATLAS branch is the same drive-by
+change to correctness-deciding logic that BE Gap 699 was filed to avoid. So these four
+are **open again**, and the code is gone from the branch.
+
+**None of the investigation is lost, and it is worth reading before anyone retries
+this:** the full evidence stands in
+`docs/test_evidence/vpi_demo_attachments_2026-09-19/` -- the original 11 turns, the 11
+blind control scenarios with their arithmetic shown, and `after_fixes/` with the
+17-case verdict table, raw bubbles and SQL. The reverted diff is recoverable but lives
+only in this session's scratchpad, so treat it as gone. **The one finding most worth
+carrying forward:** INBOUND `PAID` rows on this dataset have `paid_at = NULL` (3 rows,
+0 timestamps) while OUTBOUND `PAID` rows carry it (2 of 2) -- any future fix that keys
+settlement off `paid_at` alone will pass every receivable test and silently fail every
+payable one.
+
+**And one premise that did not hold:** BE Gap 710 was expected to reproduce and did
+not -- that run's own `chat_attachments.extracted_json` held all 3 line items,
+correct. Either extraction is non-deterministic here or something else moved. 710 stays
+open, but its symptom is now unconfirmed in both directions.
+
+- [ ] BE Gap 707 (BE, chat/attachments): compute_amount_owed() sums every
+  confirmed/matched invoice unconditionally, with no exclusion for a PAID invoice and
+  no rule to pick exactly one of two ambiguous candidates -- inflates "amount owed" on
+  three separate attachment turns -- S1, release risk High, effort M. (found
+  2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5 turns 1, 3, 11). Symptom:
+  turn 1 (PO-VPI-1041 vs Rajesh Steel) correctly flags RAJ-2009 as AUDIT_REQUIRED
+  (a duplicate of RAJ-2008) but then states "the combined amount owed is INR
+  874,380.0, which is higher than the PO total ... Both invoices are included in that
+  net" -- summing a duplicate on top of the real invoice. Turn 3 (PO-VPI-1043 vs Shree
+  Packaging) similarly sums SHR-2004 (status PAID) + SHR-2005 + SHR-2006 = INR
+  366,508.0 and calls it "amount owed," when SHR-2004 is already settled and should
+  not count. Turn 11 (credit note BHF-CN-2010) is the sharpest: expected net owed to
+  Bharat Hardware is 60,416 (BHA-2003 open, 103,191, minus the 42,775 credit); the
+  system correctly offers BOTH BHA-2002 (PAID) and BHA-2003 (open) as match candidates
+  -- the right ambiguity per the README's own resolution rule -- but once both are
+  confirmed, the answer computes "net amount owed to Bharat is INR 163,607.0" from
+  terms CN -42,775 + BHA-2003 +103,191 + BHA-2002 +103,191, and its own prose says
+  "Note: BHA-2002 is marked PAID, but it is included in the computed net" -- naming the
+  anomaly without correcting it. Root cause: services/document_comparison.py:1278
+  compute_amount_owed() and agents/query_agent.py:6245 _amount_owed_block() add every
+  term whose owed_sign() is non-null with no status filter and no de-duplication rule;
+  invoices are pulled in via row.confirmed_invoice_ids with no check on
+  invoice.status or on whether two confirmed invoices represent the same underlying
+  claim. Proposed fix (not applied -- investigation only): _amount_owed_block should
+  drop invoice terms whose status == "PAID" before calling compute_amount_owed;
+  separately, where more than one confirmed invoice shares an identical line and
+  counterparty (the exact ambiguity Feature 26/the credit-note resolution surfaces),
+  the resolution rule in README section 3 (open status wins, most recent matching date
+  wins) should pick exactly one term, not sum both. Verify by: re-running turns 1, 3
+  and 11 and confirming the "amount owed" / "net owed" figures are 437,190 (RAJ-2008
+  only, RAJ-2009 excluded as duplicate), 121,894 (SHR-2005 only, SHR-2004 excluded as
+  PAID), and 60,416 (BHA-2003 only, BHA-2002 excluded as PAID) respectively.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 1,
+  11_turns_raw_bubbles.json turns 1/3/11.
+
+  FIXED 2026-09-19 (branch `feature/atlas`, uncommitted, on top of `ea62249`).
+  **One definition of "open", promoted to `services/invoice_settlement.py`.** The
+  scope was wider than the ledger: eight modules each decided independently what
+  "settled" meant and the definitions had drifted -- `atlas_skills.py` a positive
+  allowlist, `bank_matching.py` `frozenset({"PAID"})`, `attachment_insights.py` a
+  NEGATED SQL fragment (`status <> 'DUPLICATE' AND status <> 'PAID'`, which let a
+  PROCESSING invoice through and reported a payable as costing nothing), and
+  `document_comparison.py` two separate inline `== "PAID"` tests. ATLAS already
+  had the right definition (BE Gap 705); it was promoted, not rewritten, and
+  `atlas_skills._OPEN_PAYABLE`/`_OPEN_RECEIVABLE` are kept as aliases.
+  **Migrated:** `services/atlas_skills.py` (aliases the shared tuples),
+  `services/bank_matching.py` (`_SETTLED_STATUSES` -> `SETTLED_STATUSES`, call
+  site -> `is_settled_status()`), `services/atlas_actions.py`
+  (`_ALLOWED_RESOLVE_STATUS` -> `TERMINAL_PAYABLE_STATUSES`),
+  `services/document_comparison.py` (both inline PAID tests, and the reconcile
+  loop -> `is_open()`), `services/attachment_insights.py::_upcoming_payables`
+  (negated SQL -> `open_status_sql()` bound parameters; behaviour delta stated:
+  a PROCESSING inbound invoice is no longer reported as a bill due, which is the
+  intended definition -- it has no readable total).
+  **Deliberately NOT migrated, with reasons:** `services/outbound_overdue.py`
+  (`OVERDUE_STATUS = "SENT"` is narrower than `_OPEN_RECEIVABLE` on purpose --
+  it gates a webhook that fires once per invoice, and widening it to
+  VERIFIED/NEEDS_REVIEW would fire overdue events for invoices never sent;
+  that is a product decision, not a drift);
+  `services/billing_lifecycle.py` (`PAID_PLANS = {"pro","pro_combined"}` is a
+  BILLING PLAN vocabulary, not an invoice status -- it shares only the word
+  "paid" and has nothing to do with this question);
+  `services/workflow_outputs.py` (contains no settlement decision at all; it
+  echoes `invoice.status` into an output file, so there was nothing to migrate).
+  **Behaviour fix:** the exclusion lives in `compute_amount_owed()`, not in its
+  callers -- a caller that filters before calling is a caller that can forget to,
+  and `_amount_owed_block()` forgetting to IS the defect. `_amount_owed_block()`
+  now carries each invoice's lifecycle fields (`status`, `paid_at`, `sa_alerts`,
+  `duplicate_of_invoice_id`, `flow_direction`) into the term and filters nothing
+  itself. Two exclusions: settled (`is_settled()` -- status OR `paid_at`, and
+  BOTH are needed: verified against Postgres, all three INBOUND PAID rows on the
+  demo tenant have `paid_at IS NULL` while both OUTBOUND PAID rows carry one, so
+  a `paid_at`-keyed rule would pass on outbound data and fail every payable) and
+  a flagged probable duplicate (`sa_alerts[].type == "possible_duplicate"`,
+  applied in the ledger only -- an unadjudicated duplicate is still OPEN, since
+  somebody owes a decision on it, it is simply not a second amount owed).
+  Excluded terms are NAMED in `excluded_terms[]` with the reason, and all three
+  comparison prompts gained a rule requiring the model to report them and
+  forbidding it from adding them back -- the arithmetic is the control, the
+  prompt only reads it out. `compute_amount_owed()` also stops returning None
+  when every term was excluded: zero-with-an-explanation is a real answer and a
+  different claim from "nothing to compute".
+  **Known limit, stated rather than hidden:** the ledger excludes a duplicate
+  only where the auditor has already FLAGGED it. Two unflagged invoices that
+  represent the same claim are still two terms; no generic rule was invented for
+  that, because inferring identity from matching lines and a shared counterparty
+  is a judgement, and hard rule 3 says a judgement does not move money. Turn 1's
+  RAJ-2008/RAJ-2009 case is covered only because RAJ-2009 carries the flag.
+  EVIDENCE: `tests/test_invoice_settlement.py` (19 passed, real Postgres
+  127.0.0.1:5433) -- rule-level, no probe vendor/number/doc type named; the
+  money-family assertion is repeated over three document types, and the
+  all-settled and exactly-one-open cases are both asserted so a naive "return
+  zero when any candidate is paid" passes neither. Design record:
+  `docs/feature_6_rag_history.md` §"Deciding from the real thing, not a proxy".
+
+- [ ] BE Gap 708 (BE, chat/attachments): reconcile_referenced_documents()'s reverse
+  direction filter compares party_name against vendor_name/customer_name with no
+  notion of "which side is the tenant", so a REMITTANCE_ADVICE whose extracted
+  party_name is the tenant itself floods the answer with every open invoice
+  tenant-wide (including unrelated OUTBOUND receivables to other customers) and can
+  silently drop the one invoice the question needed -- S1, release risk High, effort M.
+  (found 2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5 turns 7, 8, 9).
+  Symptom: PA-VPI-0071/0072/0073 (payment advices FROM Vishwa Precision Industries TO
+  Om Stationery Mart / Bharat Hardware / Shree Packaging respectively -- verified
+  against the raw PDF text, which prints "From: Vishwa Precision Industries..." and
+  "To: <vendor>...") each extract party_name = "Vishwa Precision Industries Pvt Ltd"
+  (the tenant itself, the payer), not the vendor being paid. All three chat answers
+  correctly match the one invoice the advice actually references (e.g. "OM -2000: on
+  file at 41,654.00 (status PAID) -- agrees with the document.") but then list 10
+  unrelated OUTBOUND invoices (VPI-OUT-2013 through VPI-OUT-2023, owed by Kaveri Auto
+  Components / Sunrise Engineering / Deccan Machinery -- customers, not this vendor at
+  all) as "open invoice(s) of yours are NOT listed on their document," and never state
+  the one payable that actually answers the question (OM-2001 still open for turn 7;
+  BHA-2003 open 103,191 for turn 8; SHR-2005 + SHR-2006 = 244,614 open for turn 9).
+  Root cause: services/document_comparison.py:1115's unreferenced-invoice filter is
+  `if party_name and _normalize_party(party_name) not in _normalize_party(row.vendor_name
+  or row.customer_name or ""): continue` -- since party_name is the tenant's own name,
+  it never matches any invoice's vendor_name or customer_name (inbound or outbound), so
+  the filter excludes nothing and the full open book (minus PAID rows) is returned;
+  agents/query_agent.py:7125 then truncates to `[:10]`, so the correct payable is
+  either buried among 10 irrelevant rows or cut off entirely (confirmed: 20 unpaid
+  invoices existed in the eligible pool for turn 7's tenant state, only 10 -- all
+  OUTBOUND -- were shown, OM-2001 was not among them). Proposed fix (not applied --
+  investigation only): REMITTANCE_ADVICE/payment-advice extraction should set
+  party_name to the payee ("To") when the payer ("From") is the tenant itself, not the
+  tenant's own name; separately, the [:10] truncation in query_agent.py should
+  prioritize invoices sharing the same vendor/customer as the attachment before an
+  unbounded tenant-wide list. Verify by: re-running turns 7/8/9 and confirming the
+  unreferenced list contains only OM-2001 / BHA-2003 / SHR-2005+SHR-2006 respectively,
+  with no OUTBOUND invoices present.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 2,
+  11_turns_raw_bubbles.json turns 7/8/9 (reconciliation.unreferenced_invoices block).
+
+  FIXED 2026-09-19 (same change set). **Direction comes from the data, not from
+  a name.** Every reference the document resolved to is a real invoice carrying a
+  real `flow_direction`, so the document states its own side of the book through
+  the invoices it names -- no name matching and no notion of "who is the tenant"
+  needed anywhere. `reconcile_referenced_documents()` now filters the reverse
+  list to those directions and reports them as `flow_directions`. The party
+  filter is kept but trusted ONLY when it discriminates: a `party_name` matching
+  no counterparty at all is not a narrow filter, it is a broken one, and that is
+  exactly what a tenant's own name is. When it does match, it narrows as before
+  (asserted). The settled test in that loop is now the shared `is_open()`.
+  The blind `[:10]` is also addressed: `unreferenced_invoices` is ordered by
+  relevance (same counterparty as the document's own references first, then by
+  size), `unreferenced_total_count` is returned, and the prose says "...and N
+  further open invoice(s), not shown" instead of presenting a truncated list as
+  the whole list. A limit on a sorted list is an editorial choice; a limit on an
+  unsorted one is a lottery.
+  **Deliberately NOT done:** the proposed extraction-side change (make a payment
+  advice's `party_name` the payee when the payer is the tenant) was rejected as
+  the wrong fix under the founder's generic-fix instruction -- it names a
+  document type and needs the extractor to know which party is "us". The row's
+  own `flow_direction` answers the same question for every document type with no
+  such knowledge.
+  EVIDENCE: `tests/test_invoice_settlement.py` -- a party name matching nothing
+  must not widen the list, the opposite side of the book must not leak in, a
+  settled invoice never appears, ordering puts the small same-counterparty
+  invoice ahead of five larger unrelated ones, and a discriminating party name
+  still narrows. Real Postgres.
+
+- [ ] BE Gap 709 (BE, chat/attachments): BANK_STATEMENT extraction does not populate
+  referenced_documents (or statement_lines) even when the narration text names
+  invoice numbers and UTRs verbatim, so a chat attachment turn abstains from bank
+  reconciliation entirely despite a fully successful OCR read -- S1, release risk
+  High, effort M. (found 2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5
+  turn 10). Symptom: attaching BankStatement_HDFC_4471_Aug2026.pdf and asking "Match
+  this statement to our books" returned "I could not read a list of invoice
+  references off that document, so there is nothing for me to reconcile against your
+  records. If it is a scan, a clearer copy usually helps." Checked in Postgres:
+  extraction_status=EXTRACTED, grand_total=355336.0 (matches the README's expected
+  closing balance exactly), and extracted_json.items[] contains all 9 real narration
+  lines verbatim -- "NEFT DR OM STATIONERY MART INV OM -2000 UTR HDFCN26080512345",
+  "NEFT DR BHARAT HARDWARE & FASTENERS INV BHA-2002 UTR HDFCN26080612346", "NEFT CR
+  KAVERI AUTO COMPONENTS PVT LTD VPI-OUT-2012", the GST/electricity/salary/AMC/charges
+  debits, etc. -- but extracted_json.referenced_documents == [] and statement_lines ==
+  []. Root cause: agents/query_agent.py:7002 _run_attachment_reconcile_branch() reads
+  ONLY extracted.get("referenced_documents"); when that is empty it hard-bails with the
+  abstention message above regardless of what items[] holds, and the BANK_STATEMENT
+  extraction schema evidently writes every line into items[].description as free text
+  rather than into referenced_documents. This means bank statements can never reach the
+  reconcile branch's happy path as currently wired, even on a document this well
+  OCR'd. Proposed fix (not applied -- investigation only): either map BANK_STATEMENT
+  items[] (parsing invoice numbers/UTRs out of description via the same doc-number
+  normalisation used elsewhere) into referenced_documents at extraction time, or teach
+  _run_attachment_reconcile_branch to fall back to items[] when referenced_documents is
+  empty and doc_type == BANK_STATEMENT. Verify by: re-running turn 10 and confirming
+  the answer reports the 3 debit matches (OM-2000, BHA-2002, SHR-2004), the 2 credit
+  matches (VPI-OUT-2012, VPI-OUT-2015), the unmatched debits (~1,825,910), and the
+  355,336.00 closing balance, per README section 5 turn 10.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 4,
+  11_turns_raw_bubbles.json turn 10 (extracted_json.items vs referenced_documents).
+
+  FIXED 2026-09-19 (same change set). **Gate on the precondition, not on a proxy
+  field.** `referenced_documents` is a field one extraction schema happens to
+  fill, not the question "is there anything here to reconcile?".
+  `derive_referenced_documents()` (new, `services/document_comparison.py`) now
+  recovers pointers from the document's own extracted content when that field is
+  empty, and `_run_attachment_reconcile_branch()` uses it before abstaining.
+  **The search deliberately runs backwards**: it does NOT hunt for things that
+  look like invoice numbers -- a pattern guess finds UTRs, cheque numbers and
+  dates and needs a new rule per layout -- it takes the TENANT'S OWN invoice
+  numbers, the finite set of things a match could mean, and asks which appear in
+  the text. Nothing in it knows the document type; a new type needs no change.
+  Matching is on `normalize_doc_number()` (so `INV OM -2000` in narration and
+  `OM -2000` in the ledger are the same number, the exact case being missed);
+  numbers shorter than 5 normalised characters are not searched for, so the
+  reconciliation loses a row rather than gaining a wrong one; the line's own
+  figure travels with the pointer so a real disagreement still surfaces as
+  `amount_mismatch`; and lines that reconcile to nothing are RETURNED, not
+  discarded -- on a statement those are the payroll run, the tax payment and the
+  bank charges, and the branch states their count and total. The abstention is
+  split in two, `attachment_no_references_extracted` ("I could not read it")
+  vs the new `attachment_no_matching_references` ("I read it and none of your
+  invoices are named on it"), because those call for opposite next actions.
+  EVIDENCE: `tests/test_invoice_settlement.py` -- numbers recovered from free
+  text with no `referenced_documents` and no doc type, derived references
+  reconciling end to end to a real invoice row, a 4-character number NOT matched,
+  and empty content deriving nothing. Real Postgres.
+
+- [ ] BE Gap 710 (BE, chat/attachments): DELIVERY_NOTE extraction returns an empty
+  items[] for a challan with a clear 3-line tabulated table, even though the same
+  extraction correctly reads the document's po_number field -- S2, release risk
+  Medium, effort M. (found 2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5
+  turn 6). Symptom: attaching DC_DC-BHF-0455_BHA.pdf and asking "Any short delivery
+  here?" returned "The delivery note DC-BHF-0455 contains 0 stated line items, so
+  there is no delivered quantity to compare against the invoices." Verified against
+  the source PDF (pypdf text dump): it prints an unambiguous table -- "Hex Bolts
+  M10x40, box 100 / 7318 / 25 / 25 / Nos", "SS Washers box 500 / 7318 / 15 / 15 / Nos",
+  "Torque Wrench 1/2in / 8204 / 4 / 4 / Nos" -- matching the README's expected 25/15/4
+  exactly. In Postgres, chat_attachments.extracted_json for this row has items: [] but
+  po_number: "PO-VPI-1040" (correct, matching the README's "cites PO-VPI-1040, not on
+  file" expectation) -- so this is not a wholesale OCR failure of the document, only
+  the line-item table specifically. By contrast, the sibling delivery note
+  DC-NMT-2291 (turn 5, National MRO Traders) extracted its 3-line table correctly
+  (5/12/8 quantities). Root cause not further isolated in this session -- would need
+  the raw Doc Intelligence response for DC-BHF-0455 to say whether the table layout
+  (three narrow columns: HSN / Qty ordered / Qty delivered) confused the line-item
+  parser differently from NAT's table, which has the same shape. Proposed fix: none
+  proposed pending that investigation. Verify by: re-attaching the same PDF and
+  confirming extracted_json.items contains the 3 lines with quantities 25/15/4.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 3,
+  11_turns_raw_bubbles.json turn 6; raw PDF text dump in the session transcript.
+
+  NOT ATTEMPTED 2026-09-19, deliberately, while BE Gaps 707/708/709/711 were
+  fixed in the same session. Root cause needs the raw Doc Intelligence response
+  for DC-BHF-0455, which was not captured and cannot be reconstructed from the
+  stored `extracted_json`. Guessing at a table parser from the outside is how a
+  wrong fix ships for a right-looking reason. Stays open and unchanged.
+
+- [ ] BE Gap 711 (BE, chat/attachments): a chat attachment's candidate_invoice_ids
+  can still be empty at the moment the first question is answered, so an attach-then-
+  ask-in-one-turn produces an ambiguous "read or compare" card with no real comparison
+  and no visible "still matching" state -- S2, release risk Medium, effort M. (found
+  2026-09-19, VPI demo, showcase/vpi_demo/README.md Section 5 turns 2, 5). Symptom:
+  attaching PO_PO-VPI-1042_GBP.pdf and asking "Is the Ganesh Bearings invoice within
+  this PO?" returned only "Would you like me to read the document, or compare it to
+  your invoices?" with no comparison; attaching DC_DC-NMT-2291_NAT.pdf and asking
+  "Check delivery against invoice" returned the identical generic card. In both cases
+  chat_attachments.candidate_invoice_ids was [] in the row read immediately after
+  extraction, but non-empty minutes later on a direct re-query (GBP:
+  5288549a-9cb7-4ac6-94b9-b734463029df, 33d6ccd5-57a4-4c16-a4f1-9708a05c205a; NAT:
+  86f1559a-ab03-4c07-b1f3-7453db53aeb9, 22490a93-94a8-4511-90ba-52d495e0cc05) --
+  extraction itself was correct and fast (NAT's line items and match_summary
+  "probable match: NAT-2006" were already right at EXTRACTED time), but whatever
+  populates candidate_invoice_ids runs on a separate, slower path. A user who responds
+  to the ambiguous card immediately (the natural next action) gets the same card again,
+  because the candidates it needs are still not there. Proposed fix (not applied --
+  investigation only): either compute candidate_invoice_ids synchronously as part of
+  extraction (it does not appear to require a model call, since NAT's own
+  match_summary was already correct at EXTRACTED time), or surface a distinct
+  "still matching, try again shortly" state distinguishable from the ambiguous
+  read/compare card. Verify by: re-running turns 2 and 5 and confirming a real
+  comparison (not the ambiguous card) is returned on the first ask, once
+  candidate_invoice_ids populate at the same time as extraction_status=EXTRACTED.
+  EVIDENCE: docs/test_evidence/vpi_demo_attachments_2026-09-19/README.md root cause 5,
+  11_turns_raw_bubbles.json turns 2/5; DB query showing candidate_invoice_ids empty
+  then populated for the same rows.
+
+  FIXED 2026-09-19 (same change set). **"Not ready" is not "ambiguous", and it is
+  not "failed" either.** Root cause confirmed and it is a publish-order race, not
+  a slow separate path: `services/attachment_extraction.py::extract_attachment()`
+  committed `extraction_status = "EXTRACTED"` the moment the extractor returned
+  and ran indexing and `match_attachment()` AFTERWARDS -- so anything polling to
+  `EXTRACTED` (browser, probe harness, chat turn) saw a ready document with an
+  empty `candidate_invoice_ids`. A new non-terminal `PROCESSING` value now holds
+  the row for that window: extracted fields persisted, nobody told it is ready.
+  `EXTRACTED` is written only after matching, so the candidates a question needs
+  exist from the same instant the status says ready; `EXTRACTED` and
+  `EXTRACT_FAILED` remain the only terminal values (`models.py` comment updated).
+  `match_attachment()`'s own guard was keyed to `EXTRACTED` and would have
+  skipped the very step whose lateness caused the defect -- the same proxy
+  mistake one layer down -- so it now asks the real question (did extraction
+  FAIL, and is there anything to match on); Gap 444's "an unreadable document is
+  never matched" is unchanged and stated directly.
+  The chat turn previously answered "I wasn't able to read that document well
+  enough to compare it" for BOTH still-working and failed, which are opposite
+  facts. A non-terminal row now returns "I'm still reading that document" plus an
+  `attachment_pending` answer key for the FE to render as progress, never as a
+  question back to the user -- there is nothing for them to decide.
+  `_ATTACHMENT_TERMINAL_STATUSES` is written as "which states are terminal"
+  rather than "which are still working", so a stage added later is treated as
+  not-finished by default instead of falling through to the failure message.
+  Because that guard runs before the intent classifier, B2's read-vs-compare card
+  is now unreachable on a document that is not ready.
+  **Note on the original diagnosis:** the card returned for probe turns 2 and 5
+  was produced by `_classify_attachment_intent()` genuinely returning `clarify`
+  for those two sentences (verified directly), not by the empty candidate list --
+  but the empty candidate list is what left the user with no path forward when
+  they answered it, and the publish-order race is the mechanism behind both. The
+  fix closes the race; the classifier's own behaviour on those two sentences is
+  untouched and is not filed as a defect here.
+  EVIDENCE: `tests/test_invoice_settlement.py` -- the terminal-status predicate
+  (including an unrecognised future stage counting as not-finished), and an
+  end-to-end `extract_attachment()` run whose assertion is taken INSIDE the
+  matching step: at that moment the row must not yet claim to be ready, and on
+  return it must be ready WITH candidates. A genuinely failed extraction is
+  asserted to remain `EXTRACT_FAILED`. Real Postgres.

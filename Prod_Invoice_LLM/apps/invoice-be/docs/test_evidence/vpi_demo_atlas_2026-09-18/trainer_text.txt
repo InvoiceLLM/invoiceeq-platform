@@ -1,0 +1,108 @@
+Invoice AI
+Dashboard
+AI Trainer
+Chat Rules
+Chat
+Help
+Collapse
+Your work
+🧭
+ATLAS
+
+Signed in
+
+Vishwa Precision Industries Pvt Ltd (Restricted)
+
+Your work
+Refresh
+train
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Ganesh Bearings Pvt Ltd #GBP-2012: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#GBP-2012
+
+Check these fields
+Dismiss
+Attach #GBP-2012 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Rajesh Steel Corporation #RAJ-2009: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#RAJ-2009
+
+Check these fields
+Dismiss
+Attach #RAJ-2009 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Rajesh Steel Corporation #RAJ-2008: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#RAJ-2008
+
+Check these fields
+Dismiss
+Attach #RAJ-2008 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+CORRECTION
+·
+LOW_CONFIDENCE_FIELDS
+
+Om Stationery Mart #OM -2002: check PaymentTerm
+
+These fields were read from a part of the document the extractor could not see clearly: PaymentTerm. Teaching it here fixes this vendor's layout, not just this invoice.
+
+I am not confident I read these fields correctly — the document did not read cleanly there.
+
+#OM -2002
+
+Check these fields
+Dismiss
+Attach #OM -2002 here and show me where you read PaymentTerm from.
+
+Attach the document in chat and compare it there — I do not attach it for you.
+
+You missed something here
+
+I will take you there — this one is yours to decide.
+
+What I remember
+What I did

@@ -7,6 +7,7 @@ import { Bell, ChevronDown, User, LogOut, Settings, Palette, Moon } from "lucide
 import { useClerk, useUser } from "@clerk/nextjs";
 import { useAuth, clearAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
+import AtlasModeToggle from "./AtlasModeToggle";
 import PageHeader from "./PageHeader";
 import { usePageHeaderActionsRef, usePageHeaderMeta } from "./PageHeaderContext";
 
@@ -284,6 +285,15 @@ export default function Header() {
             )}
           </Link>
         )}
+
+        {/* ATLAS / traditional toggle — D48, FE Gap 694.
+            Beside the bell, as ruled. D48 partially reverses D10: the classic
+            toggle was deleted because there was no second surface, and ATLAS
+            (`/work`) is one. The existing screens are not removed, not re-homed
+            and not redirected — this only chooses where the user goes.
+            Not gated on any grant: every signed-in user has a work screen, and
+            an ungranted one is told so by the screen itself (D3). */}
+        <AtlasModeToggle />
 
         {/* Dual-Theme Toggle Switch — FE Gap 478 */}
         <button
