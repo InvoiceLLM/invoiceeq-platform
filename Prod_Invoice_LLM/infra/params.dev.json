@@ -187,6 +187,24 @@
     },
     "enableChatStreaming": {
       "value": true
+    },
+    "maxPdfPages": {
+      "value": 50
+    },
+    "shadowModeMaxPdfPages": {
+      "value": false
+    },
+    "complexMinLineItems": {
+      "value": 15
+    },
+    "complexMinTaxEntries": {
+      "value": 2
+    },
+    "complexDiConfidenceFloor": {
+      "value": "0.70"
+    },
+    "useLegacyComplexityClassifier": {
+      "value": false
     }
   }
 }

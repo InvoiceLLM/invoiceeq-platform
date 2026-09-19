@@ -138,7 +138,7 @@ def test_queue_worker_audit_anomalies(db_session):
     db_invoice = Invoice(
         id=invoice_id,
         tenant_id=MOCK_TENANT_ID,
-        file_path="mock/invoice_audit.pdf",  # contains trigger keyword "audit"
+        file_path="mock/invoice_audit.pdf",
         status="PROCESSING"
     )
     db_session.add(db_invoice)

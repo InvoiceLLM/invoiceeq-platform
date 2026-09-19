@@ -55,6 +55,21 @@ else:
     engine = create_engine(sqlite_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
 
+@pytest.fixture(name="sqlite_session")
+def sqlite_session_fixture():
+    """BE Gap 584: rule 6d has one branch per engine, and three tests below assert the
+    SQLite spelling specifically (`json_each`, no `::jsonb`). They own a SQLite engine
+    rather than the shared fixture, so they keep testing the SQLite branch when
+    TEST_DATABASE_URL points the shared engine at Postgres. The Postgres branch has its
+    own coverage in `test_postgres_variant_of_rule_6d_is_the_one_built_for_a_postgres_bind`.
+    """
+    lite = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(lite)
+    with Session(lite) as session:
+        yield session
+    SQLModel.metadata.drop_all(lite)
+
+
 @pytest.fixture(name="db_session")
 def db_session_fixture():
     if postgres_test_url:
@@ -482,8 +497,12 @@ def test_routing_override_needs_a_prior_sql_answered_turn(db_session):
         classified_route="RAG",
     )
 
-    assert llm.prompts == [], "SQL route ran with no prior query to narrow"
-    assert result["generated_sql"] is None
+    # BE Gap 695: "no prompt reached the LLM" is no longer the same claim as
+    # "the override did not fire". The RAG route now always makes a companion
+    # SQL call of its own, so the thing to assert is what actually answered
+    # the turn -- a RAG-answered turn carries no `generated_sql`, whether or
+    # not a companion query ran alongside it.
+    assert result["generated_sql"] is None, "SQL route answered with no prior query to narrow"
 
 
 def test_routing_override_leaves_a_fresh_question_alone(db_session):
@@ -494,12 +513,15 @@ def test_routing_override_leaves_a_fresh_question_alone(db_session):
     _seed_turn(db_session, session_id, content="There are 4 cloud invoices.", sql="SELECT 1")
 
     llm = _RecordingLLM([])
-    _run(
+    result = _run(
         db_session, llm, "What does the vendor say about payment terms?", session_id,
         classified_route="RAG",
     )
 
-    assert llm.prompts == []
+    # BE Gap 695, same reasoning as the test above: the override is what is
+    # under test, and it fired or it did not. A companion SQL call from the
+    # RAG route is not the override and must not read as one.
+    assert result["generated_sql"] is None
 
 
 
@@ -681,7 +703,7 @@ def _taught_sql(rule_text: str, marker: str) -> str:
     return lines[idx + 1]
 
 
-def test_line_item_rule_teaches_only_the_live_engines_dialect(db_session):
+def test_line_item_rule_teaches_only_the_live_engines_dialect(sqlite_session):
     """The prompt must not offer the model syntax the bound engine cannot parse.
 
     This fixture's session is SQLite, so rule 6d must be the json_each form --
@@ -692,7 +714,7 @@ def test_line_item_rule_teaches_only_the_live_engines_dialect(db_session):
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
-    _run(db_session, llm, "show me the price for training line items", uuid4())
+    _run(sqlite_session, llm, "show me the price for training line items", uuid4())
     prompt = llm.prompts[0]
 
     assert "6d. LINE-ITEM LEVEL EXTRACTION" in prompt
@@ -718,7 +740,7 @@ def test_postgres_variant_of_rule_6d_is_the_one_built_for_a_postgres_bind():
     assert "jsonb_array_elements" in query_agent._line_item_rule(str(MOCK_TENANT_ID), broken)
 
 
-def test_rule_6d_guards_against_null_or_non_array_items(db_session):
+def test_rule_6d_guards_against_null_or_non_array_items(sqlite_session):
     """`items` is nullable and machine-populated. Un-nesting it unguarded aborts
     the whole tenant's query on a single bad row (confirmed by hand: SQLite
     raises `malformed JSON`, Postgres raises on a non-array), and burns an
@@ -726,7 +748,7 @@ def test_rule_6d_guards_against_null_or_non_array_items(db_session):
     llm = _RecordingLLM([
         MagicMock(sql=f"SELECT grand_total, currency FROM invoice WHERE tenant_id = '{MOCK_TENANT_ID}'")
     ])
-    _run(db_session, llm, "what is the training amount", uuid4())
+    _run(sqlite_session, llm, "what is the training amount", uuid4())
     assert "json_valid(items) AND json_type(items) = 'array'" in llm.prompts[0]
 
     pg_session = MagicMock()
@@ -749,7 +771,7 @@ def test_rule_6d_selects_currency_per_rule_7(db_session):
     assert "invoice.currency" in shape
 
 
-def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(db_session):
+def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(sqlite_session):
     """The gap's own reported case, executed rather than asserted: an invoice
     whose Training & Onboarding line is 29,302.94 inside a 35,480.59 grand total.
     The taught query must return 29,302.94 and must not surface the unrelated
@@ -762,23 +784,25 @@ def test_taught_line_item_sql_runs_on_sqlite_and_returns_only_the_matching_line(
     dashed form the generated SQL carries in production is Postgres' shape and
     is covered by the isolation tests, not this one.
     """
-    _seed_invoice(db_session, invoice_number="US-1", grand_total=35480.59, items=_LINE_ITEM_SEED)
-    _seed_invoice(db_session, invoice_number="US-2", grand_total=500.0, items=None)
-    _seed_invoice(db_session, invoice_number="US-3", grand_total=700.0, items=[])
+    _seed_invoice(sqlite_session, invoice_number="US-1", grand_total=35480.59, items=_LINE_ITEM_SEED)
+    _seed_invoice(sqlite_session, invoice_number="US-2", grand_total=500.0, items=None)
+    _seed_invoice(sqlite_session, invoice_number="US-3", grand_total=700.0, items=[])
     # A value that isn't JSON at all -- the ORM can't produce one, but OCR/LLM
     # extraction writing into a JSON-typed column on an untyped engine can.
-    db_session.exec(
+    sqlite_session.exec(
         text("UPDATE invoice SET items = 'not json at all' WHERE invoice_number = 'US-3'")
     )
-    db_session.commit()
+    sqlite_session.commit()
 
-    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, db_session)
-    rows = db_session.exec(text(_taught_sql(rule, _RULE_6D_MARKER))).all()
+    rule = query_agent._line_item_rule(MOCK_TENANT_ID.hex, sqlite_session)
+    rows = sqlite_session.exec(text(_taught_sql(rule, _RULE_6D_MARKER))).all()
 
     assert len(rows) == 1
     invoice_number, vendor_name, currency, description, qty, unit_price, amount = rows[0]
     assert (invoice_number, currency, description) == ("US-1", "USD", "Training & Onboarding")
-    assert (qty, unit_price, amount) == (40, 732.5735, 29302.94)
+    # BE Gap 584: Postgres returns Decimal for JSONB-derived numerics where SQLite
+    # returns float. The taught SQL is engine-correct either way, so compare by value.
+    assert (float(qty), float(unit_price), float(amount)) == (40, 732.5735, 29302.94)
     assert amount != 35480.59
 
 
@@ -807,8 +831,8 @@ def test_taught_line_item_sql_returns_raw_rows_across_invoices_and_currencies_un
         amounts_by_currency.setdefault(currency, []).append(amount)
 
     assert len(rows) == 3  # one row per matching line, not one row per currency/total
-    assert sorted(amounts_by_currency["USD"]) == [200.0, 29302.94]
-    assert amounts_by_currency["INR"] == [50.0]
+    assert sorted(float(a) for a in amounts_by_currency["USD"]) == [200.0, 29302.94]
+    assert [float(a) for a in amounts_by_currency["INR"]] == [50.0]
 
 
 def test_taught_line_item_sql_runs_on_postgres():
@@ -1065,12 +1089,11 @@ def test_full_record_block_gives_the_answer_step_the_real_cgst_sgst_breakdown(db
     assert summary_prompt.count('"amount": 9000.0') == 2
     # And the other columns the schema block never exposed either.
     assert '"subtotal": 100000.0' in summary_prompt
-    # BE Gap 588 (CH-21) reverses this line. The GSTIN is a tax identifier, and the
-    # founder ruling of 2026-09-16 is that nobody sees payment or tax credentials in
-    # chat -- so `tax_ids` never reaches the prompt at all now. The tax BREAKDOWN
-    # this test exists for (`taxes`, asserted above) is unaffected: that is the
-    # CGST/SGST split, not an identifier.
-    assert "29ABCDE1234F1Z5" not in summary_prompt
+    # BE Gap 588 was CANCELLED on 2026-09-18, superseding the 2026-09-16 ruling this
+    # line used to assert: bank and tax identifiers ARE shown in chat, because the
+    # same GSTIN is printed on the invoice PDF this user can already open. So the
+    # tenant's own `tax_ids` reaches the prompt like any other stored field.
+    assert "29ABCDE1234F1Z5" in summary_prompt
     # Never a licence to invent: the block says so in as many words, because the
     # original live failure (Gap 263) was a FABRICATED CGST/SGST split.
     assert "never derive, split or estimate one" in summary_prompt
@@ -1122,6 +1145,11 @@ def test_full_record_block_cannot_fetch_another_tenants_invoice(db_session):
         invoice_number="OTHER-1",
         grand_total=999999.0,
         taxes=[{"tax_type": "CGST", "rate_percent": 9.0, "amount": 123456.0}],
+        # Given its own GSTIN so this test still has a tax identifier to assert the
+        # ABSENCE of. BE Gap 588's cancellation (2026-09-18) means the caller's own
+        # `tax_ids` now reaches the block, so asserting on a shared value would pass
+        # whether isolation held or not -- see the two assertions below.
+        tax_ids=[{"type": "GSTIN", "value": "07ZZZZZ9999Z9Z9"}],
     )
 
     # Directly: the other tenant's id yields nothing at all, not a partial record.
@@ -1132,10 +1160,13 @@ def test_full_record_block_cannot_fetch_another_tenants_invoice(db_session):
     block = query_agent._full_record_block_for(
         [str(mine.id), str(theirs.id)], str(MOCK_TENANT_ID), db_session
     )
-    # BE Gap 588: `tax_ids` is excluded from the block entirely (see the CGST test
-    # above). The tenant-isolation property this test is actually about is asserted
-    # by the two lines below, which are unchanged.
-    assert "29ABCDE1234F1Z5" not in block
+    # BE Gap 588 was cancelled 2026-09-18, so `tax_ids` IS in the block now (see the
+    # CGST test above). That makes this the sharper isolation check it could not be
+    # while the field was masked: the caller's OWN GSTIN is present, the other
+    # tenant's is not. Flipping the first line to `in` without adding the second
+    # would have left a test that passes even if the other tenant's row leaked.
+    assert "29ABCDE1234F1Z5" in block
+    assert "07ZZZZZ9999Z9Z9" not in block
     assert "Someone Else Ltd" not in block
     assert "123456.0" not in block
 

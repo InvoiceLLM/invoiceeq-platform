@@ -569,7 +569,7 @@ def test_reference_profile_exists_and_is_additive():
     assert ref.required_fields == ()
     assert ref.passed_status == "EXTRACTED"
     assert ref.review_status == "EXTRACT_FAILED"
-    assert ref.legacy_audit_path_shim is False
+    assert not hasattr(ref, "legacy_audit_path_shim")
 
     # The two existing profiles are untouched, and the absent-direction default
     # is still INBOUND — nothing can reach REFERENCE by accident.

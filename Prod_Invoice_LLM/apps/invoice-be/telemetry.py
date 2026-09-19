@@ -2182,3 +2182,133 @@ def track_security_incident(
             props[k] = str(v)[:500]
     _emit_event(f"security.{incident_type}", props)
 
+
+POISON_MESSAGE_EVENT_NAME = "poison_message_deadlettered"
+
+
+def track_poison_message(
+    task: str,
+    tenant_id: str = "",
+    payload_ids: Optional[dict[str, Any]] = None,
+    error_type: str = "",
+    error_message: str = "",
+    dequeue_count: int = 5,
+    dlq_copied: bool = True,
+) -> None:
+    """BE Gap 680 Part 1: emit structured telemetry when a message is moved to the dead-letter queue.
+
+    `dlq_copied=False` means the copy to the DLQ failed and the message was left on the
+    main queue for retry -- the case an operator most needs to see.
+
+    Carries task name, tenant_id, entity identifiers (batch_id, file_path, provider, file_id, job_id),
+    error type, truncated error message, and dequeue count. Never carries raw file bytes.
+    Never raises.
+    """
+    try:
+        props: dict[str, Any] = {
+            "task": task or "unknown",
+            "tenant_id": str(tenant_id or ""),
+            "error_type": str(error_type or ""),
+            "error_message": str(error_message or "")[:1000],
+            "dequeue_count": int(dequeue_count),
+            "dlq_copied": bool(dlq_copied),
+            "severity": "high",
+            "run_source": _resolve_run_source(),
+        }
+        if payload_ids:
+            for k, v in payload_ids.items():
+                if v is not None and not isinstance(v, (bytes, bytearray)):
+                    props[f"payload_{k}"] = str(v)[:500]
+
+        _emit_event(POISON_MESSAGE_EVENT_NAME, props)
+    except Exception:
+        logger.warning("poison_message_deadlettered telemetry failed", exc_info=True)
+
+
+EXTRACTION_PIPELINE_EVENT_NAME = "extraction_pipeline_turn"
+
+
+def track_extraction_pipeline_turn(
+    batch_id: str,
+    invoice_id: str,
+    tenant_id: str,
+    status: str,
+    ocr_latency_ms: float = 0.0,
+    llm_latency_ms: float = 0.0,
+    verify_latency_ms: Optional[float] = None,
+    db_persist_latency_ms: float = 0.0,
+    chroma_latency_ms: float = 0.0,
+    total_duration_ms: float = 0.0,
+    doc_type: Optional[str] = None,
+    alerts_count: int = 0,
+    error: Optional[str] = None,
+) -> None:
+    """BE Gap 686: emit structured telemetry for extraction pipeline stage latencies.
+
+    Measures OCR, LLM extraction passes, DB persistence, and Chroma indexing
+    so bottleneck stages (e.g. Doc Intelligence latency, vector embedding delay)
+    are visible in Application Insights and Log Analytics.
+
+    `llm_latency_ms` covers everything inside `run_extraction_agent` (classify,
+    dynamic QA, extract, verify, retries) plus template lookup and a second pass.
+    Verification runs inside that graph and is not timed separately, so
+    `verify_latency_ms` is omitted unless a caller actually measured it -- a
+    constant 0 would read as "verification is free" on a dashboard.
+
+    Never raises: telemetry must not turn a successfully processed invoice into a
+    failure (same contract as `track_agent_call`).
+    """
+    try:
+        props: dict[str, Any] = {
+            "batch_id": str(batch_id or ""),
+            "invoice_id": str(invoice_id or ""),
+            "tenant_id": str(tenant_id or ""),
+            "status": str(status or ""),
+            "ocr_latency_ms": round(float(ocr_latency_ms), 2),
+            "llm_latency_ms": round(float(llm_latency_ms), 2),
+            "db_persist_latency_ms": round(float(db_persist_latency_ms), 2),
+            "chroma_latency_ms": round(float(chroma_latency_ms), 2),
+            "total_duration_ms": round(float(total_duration_ms), 2),
+            "doc_type": str(doc_type or "INVOICE"),
+            "alerts_count": int(alerts_count),
+            "run_source": _resolve_run_source(),
+        }
+        if verify_latency_ms is not None:
+            props["verify_latency_ms"] = round(float(verify_latency_ms), 2)
+        if error:
+            props["error"] = str(error)[:500]
+
+        _emit_event(EXTRACTION_PIPELINE_EVENT_NAME, props)
+    except Exception:
+        logger.warning("extraction_pipeline_turn telemetry failed", exc_info=True)
+
+
+EXTRACTION_QUALITY_EVENT_NAME = "extraction_quality_rollup"
+
+
+def track_extraction_quality_rollup(
+    tenant_id: str,
+    field: str,
+    correction_count: int,
+    total_resolves: int,
+    correction_rate: float,
+) -> None:
+    """BE Gap 688: Emit custom metric/event for extraction quality rollup.
+
+    Records human correction rate on fields (grand_total, tax_amount, vendor_name)
+    derived from AuditLog human edits. Never raises.
+    """
+    try:
+        props: dict[str, Any] = {
+            "tenant_id": str(tenant_id),
+            "field": str(field),
+            "correction_count": int(correction_count),
+            "total_resolves": int(total_resolves),
+            "correction_rate": round(float(correction_rate), 4),
+            "run_source": _resolve_run_source(),
+        }
+        _emit_event(EXTRACTION_QUALITY_EVENT_NAME, props)
+    except Exception:
+        logger.warning("extraction_quality_rollup telemetry failed", exc_info=True)
+
+

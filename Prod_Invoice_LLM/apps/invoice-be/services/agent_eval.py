@@ -529,6 +529,12 @@ class EvalScores:
     #: out of `decide_pass()` for this turn only: a refusal's claims are about
     #: the schema, which is not in the evidence it would be graded against.
     abstained: bool = False
+    #: BE Gap 693. True when the judge was handed no evidence at all -- no tool
+    #: output and no executed query. Faithfulness is then unscoreable rather than
+    #: zero, and recording it as 0.0 made "we did not measure this" indistinguishable
+    #: from "every claim was fabricated". Twelve attachment turns in the 2026-09-18
+    #: Dev run failed that way, two of them with `accuracy_score=1.0`.
+    evidence_absent: bool = False
     passed: bool = False
     notes: list[str] = field(default_factory=list)
     claims: list[str] = field(default_factory=list)
@@ -1985,9 +1991,16 @@ def score_answer(
 
         llm = get_llm()
 
+    # BE Gap 693: decided once, before any judge call, from what this turn actually
+    # has to be judged against. `context` is the tool output and `executed_queries`
+    # the other half of the evidence (failure mode 3); with neither, faithfulness
+    # has nothing to measure and must not be reported as a number.
+    evidence_absent = not ((context or "").strip() or (executed_queries or "").strip())
+
     scores = EvalScores(
         judge_mode="combined" if combined_judge else "separate",
         abstained=bool(abstained),
+        evidence_absent=evidence_absent,
     )
 
     if combined_judge:
@@ -2105,7 +2118,10 @@ def decide_pass(scores: EvalScores) -> bool:
     -- is caught by accuracy alone, and in the online judge (no reference, so no
     accuracy) by relevance alone.
     """
-    faithfulness = None if scores.abstained else scores.faithfulness_score
+    # BE Gap 693: an unmeasured faithfulness must not vote, for the same reason an
+    # abstention's does not -- in both cases the number measures the evidence set
+    # rather than the answer. The turn still fails on accuracy if accuracy says so.
+    faithfulness = None if (scores.abstained or scores.evidence_absent) else scores.faithfulness_score
 
     if scores.accuracy_score is not None:
         if faithfulness is not None and faithfulness <= 0.0:

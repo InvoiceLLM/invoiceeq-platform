@@ -3019,3 +3019,65 @@ T-E10-2 and fail this one.
 
 The rollout gate stays **closed**. R5(c)'s requirement is met by
 `app/history/page.tsx` in place of `app/documents/page.tsx`.
+
+
+---
+
+### Build note — extraction ground truth for non-invoice types, 2026-09-17 (tracker BE Gap 687)
+
+**The two numbers this feature has been reporting as one.** §7 task F sourced *classification*
+fixtures (`tests/fixtures/doc_types/`, 16 PDFs, `MANIFEST.md`) and took classification coverage to
+every type in the taxonomy. That answers "is this a delivery note?". It says nothing about whether
+the fields were read off it correctly. Field-level extraction accuracy, line-item parsing and alert
+recall were measurable **for invoices only** — four `InvoiceSpec` instances in
+`benchmarks/extraction/documents.py` and no equivalent for anything else. BE Gap 687 is the second
+number, and it lives in `benchmarks/`, not in `tests/fixtures/`. Task F and this are different files
+and different measurements; they should not be read as one figure again.
+
+**Correction to the gap's premise, and to anything else quoting "10 doc types".** `DOC_TYPES` holds
+**15** values, not 10 — it grew when `BANK_STATEMENT` was split out from `STATEMENT_OF_ACCOUNT`
+under the narrow unfreeze for BE Gap 516.1 on 2026-09-14. The target is therefore **14** non-invoice
+types, and extraction ground truth goes from **0/14 to 5/14**.
+
+**What shipped.** `benchmarks/extraction/generic_documents.py` — a `DocumentSpec` /
+`GenericLineSpec` pair that renders OCR text and its own ground truth **in `GenericDocumentSchema`'s
+field names**, so a comparison against a real extraction is field-for-field with no translation
+layer, exactly as `InvoiceSpec` is for the invoice schemas. Every money field on a line is optional,
+which is the point: a delivery-note row is a part number and a quantity.
+
+Five specs, each covering a structural shape `GenericDocumentSchema` has fields for and
+`InvoiceExtractionSchema` does not:
+
+| Spec | Shape it pins |
+|---|---|
+| `in_delivery_note_unpriced` | No prices at all — `currency`, `subtotal`, `tax_amount`, `grand_total` and every line price must come back null. This is the shape `prebuilt-invoice` force-fits into an invoice by inventing a `VendorName`/`InvoiceTotal`, and a non-null total here puts a money figure on a document that owes nothing |
+| `us_purchase_order_priced` | `po_number` equal to `doc_number` (the schema says so, and a null here is a common miss because the model looks for a *referenced* order), plus `incoterms` and `delivery_terms` |
+| `eu_credit_note_negative` | Every figure negative, with `reference_numbers` citing the adjusted invoice. A `+612.85` reverses the direction of money on the ledger and reads as perfectly correct |
+| `in_grn_three_quantity_columns` | `quantity_ordered` / `quantity_delivered` / `quantity_received` printed side by side, with rows that deliberately disagree — collapsing them loses the discrepancy that is the whole purpose of a GRN |
+| `in_quotation_with_validity` | `valid_until` printed explicitly, which the schema forbids deriving from `doc_date`; a validity guessed at +30 days commits the business to a price it never offered |
+
+**The routing fix, which was the real work and was not in the gap's proposal.** `harness.py` now
+takes an `ExtractionSpec` Protocol rather than `InvoiceSpec` concretely — but widening the type
+annotation alone changes nothing, because `run_clean_case` was **dropping `doc_type` before
+`verify_node`**, and `doc_type` is what selects the generic verification rubric. Worth recording
+plainly for the next reader: `flow_direction="GENERIC"` is **not** a value a caller may pass —
+`resolve_direction_profile("GENERIC")` raises `UnknownFlowDirectionError` by design (G6/E9). These
+specs are `flow_direction="INBOUND"` with the type carried separately in `doc_type`, and the generic
+profile is selected downstream by `resolve_extraction_profile(flow_direction, doc_type)`.
+
+**Separate tuple, on purpose.** `CLEAN_GENERIC_DOCUMENTS` rather than adding to `CLEAN_DOCUMENTS`,
+because `tests/test_extraction_benchmark.py` parametrises invoice-specific assertions
+(`sum(line.amount) == subtotal`, `quantity * unit_price == amount`) over the latter, which an
+unpriced delivery note fails by design. `ALL_CLEAN_DOCUMENTS` is the union.
+
+**Scope, stated rather than assumed.** The remaining nine types are a deliberate gap. Which to
+author next should follow **production volume per `doc_type`** — authoring trustworthy ground truth
+is the slowest work in this area, and doing it for types nobody uploads buys nothing. Adding one is
+mechanical: write a `DocumentSpec`, add it to the tuple, and the harness and the shape tests pick it
+up automatically.
+
+**Relationship to task V.** This is not task V. `tests/test_generic_documents_benchmark.py` (42
+cases) runs verify-only mode through the **real** `verify_node`, on SQLite. No model has been asked
+to read these five documents, so nothing here measures extraction *accuracy* — that is a live-mode
+run, it costs tokens, and it is what would produce the field-accuracy number these fixtures exist to
+enable. Per hard rule 2 no Postgres-backed claim is made.

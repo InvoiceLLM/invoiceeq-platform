@@ -110,13 +110,15 @@ def test_every_column_survives_the_round_trip_including_the_json_ones(pg_session
     assert {t["tax_type"] for t in record["taxes"]} == {"CGST", "SGST"}
     assert isinstance(record["items"], list) and record["items"][0]["amount"] == 1000.0
     assert isinstance(record["sa_alerts"], list) and record["sa_alerts"]
-    # BE Gap 588 (CH-21) reverses what this line used to assert. Founder ruling
-    # 2026-09-16: nobody sees payment credentials in chat, on any door, so
-    # `payment_instructions` and `tax_ids` are excluded from the prompt record --
-    # a model cannot recite a field it was never shown. Asserted as absence, for
-    # the same reason `test_identity_uuids_never_reach_the_prompt` below exists.
-    assert "payment_instructions" not in record
-    assert "tax_ids" not in record
+    # BE Gap 588 was CANCELLED on 2026-09-18, superseding the 2026-09-16 ruling that
+    # had these two asserted as absent: bank and tax identifiers ARE shown in chat.
+    # The product is used by a finance department, and every value they carry is
+    # printed on the invoice PDF the same user can already open -- so masking them
+    # withheld nothing from anyone while breaking ordinary questions about payment
+    # terms. `test_identity_uuids_never_reach_the_prompt` below is unaffected: an
+    # internal row id is not business data, which is the distinction that gap lost.
+    assert "payment_instructions" in record
+    assert "tax_ids" in record
     assert result.records[0].has_alerts is True
 
     block = full_records.full_record_block(result)

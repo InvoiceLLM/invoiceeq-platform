@@ -81,7 +81,15 @@ def test_every_offending_figure_is_named_not_just_the_first():
     assert "111.11" in directive and "222.22" in directive
     # The retry names the figures. "Be more faithful" is the instruction that has
     # already failed everywhere else in this codebase.
-    assert "may not compute" in directive
+    #
+    # BE Gap 696: this used to assert "may not compute". That blanket ban was the
+    # reason a CORRECT total failed the gate -- the model was forbidden to do
+    # arithmetic and then judged on whether its arithmetic appeared verbatim in
+    # the rows. Computation is now permitted and CHECKED instead of forbidden, so
+    # the directive offers the two acceptable outcomes: copy the figure exactly,
+    # or keep it and show the working.
+    assert "show the calculation in brackets" in directive
+    assert "not available" in directive
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ from dependencies import (
 )
 from chroma_client import delete_document_chunks, delete_invoice_chunks
 from models import Document, Invoice, Tenant, AuditLog, User
-from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage
+from services.storage import upload_pdf_to_blob_storage, download_pdf_from_storage, StorageUploadError
 from services.invoice_visibility import invoice_not_deleted
 from utils.alert_ids import with_alert_ids
 from services.invoice_deletion import (
@@ -42,6 +42,7 @@ from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ACCEPTED_UPLOAD_SUFFIXES,
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
 )
@@ -298,6 +299,12 @@ async def _ingest_single_file(
         file_path = await run_in_threadpool(
             upload_pdf_to_blob_storage, file_bytes, str(context.tenant_id), str(invoice_id)
         )
+    except StorageUploadError as e:
+        logger.error("Storage upload failed for invoice %s (%s): %s", invoice_id, filename, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is temporarily unavailable. Nothing was saved. Try again.",
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -411,7 +418,7 @@ async def upload_invoices(
             )
         try:
             normalized = normalize_upload(fname, file_bytes)
-        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+        except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=exc.detail,
@@ -529,7 +536,7 @@ async def start_directory_watcher(
             raw_bytes = f.read()
         try:
             normalized = normalize_upload(filename, raw_bytes)
-        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+        except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=exc.detail,

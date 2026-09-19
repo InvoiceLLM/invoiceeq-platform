@@ -16,6 +16,7 @@ from dependencies import (
     TenantContext,
 )
 from agents.extraction_agent import OutboundInvoiceExtractionSchema
+from utils.correction_fields import derive_correctable_fields, entry_name_for
 from models import Invoice, AuditLog, ExtractionTemplate, ExtractionTemplateVersion, User
 from services.invoice_visibility import invoice_not_deleted
 from utils.correction_values import (
@@ -65,31 +66,9 @@ router = APIRouter(
 # Feature 7.1: outbound corrections only ever touch these fields -- the
 # same set OutboundInvoiceExtractionSchema extracts (feature_2.1_vendor_flow_ingestion.md),
 # not inbound's field list (no customer_name inbound; no discount lines, deductions or tags outbound).
-_CORRECTABLE_FIELDS = {
-    "customer_name": "str",
-    "invoice_number": "str",
-    "invoice_date": "date",
-    "due_date": "date",
-    "subtotal": "float",
-    "grand_total": "float",
-    "tax_amount": "float",
-    "items": "list",
-    # BE Gap 531 (founder ruling 2026-09-15: all of them): the rest of what
-    # OutboundInvoiceExtractionSchema extracts into an Invoice column since BE Gap 467
-    # (so an outbound invoice does carry vendor_name and po_number now). `round_off` has no column.
-    "vendor_name": "str",
-    "po_number": "str",
-    "notes": "str",
-    "currency": "currency",
-    "discount_amount": "float",
-    "discount_percent": "percent",
-    "taxes": "list",
-    "tax_ids": "list",
-    "payment_instructions": "list",
-    "references": "list",
-    "addresses": "list",
-    "compliance_metadata": "list",
-}
+# `extra={}` keeps outbound parity with the hand-written set: `tags` is inbound-only
+# today, and widening the outbound surface is a product decision, not a refactor.
+_CORRECTABLE_FIELDS = derive_correctable_fields(OutboundInvoiceExtractionSchema, Invoice, extra={})
 
 # BE Gap 531: each list field's entries are checked against the model OutboundInvoiceExtractionSchema
 # itself uses for that field (read from the schema, not imported by name — see list_entry_model).
@@ -103,8 +82,9 @@ _LIST_ENTRY_NAMES = {
     "compliance_metadata": "compliance entry",
 }
 _LIST_ENTRY_MODELS = {
-    field: (list_entry_model(OutboundInvoiceExtractionSchema, field), entry_name)
-    for field, entry_name in _LIST_ENTRY_NAMES.items()
+    field: (list_entry_model(OutboundInvoiceExtractionSchema, field), entry_name_for(field, _LIST_ENTRY_NAMES))
+    for field, kind in _CORRECTABLE_FIELDS.items()
+    if kind == "list"
 }
 
 # BE Gap 532 (founder ruling 2026-09-15): fields a correction may change but never empty.

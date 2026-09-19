@@ -31,6 +31,7 @@ from services.storage import LOCAL_STORAGE_DIR, download_pdf_from_storage
 from services import trainer_sessions
 from services.file_intake import (
     ImageTooLargeError,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     normalize_upload,
 )
@@ -649,7 +650,7 @@ async def upload_transient_file(
         # the trainer path below never learns it was an image.
         try:
             normalized = normalize_upload(fname, content_bytes)
-        except (UnsupportedUploadError, ImageTooLargeError) as exc:
+        except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
         content_bytes = normalized.pdf_bytes
         with open(file_path, "wb") as f:

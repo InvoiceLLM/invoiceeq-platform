@@ -170,6 +170,7 @@ def _replay_invoice(
                 grand_total,
                 discount_amount=invoice.discount_amount,
                 discount_percent=invoice.discount_percent,
+                freight_amount=getattr(invoice, "freight_amount", None),
                 tolerances=tolerances,
             )
         except Exception as e:

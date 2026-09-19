@@ -247,6 +247,18 @@ ALERT_TYPES: dict[str, AlertTypeSpec] = {
         not_correctable_reason=_FACTUAL_NOT_CORRECTABLE,
         flaggable_as_missed=False,
     ),
+    # ── utils/extracted_dates.py (BE Gap 670) ──────────────────────────────
+    # A printed date the deterministic parser could not read, or a numeric date
+    # whose day/month order reads two ways. Raised on invoice_date, due_date,
+    # doc_date and valid_until, so no single default field.
+    "unreadable_date": AlertTypeSpec(
+        type="unreadable_date",
+        label="Printed date could not be read",
+        producer="utils/extracted_dates.py::parse_extracted_date",
+        default_field=None,
+        not_correctable_reason=_FACTUAL_NOT_CORRECTABLE,
+        flaggable_as_missed=False,
+    ),
 }
 
 

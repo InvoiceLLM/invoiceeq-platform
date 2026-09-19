@@ -242,6 +242,18 @@ class Invoice(SQLModel, table=True):
     source_invoice_id: UUID | None = Field(default=None, foreign_key="invoice.id", nullable=True)
     builder_intent: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT, nullable=True))
 
+    # BE Gap 684: extraction provenance (model, prompt version, schema version, duration)
+    # Nullable with no backfill: every historical row keeps NULL (which honestly
+    # means "extracted before provenance existed").
+    model_deployment: str | None = Field(default=None, max_length=128)
+    prompt_version: str | None = Field(default=None, max_length=64)
+    schema_version: str | None = Field(default=None, max_length=64)
+    llm_duration_ms: int | None = Field(default=None)
+
+    # BE Gap 674: Freight / shipping charge printed outside line items
+    # Nullable with no backfill: every historical row keeps NULL.
+    freight_amount: float | None = Field(default=None)
+
     # FE Gap 29: dashboard/list filters are always tenant-scoped plus one of
     # status/date/vendor, so composite indexes led by tenant_id (rather than
     # single-column ones) are what the query planner actually uses here.
@@ -392,6 +404,17 @@ class Document(SQLModel, table=True):
     processing_attempts: int = Field(default=0)
     # Gap 125's process-complete notify target, mirrored.
     submitted_by_email: str | None = Field(default=None, max_length=255)
+
+    # BE Gap 684: extraction provenance (model, prompt version, schema version, duration)
+    # Nullable with no backfill: mirrors Invoice above.
+    model_deployment: str | None = Field(default=None, max_length=128)
+    prompt_version: str | None = Field(default=None, max_length=64)
+    schema_version: str | None = Field(default=None, max_length=64)
+    llm_duration_ms: int | None = Field(default=None)
+
+    # BE Gap 674: Freight / shipping charge printed outside line items
+    # Nullable with no backfill: mirrors Invoice above.
+    freight_amount: float | None = Field(default=None)
 
     # Same reasoning as `Invoice.__table_args__` (FE Gap 29): every product
     # query on this table is tenant-scoped plus one more predicate, so the

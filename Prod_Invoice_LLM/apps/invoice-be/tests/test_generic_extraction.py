@@ -60,14 +60,14 @@ from uuid import uuid4
 
 import fitz
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel
 
 import config
 import agents.extraction_agent as ea
 import queue_worker.handlers as handlers
 import services.document_type_classifier as dtc
 from models import Invoice
+from tests._postgres_test_engine import make_test_engine
 from agents.extraction_agent import (
     GenericDocumentSchema,
     GenericLineItem,
@@ -342,7 +342,8 @@ def test_multimodal_prompt_contains_the_resolved_overlay(doc_type):
     assert f"type {doc_type}" in text
     assert "ABSENT IS NOT ZERO" in text
     assert ea.GAP_46_VERBATIM_DIRECTIVE in text
-    assert "OCR Text:\nDELIVERY CHALLAN\nQty 250 NOS" in text
+    assert ea.EXTRACTION_INJECTION_GUARD_INSTRUCTION in text
+    assert "OCR Text:\n<document_content>\nDELIVERY CHALLAN\nQty 250 NOS\n</document_content>" in text
     # The images still ride along on the same message, as they do for every
     # other multimodal builder in this file.
     assert messages[0].content[1]["image_url"]["url"] == "data:image/png;base64,AAAA"
@@ -354,7 +355,8 @@ def test_text_prompt_contains_the_resolved_overlay_for_the_states_doc_type(doc_t
 
     assert _OVERLAYS[doc_type] in prompt
     assert _STANCE[DOC_TYPE_FAMILY[doc_type]] in prompt
-    assert prompt.endswith("PACKING SLIP\n12 NOS")
+    assert ea.EXTRACTION_INJECTION_GUARD_INSTRUCTION in prompt
+    assert prompt.endswith("<document_content>\nPACKING SLIP\n12 NOS\n</document_content>")
 
 
 def test_text_prompt_without_a_doc_type_uses_the_conservative_other_overlay():
@@ -603,7 +605,7 @@ def test_the_generic_profile_entry_has_the_shape_a2_specifies():
     assert generic.build_multimodal_prompt is ea.build_generic_multimodal_prompt
     assert generic.build_text_prompt is ea._build_generic_text_prompt
     assert generic.required_fields == ()
-    assert generic.legacy_audit_path_shim is False
+    assert not hasattr(generic, "legacy_audit_path_shim")
 
     # The status pair is REFERENCE's, deliberately and not by coincidence: a
     # delivery note has no audit lifecycle, exactly as a chat-attached reference
@@ -1361,7 +1363,8 @@ def test_the_invoice_multimodal_builder_is_still_called_unbound_and_unchanged(mo
     )
 
     text = llm.prompts[0][0].content[0]["text"]
-    assert text.startswith("You are an expert invoice processing agent.")
+    assert ea.EXTRACTION_INJECTION_GUARD_INSTRUCTION in text
+    assert "You are an expert invoice processing agent." in text
     assert _OVERLAYS["DELIVERY_NOTE"] not in text
 
 
@@ -2052,16 +2055,18 @@ def worker_db():
     that drive the real `handle_process_invoice` persistence block.
 
     Same shape as `tests/test_sse.py`'s fixture, which is the existing precedent
-    for exercising this handler. **Evidence caveat (hard rule 2): SQLite is not
-    Postgres.** These three prove the gate's wiring — which value reaches
-    `invoice.coordinates` — not the storage behaviour of a JSON column; the
-    Postgres run is task V's.
+    for exercising this handler.
+
+    **BE Gap 685 (2026-09-17):** this now honours `TEST_DATABASE_URL` under the
+    Gap 525 guard, so the same tests can be run against real Postgres. The
+    evidence caveat below still applies to any run that does *not* set it —
+    which, since nothing in CI does, is every unattended run.
+
+    **Evidence caveat (hard rule 2): SQLite is not Postgres.** On the SQLite
+    branch these three prove the gate's wiring — which value reaches
+    `invoice.coordinates` — not the storage behaviour of a JSON column.
     """
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    engine = make_test_engine()
     SQLModel.metadata.create_all(engine)
     tenant_id = uuid4()
 

@@ -318,13 +318,20 @@ async def upload_chat_attachment(
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
     attachment_id = uuid4()
-    from services.storage import upload_pdf_to_blob_storage
+    from services.storage import upload_pdf_to_blob_storage, StorageUploadError
 
     # Same helper the invoice path uses; the path segment differs so a reference
     # document is never mistaken for an invoice blob by anything walking storage.
-    blob_path = upload_pdf_to_blob_storage(
-        data, str(tenant_context.tenant_id), f"chat-attachments/{attachment_id}"
-    )
+    try:
+        blob_path = upload_pdf_to_blob_storage(
+            data, str(tenant_context.tenant_id), f"chat-attachments/{attachment_id}"
+        )
+    except StorageUploadError as e:
+        logger.error("Failed to upload chat attachment %s: %s", attachment_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is temporarily unavailable. Nothing was saved. Try again.",
+        )
 
     # E-7's TTL is stamped onto the row at creation, not computed at read time
     # from `created_at`. Two reasons: the sweeper (H8) can then find expired rows

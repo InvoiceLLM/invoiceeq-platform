@@ -123,3 +123,45 @@ Because there is no flag (D1), the first deployment carrying this code accepts i
 | D3 | Widen the Google Drive listing to images? | **Yes, for every tenant, no opt-in.** Accepted consequence: a watched folder already holding photos ingests them on the next cycle and is charged quota for each. |
 | D4 | Refuse images when `LLM_PROVIDER=ollama`? | **No provider branch.** This feature targets the Azure Document Intelligence path only. Verified at scoping time that the ollama path is still live in four places (`config.py:369`, `utils/llm.py:165,200`, `queue_worker/handlers.py:151`, `routers/chat_attachments.py:69`) despite being described as deleted; removing it is separate work and is not blocked by this feature. |
 | D5 | Route chat attachments through `normalize_upload` too? | **No.** They stay on Feature 27's native image path. A reference document is not an invoice and never enters the pipeline, so the two paths may differ. |
+
+
+---
+
+## Build note — PDF page ceiling, 2026-09-17 (BE Gap 681)
+
+§6's verification plan covered MIME sniffing and the `MAX_IMAGE_PIXELS` decompression-bomb guard.
+A second payload dimension was unguarded: **page count**. `normalize_upload()` passed any bytes with
+a `%PDF` header straight through byte-identical, without ever opening the document, so a 300-page
+upload reached Document Intelligence at per-page cost, produced 300 base64 renders, and died on
+context-window overflow or container memory — leaving the user on a permanent spinner and the tenant
+billed for the OCR regardless.
+
+**What shipped.** `MAX_PDF_PAGES` (settings, not a literal), enforced in `normalize_upload` by
+opening the document with PyMuPDF and reading `page_count` before accepting. Over the limit is an
+`HTTP 400` naming **both** the limit and the actual count, because "too many pages" without the
+numbers is not actionable for the person who has to split the file.
+
+**Two things worth preserving.**
+
+1. **The ceiling is enforced on both code paths that produce a PDF, not just the `.pdf` branch.**
+   The image branch calls `convert_image_to_pdf()`, and `_frames_as_streams` decodes per frame — so a
+   multi-frame TIFF converts to a many-page PDF and would have reached Document Intelligence having
+   passed only the per-frame pixel check. There are two enforcement call sites for this reason.
+   The original gap text named only `normalize_upload()`'s PDF branch.
+2. **The threshold is measured, not chosen.** 68 PDFs in the corpus were scanned; the largest was 11
+   pages; 50 gives roughly 4.5× headroom. This is the only threshold in the 2026-09-16 audit batch
+   that rests on a count rather than a judgement, and it should be re-derived rather than nudged if
+   the corpus changes.
+
+**Rollback lever, deliberately config-level.** `SHADOW_MODE_MAX_PDF_PAGES=true` logs an over-limit
+document with its page count and accepts it anyway. A new *rejection* path is the one shape of change
+that turns a slow success into a hard failure for a paying customer, so the ability to disable it
+without a deploy is part of the feature rather than an afterthought. Both settings are threaded
+through `params.{dev,prod}.json` → `08-apps.bicep` → the backend, worker and job containers, so the
+lever is reachable from Azure.
+
+**Coverage.** `tests/test_gap681_pdf_page_ceiling.py`, 14 cases — default limits, the TIFF
+conversion ceiling, shadow-mode logging, unparseable-stub tolerance, router 400 responses, and a
+68-fixture run confirming zero false rejections. All six ingestion entry points route through
+`normalize_upload` (interactive upload, connector import, inbound email, outbound, trainer), so the
+ceiling is not confined to the interactive door.

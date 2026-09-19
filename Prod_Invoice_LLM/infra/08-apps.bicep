@@ -97,6 +97,24 @@ param enableProductionQualityJudge bool = false
 @description('Feature 27 — generic (non-invoice) extraction. Gates the classifier node in the extraction graph; with it off `doc_type` is always None and no `documents` row is ever created. Opt in per environment, exactly like enableProductionQualityJudge above.')
 param enableGenericExtraction bool = false
 
+@description('BE Gap 681 - hard ceiling on pages in an uploaded PDF (and in a PDF produced by converting a multi-frame image). Above it, intake rejects with HTTP 400 naming both the limit and the actual count. 50 was chosen from corpus measurement (68 PDFs scanned, largest 11 pages), i.e. ~4.5x headroom. This is a customer-facing rejection threshold, so it is settable per environment rather than compiled in.')
+param maxPdfPages int = 50
+
+@description('BE Gap 681 - log-only mode for the page ceiling. True records an over-limit document with its page count and accepts it anyway. This is the documented rollback lever for Gap 681: a wrongly-tuned ceiling stops rejecting customer uploads without shipping code.')
+param shadowModeMaxPdfPages bool = false
+
+@description('BE Gap 682 - line-item rows at or above which a document is COMPLEX and pays for the dynamic_qa pre-analysis pass (a second LLM reasoning call). Provisional: the COMPLEX rate has never been measured, and classify_invoice_complexity logs the legacy verdict beside the new one so it can be tuned from App Insights without a deploy.')
+param complexMinLineItems int = 15
+
+@description('BE Gap 682 - rows in Document Intelligence\'s own TaxDetails breakdown at or above which the document has a genuine multi-tax split (CGST/SGST, two VAT rates). One tax row is an ordinary invoice and must not trigger COMPLEX.')
+param complexMinTaxEntries int = 2
+
+@description('BE Gap 682 - lowest Document Intelligence field confidence below which the layout is treated as difficult. String because bicep has no float type; pydantic coerces it. DI\'s own confidence is a better difficulty signal than any keyword, because it is computed from the document\'s structure rather than its vocabulary.')
+param complexDiConfidenceFloor string = '0.70'
+
+@description('BE Gap 682 rollback switch. True restores the pre-Gap-682 trigger set (Doc Intelligence field presence plus bare gst/vat/discount keywords), which fired on essentially every itemised invoice. This is the documented rollback lever for Gap 682 and must stay flippable without a deploy.')
+param useLegacyComplexityClassifier bool = false
+
 @description('Feature 26 Part 2 — the attached-document intent split and content branch. With it off an attachment turn is Part 1\'s deterministic comparison path, byte-identical to Gap 366. NOT a gate on attachments as such (B11 item 1: `attachment_id` presence is the routing switch and is not a flag).')
 param enableGenericDocChat bool = false
 
@@ -197,6 +215,19 @@ param sandboxSweepCron string = '0 4 * * *'
 // resolves. A daily cadence would leave that standing for up to a day. It is
 // cheap -- one indexed query per run, and nothing to do when nothing is stuck.
 param stuckChatTurnReaperCron string = '*/15 * * * *'
+
+// BE Gap 679 (Decision D10): the stuck-invoice reconciliation self-healing sweep.
+// Runs every 10 minutes to detect invoices stalled in non-terminal states (older than
+// INVOICE_STUCK_AFTER_MINUTES = 20, config.py) and re-enqueue them, or mark FAILED after
+// INVOICE_MAX_REPROCESS_ATTEMPTS. Declared only -- deployed in the infra pass with Gap 640.
+@description('Cron schedule (UTC) for the stuck-invoice reconciliation sweep (BE Gap 679). Every 10 minutes by default.')
+param stuckInvoiceSweepCron string = '*/10 * * * *'
+
+// BE Gap 688: extraction quality rollup sweep.
+// Daily sweep computing human correction rates and alert precision across active tenants,
+// writing telemetry to Application Insights and alerting on drift.
+@description('Cron schedule (UTC) for the extraction quality rollup sweep (BE Gap 688). Daily at 05:00 UTC by default.')
+param extractionQualitySweepCron string = '0 5 * * *'
 
 @description('vCPU allocation for scheduled jobs.')
 param scheduledJobCpu string = '0.5'
@@ -364,6 +395,12 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     maxReplicas: backendMaxReplicas
     enableProductionQualityJudge: enableProductionQualityJudge
     enableGenericExtraction: enableGenericExtraction
+    maxPdfPages: maxPdfPages
+    shadowModeMaxPdfPages: shadowModeMaxPdfPages
+    complexMinLineItems: complexMinLineItems
+    complexMinTaxEntries: complexMinTaxEntries
+    complexDiConfidenceFloor: complexDiConfidenceFloor
+    useLegacyComplexityClassifier: useLegacyComplexityClassifier
     enableGenericDocChat: enableGenericDocChat
 enableEntityResolver: enableEntityResolver
     enableSemanticViews: enableSemanticViews
@@ -422,6 +459,12 @@ module queueWorker './modules/compute/queue-worker.bicep' = {
   params: {
     location: location
     enableGenericExtraction: enableGenericExtraction
+    maxPdfPages: maxPdfPages
+    shadowModeMaxPdfPages: shadowModeMaxPdfPages
+    complexMinLineItems: complexMinLineItems
+    complexMinTaxEntries: complexMinTaxEntries
+    complexDiConfidenceFloor: complexDiConfidenceFloor
+    useLegacyComplexityClassifier: useLegacyComplexityClassifier
     enableGenericDocChat: enableGenericDocChat
 enableEntityResolver: enableEntityResolver
     enableSemanticViews: enableSemanticViews
@@ -631,6 +674,68 @@ module stuckChatTurnReaperJob './modules/compute/scheduled-job.bicep' = {
   }
 }
 
+// BE Gap 679 (Decision D10): stuck-invoice reconciliation self-healing sweep.
+// Runs scripts/reconcile_stuck_invoices.py every 10 minutes to recover stranded uploads.
+module stuckInvoiceSweepJob './modules/compute/scheduled-job.bicep' = {
+  name: 'stuck-invoice-sweep-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-stuck-invoice-sweep-${environment}'
+    containerName: 'stuck-invoice-sweep'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/reconcile_stuck_invoices.py'
+    ]
+    cronExpression: stuckInvoiceSweepCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+  }
+}
+
+// BE Gap 688: extraction quality rollup sweep.
+// Runs scripts/sweep_extraction_quality.py daily to monitor human correction rates.
+module extractionQualitySweepJob './modules/compute/scheduled-job.bicep' = {
+  name: 'extraction-quality-sweep-job-deploy'
+  params: {
+    location: location
+    caeId: cae.id
+    jobName: 'caj-extraction-quality-sweep-${environment}'
+    containerName: 'extraction-quality-sweep'
+    userAssignedIdentityId: identity.id
+    userAssignedIdentityClientId: identity.properties.clientId
+    keyVaultName: keyVaultName
+    acrName: sharedAcrName
+    image: backendImage
+    command: [
+      'python'
+      'scripts/sweep_extraction_quality.py'
+    ]
+    cronExpression: extractionQualitySweepCron
+    chromaHost: chromaDbApp.properties.configuration.ingress.fqdn
+    azureOpenAiEndpoint: openaiAccount.properties.endpoint
+    azureOpenAiDeploymentName: azureOpenAiDeploymentName
+    azureOpenAiApiVersion: azureOpenAiApiVersion
+    azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
+    azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
+    azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    cpu: scheduledJobCpu
+    memory: scheduledJobMemory
+  }
+}
+
 // Feature 24 (the Ops Digest Agent) declared a `caj-ops-digest-<env>` job here,
 // on `0 1,7,13,19 * * *` over the same scheduled-job.bicep module. It was never
 // deployed, and the feature was superseded as over-scoped on 2026-08-25; the
@@ -766,6 +871,30 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
       {
         name: 'ENABLE_GENERIC_EXTRACTION'
         value: enableGenericExtraction ? 'true' : 'false'
+      }
+      {
+        name: 'MAX_PDF_PAGES'
+        value: string(maxPdfPages)
+      }
+      {
+        name: 'SHADOW_MODE_MAX_PDF_PAGES'
+        value: shadowModeMaxPdfPages ? 'true' : 'false'
+      }
+      {
+        name: 'COMPLEX_MIN_LINE_ITEMS'
+        value: string(complexMinLineItems)
+      }
+      {
+        name: 'COMPLEX_MIN_TAX_ENTRIES'
+        value: string(complexMinTaxEntries)
+      }
+      {
+        name: 'COMPLEX_DI_CONFIDENCE_FLOOR'
+        value: complexDiConfidenceFloor
+      }
+      {
+        name: 'USE_LEGACY_COMPLEXITY_CLASSIFIER'
+        value: useLegacyComplexityClassifier ? 'true' : 'false'
       }
       {
         name: 'ENABLE_GENERIC_DOC_CHAT'

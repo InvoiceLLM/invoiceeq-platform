@@ -418,7 +418,7 @@ def test_list_files_invalid_direction(db_session):
 
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
-def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, db_session):
+def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, monkeypatch, db_session):
     """handle_import_connector_file succeeds (simulated) when no Azure creds set.
 
     Passes the isolated in-memory db_session explicitly -- with no
@@ -427,7 +427,15 @@ def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, db_ses
     real connections happen to exist in this environment's actual database
     (the handler defaults to a real Session(engine) when none is passed).
     """
-    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    # BE Gap 673: upload_pdf_to_blob_storage no longer falls back to local disk when
+    # Azure is CONFIGURED but failing -- it raises StorageUploadError, because that
+    # fallback wrote customer files to an ephemeral container disk and reported
+    # success. These four tests are about the connector path (stub bytes, the
+    # outbound prefix, the Drive download, the token refresh), not about the upload,
+    # and they used a broken-Azure mock only to reach the offline branch. Unconfigure
+    # storage instead, which is the supported non-production offline route. The
+    # fail-loud contract itself is covered by tests/test_gap673_connector_storage.py.
+    monkeypatch.setattr("services.storage.is_storage_configured", lambda: False)
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
     from queue_worker.handlers import handle_import_connector_file
     result = handle_import_connector_file(
@@ -451,7 +459,7 @@ def test_handle_import_connector_file_inbound_no_azure(mock_qc, mock_bsc, db_ses
 
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
-def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, db_session):
+def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, monkeypatch, db_session):
     """handle_import_connector_file stores to outbound prefix, no extraction queued.
 
     Gap 334: previously passed provider="salesforce" purely as a vehicle for
@@ -459,7 +467,15 @@ def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, db_se
     rather than deleted. This tenant has no active connection in this test, so
     the handler still takes the stub-bytes branch, which is what is under test.
     """
-    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    # BE Gap 673: upload_pdf_to_blob_storage no longer falls back to local disk when
+    # Azure is CONFIGURED but failing -- it raises StorageUploadError, because that
+    # fallback wrote customer files to an ephemeral container disk and reported
+    # success. These four tests are about the connector path (stub bytes, the
+    # outbound prefix, the Drive download, the token refresh), not about the upload,
+    # and they used a broken-Azure mock only to reach the offline branch. Unconfigure
+    # storage instead, which is the supported non-production offline route. The
+    # fail-loud contract itself is covered by tests/test_gap673_connector_storage.py.
+    monkeypatch.setattr("services.storage.is_storage_configured", lambda: False)
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
     from queue_worker.handlers import handle_import_connector_file
     result = handle_import_connector_file(
@@ -478,12 +494,20 @@ def test_handle_import_connector_file_outbound_no_azure(mock_qc, mock_bsc, db_se
 @patch("utils.connector_files.download_google_drive_file")
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
-def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_bsc, mock_download, _mock_creds, db_session):
+def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_bsc, mock_download, _mock_creds, monkeypatch, db_session):
     """Gap 98: with a real, active google_drive TenantConnection, the handler
     must download the file's real bytes via the Drive API instead of writing
     the stub PDF marker.
     """
-    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    # BE Gap 673: upload_pdf_to_blob_storage no longer falls back to local disk when
+    # Azure is CONFIGURED but failing -- it raises StorageUploadError, because that
+    # fallback wrote customer files to an ephemeral container disk and reported
+    # success. These four tests are about the connector path (stub bytes, the
+    # outbound prefix, the Drive download, the token refresh), not about the upload,
+    # and they used a broken-Azure mock only to reach the offline branch. Unconfigure
+    # storage instead, which is the supported non-production offline route. The
+    # fail-loud contract itself is covered by tests/test_gap673_connector_storage.py.
+    monkeypatch.setattr("services.storage.is_storage_configured", lambda: False)
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
     mock_download.return_value = b"%PDF-1.4 real bytes downloaded from drive"
 
@@ -521,12 +545,20 @@ def test_handle_import_connector_file_google_drive_real_download(mock_qc, mock_b
 @patch("azure.storage.blob.BlobServiceClient")
 @patch("queue_worker.handlers.QueueClient")
 @patch("utils.connector_files.download_google_drive_file")
-def test_handle_import_connector_file_refreshes_expired_token(mock_download, mock_qc, mock_bsc, mock_post, _mock_creds, db_session):
+def test_handle_import_connector_file_refreshes_expired_token(mock_download, mock_qc, mock_bsc, mock_post, _mock_creds, monkeypatch, db_session):
     """Gap 98 / 'connect once': an expired access token with a stored
     refresh_token must be silently refreshed (real POST to Google's token
     endpoint) rather than requiring the user to reconnect.
     """
-    mock_bsc.from_connection_string.side_effect = Exception("Mock storage offline")
+    # BE Gap 673: upload_pdf_to_blob_storage no longer falls back to local disk when
+    # Azure is CONFIGURED but failing -- it raises StorageUploadError, because that
+    # fallback wrote customer files to an ephemeral container disk and reported
+    # success. These four tests are about the connector path (stub bytes, the
+    # outbound prefix, the Drive download, the token refresh), not about the upload,
+    # and they used a broken-Azure mock only to reach the offline branch. Unconfigure
+    # storage instead, which is the supported non-production offline route. The
+    # fail-loud contract itself is covered by tests/test_gap673_connector_storage.py.
+    monkeypatch.setattr("services.storage.is_storage_configured", lambda: False)
     mock_qc.from_connection_string.side_effect = Exception("Mock queue offline")
     mock_download.return_value = b"%PDF-1.4 downloaded after refresh"
 
