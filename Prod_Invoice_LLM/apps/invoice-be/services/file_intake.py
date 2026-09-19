@@ -82,6 +82,20 @@ class ImageTooLargeError(Exception):
         super().__init__(detail)
 
 
+class PdfTooManyPagesError(UnsupportedUploadError):
+    """The PDF or converted image exceeds MAX_PDF_PAGES ceiling."""
+
+    def __init__(self, page_count: int, max_pages: int, filename: str = "document"):
+        self.page_count = page_count
+        self.max_pages = max_pages
+        self.filename = filename
+        detail = (
+            f"Document '{filename}' has {page_count} pages, "
+            f"exceeding the maximum allowed limit of {max_pages} pages."
+        )
+        super().__init__(detail)
+
+
 @dataclass(frozen=True)
 class NormalizedUpload:
     """What every entry point gets back from `normalize_upload()`."""
@@ -232,11 +246,72 @@ def _pin_pdf_trailer_id(pdf_bytes: bytes) -> bytes:
         doc.close()
 
 
-def normalize_upload(filename: str, data: bytes) -> NormalizedUpload:
+def _enforce_pdf_page_ceiling(
+    pdf_bytes: bytes,
+    filename: str,
+    max_pages: int | None = None,
+    shadow_mode: bool | None = None,
+) -> int | None:
+    """Enforce MAX_PDF_PAGES ceiling on PDF bytes.
+
+    Opens the PDF with PyMuPDF (fitz) and inspects `doc.page_count`.
+    If page_count > max_pages:
+      - If shadow_mode is True: logs a warning with page count and limit, does not raise.
+      - If shadow_mode is False: raises PdfTooManyPagesError naming both the limit and actual count.
+
+    Returns the page_count, or None if the bytes cannot be parsed as a PDF document.
+    """
+    import fitz
+    from config import settings
+
+    limit = max_pages if max_pages is not None else getattr(settings, "MAX_PDF_PAGES", 50)
+    is_shadow = (
+        shadow_mode
+        if shadow_mode is not None
+        else getattr(settings, "SHADOW_MODE_MAX_PDF_PAGES", False)
+    )
+
+    doc = None
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page_count = doc.page_count
+    except Exception as exc:
+        logger.debug("Could not inspect PDF page count for '%s': %s", filename, exc)
+        return None
+    finally:
+        if doc is not None:
+            doc.close()
+
+    if page_count > limit:
+        if is_shadow:
+            logger.warning(
+                "PDF page ceiling exceeded in shadow mode: file '%s' has %d pages (limit: %d)",
+                filename,
+                page_count,
+                limit,
+            )
+        else:
+            raise PdfTooManyPagesError(
+                page_count=page_count,
+                max_pages=limit,
+                filename=filename,
+            )
+
+    return page_count
+
+
+def normalize_upload(
+    filename: str,
+    data: bytes,
+    max_pages: int | None = None,
+    shadow_mode: bool | None = None,
+) -> NormalizedUpload:
     """The one call every entry point makes.
 
-    * sniffed PDF  → passthrough, byte-identical to the pre-Feature-28 path.
-    * sniffed image→ converted; the filename's suffix is rewritten to `.pdf`.
+    * sniffed PDF  → passthrough, byte-identical to the pre-Feature-28 path,
+                     after verifying page count <= MAX_PDF_PAGES.
+    * sniffed image→ converted; the filename's suffix is rewritten to `.pdf`,
+                     after verifying converted page count <= MAX_PDF_PAGES.
     * anything else→ `UnsupportedUploadError`.
 
     A disagreement between the filename and the bytes is always resolved in
@@ -251,6 +326,12 @@ def normalize_upload(filename: str, data: bytes) -> NormalizedUpload:
         )
 
     if fmt == ".pdf":
+        _enforce_pdf_page_ceiling(
+            pdf_bytes=data,
+            filename=safe_name,
+            max_pages=max_pages,
+            shadow_mode=shadow_mode,
+        )
         return NormalizedUpload(
             pdf_bytes=data,
             pdf_filename=safe_name,
@@ -259,6 +340,12 @@ def normalize_upload(filename: str, data: bytes) -> NormalizedUpload:
         )
 
     pdf_bytes = convert_image_to_pdf(data, fmt)
+    _enforce_pdf_page_ceiling(
+        pdf_bytes=pdf_bytes,
+        filename=safe_name,
+        max_pages=max_pages,
+        shadow_mode=shadow_mode,
+    )
     stem = os.path.splitext(os.path.basename(safe_name))[0] or "invoice"
     directory = os.path.dirname(safe_name)
     pdf_filename = os.path.join(directory, f"{stem}.pdf") if directory else f"{stem}.pdf"

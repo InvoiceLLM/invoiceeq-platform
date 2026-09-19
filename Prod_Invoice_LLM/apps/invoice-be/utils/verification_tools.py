@@ -179,10 +179,11 @@ def verify_totals_math(
     discount_amount: float | None = None,
     discount_percent: float | None = None,
     round_off: float | None = None,
+    freight_amount: float | None = None,
     tolerances: dict | None = None,
 ) -> dict | None:
     """
-    Checks subtotal + tax_amount - discount + round_off == grand_total.
+    Checks subtotal + tax_amount - discount + round_off + freight_amount == grand_total.
     Returns an alert dict if mismatch, else None.
 
     `tolerances` (Feature 18, optional): `{"tax_mismatch": {"abs_tol": .., "rel_tol": ..}}`.
@@ -197,6 +198,12 @@ def verify_totals_math(
     `round_off` covers the small +/- rounding adjustment line common on Indian
     GST invoices (and the combined CGST+SGST split, once summed into tax_amount
     by extraction, needs no special handling here beyond this).
+
+    BE Gap 674: `freight_amount` covers Freight / Shipping / Delivery / Carriage / Handling
+    printed in the totals block outside the line items subtotal.
+    Guardrail against double-counting: if freight is already billed as a line item in `items`
+    (or if the printed total already reconciles without adding freight), candidates without
+    freight are also evaluated so that no false alert is raised.
     """
     if grand_total is None or subtotal is None:
         return None
@@ -209,18 +216,24 @@ def verify_totals_math(
         tax = float(tax_amount) if tax_amount is not None else 0.0
         adjustment = float(round_off) if round_off is not None else 0.0
         discount = float(discount_amount) if discount_amount is not None else 0.0
+        freight = float(freight_amount) if freight_amount is not None else 0.0
         if discount_percent is not None:
             discount = subtotal * (float(discount_percent) / 100.0)
 
         expected_pre_discount = subtotal - discount + tax + adjustment
         expected_post_discount = subtotal + tax + adjustment
 
-        if _within_tolerance(grand_total, expected_pre_discount, abs_tol, rel_tol) or _within_tolerance(
-            grand_total, expected_post_discount, abs_tol, rel_tol
-        ):
+        candidates = [expected_pre_discount, expected_post_discount]
+        if freight != 0.0:
+            candidates.append(expected_pre_discount + freight)
+            candidates.append(expected_post_discount + freight)
+
+        if any(_within_tolerance(grand_total, exp, abs_tol, rel_tol) for exp in candidates):
             return None
 
         msg = f"Subtotal ({subtotal:.2f}) + Tax ({tax:.2f})"
+        if freight != 0.0:
+            msg += f" + Freight ({freight:.2f})"
         if discount > 0:
             msg += f" - Discount ({discount:.2f})"
         if adjustment:

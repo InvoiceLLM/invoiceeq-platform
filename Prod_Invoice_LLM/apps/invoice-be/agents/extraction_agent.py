@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
 
 from config import get_settings
-from telemetry import tracked_llm_call
+from telemetry import tracked_llm_call, resolve_model_name
 from utils.llm import get_llm
 from utils.verification_tools import (
     verify_line_items_math,
@@ -28,6 +28,12 @@ from utils.rule_schema import (
     tolerance_overrides,
     confidence_threshold_override,
     apply_alert_overrides,
+)
+from utils.injection_guard import (
+    EXTRACTION_INJECTION_GUARD_INSTRUCTION,
+    wrap_document_content,
+    DOCUMENT_CONTENT_TAG_START,
+    DOCUMENT_CONTENT_TAG_END,
 )
 from services.storage import download_pdf_from_storage
 # Feature 27 (G3). The taxonomy and the family map are owned by the classifier
@@ -172,6 +178,7 @@ class InvoiceExtractionSchema(BaseModel):
     grand_total: Optional[float] = Field(default=None, description="Grand total amount. Transcribe the printed figure exactly as it appears (e.g. the 'TOTAL DUE' or 'Grand Total' line) — even if it does not appear to reconcile with the subtotal and tax. Do not calculate, correct, or override it yourself; a mismatch between the printed total and the arithmetic is a real finding the downstream verification step needs to see, not something to fix here.")
 
     round_off: Optional[float] = Field(default=None, description="Small rounding adjustment line (e.g. 'Round Off'), positive or negative, common on Indian GST invoices. Leave null if the invoice has no such line.")
+    freight_amount: Optional[float] = Field(default=None, description="Freight, shipping, carriage, delivery or handling charge printed in the totals/summary block outside the line items subtotal. Leave null if freight is billed as a line item in the items table or if no such charge appears. Do not double count.")
     po_number: Optional[str] = Field(default=None, description="Purchase order (PO) number")
     items: List[InvoiceLineItem] = Field(default=[], description="List of line items in the invoice")
     tags: List[str] = Field(default=[], description="Suggested category or tag keywords for the invoice")
@@ -232,6 +239,7 @@ class OutboundInvoiceExtractionSchema(BaseModel):
     # InvoiceExtractionSchema already carries (lines ~120, 125-126) — mirrored
     # here, not the per-line-item discount fields.
     round_off: Optional[float] = Field(default=None, description="Small rounding adjustment line (e.g. 'Round Off'), positive or negative, common on Indian GST invoices. Leave null if the invoice has no such line.")
+    freight_amount: Optional[float] = Field(default=None, description="Freight, shipping, carriage, delivery or handling charge printed in the totals/summary block outside the line items subtotal. Leave null if freight is billed as a line item in the items table or if no such charge appears. Do not double count.")
     discount_percent: Optional[float] = Field(default=None, description="Top-level discount percentage")
     discount_amount: Optional[float] = Field(default=None, description="Top-level discount amount")
     items: List[OutboundInvoiceLineItem] = Field(default=[], description="List of line items in the invoice")
@@ -530,6 +538,7 @@ class GenericDocumentSchema(BaseModel):
     currency: Optional[str] = Field(default=None, description="ISO 4217 currency code (e.g. INR, EUR, USD). Null if the document prints no monetary values at all — that is normal for a delivery note or a goods receipt note.")
     subtotal: Optional[float] = Field(default=None, description="Subtotal before taxes/discounts, transcribed verbatim. Null if not printed. Never computed from the line items.")
     tax_amount: Optional[float] = Field(default=None, description="Total tax, transcribed verbatim. On a CGST + SGST (or IGST) split, sum them into this single field and list each component in `taxes`. Null if the document prints no tax.")
+    freight_amount: Optional[float] = Field(default=None, description="Freight, shipping, carriage, delivery or handling charge printed in the totals/summary block outside the line items subtotal. Leave null if freight is billed as a line item in the items table or if no such charge appears. Do not double count.")
     discount_amount: Optional[float] = Field(default=None, description="Top-level discount amount, if printed. Null otherwise.")
     grand_total: Optional[float] = Field(default=None, description="Grand total as printed, transcribed exactly even if it does not reconcile with subtotal plus tax. NULL if the document prints no total — a rate card, a framework agreement and an unpriced delivery note all legitimately have none. Never compute one.")
     items: List[GenericLineItem] = Field(default=[], description="The document's line items, one entry per printed row. Empty list if the document has no line-item table.")
@@ -613,6 +622,11 @@ class ExtractionState(TypedDict):
     # row's `doc_attributes` column by the handler. Absent (not None) on every
     # flag-OFF run, because the node that writes it is not in that graph at all.
     doc_attributes: Optional[Dict[str, Any]]
+    # BE Gap 684: extraction provenance
+    model_deployment: Optional[str]
+    prompt_version: Optional[str]
+    schema_version: Optional[str]
+    llm_duration_ms: Optional[int]
 
 
 
@@ -758,7 +772,8 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
     Pipes visual streams and OCR text layout content into the agent model.
     """
     prompt_text = (
-        "You are an expert invoice processing agent. Analyze the following OCR text "
+        EXTRACTION_INJECTION_GUARD_INSTRUCTION
+        + "You are an expert invoice processing agent. Analyze the following OCR text "
         "and visual representations of the invoice. Extract structured data aligning "
         "with the schema.\n\n"
         + GAP_46_VERBATIM_DIRECTIVE
@@ -781,7 +796,7 @@ def build_multimodal_prompt(ocr_text: str, images: List[str], rules: Optional[Di
             prompt_text += f"- {safe_rule}\n"
         prompt_text += "</extraction_rules>\n\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"OCR Text:\n{wrap_document_content(ocr_text)}"
     
     content = [
         {
@@ -803,7 +818,8 @@ def build_outbound_multimodal_prompt(ocr_text: str, images: List[str], rules: Op
     the inbound path, everything else about reading a printed document is
     the same."""
     prompt_text = (
-        "You are an expert invoice processing agent. This is the TENANT'S OWN invoice, "
+        EXTRACTION_INJECTION_GUARD_INSTRUCTION
+        + "You are an expert invoice processing agent. This is the TENANT'S OWN invoice, "
         "being sent to one of their customers -- not a vendor bill being received. "
         "Analyze the following OCR text and visual representations of the invoice. "
         "Extract structured data aligning with the schema.\n\n"
@@ -818,7 +834,7 @@ def build_outbound_multimodal_prompt(ocr_text: str, images: List[str], rules: Op
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"OCR Text:\n{wrap_document_content(ocr_text)}"
 
     content = [{"type": "text", "text": prompt_text}]
     for img_url in images:
@@ -830,9 +846,12 @@ def _build_inbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
     """Text-only (no page images / non-Azure) inbound extraction prompt.
     Extracted verbatim out of `extract_node` by Gap 283 so the direction
     profile can select it — the wording is unchanged."""
+    tenant_id = str(state.get("tenant_id") or "")
+    fenced_ocr = wrap_document_content(state.get("ocr_text") or "", tenant_id=tenant_id)
     if state.get("complexity") == "COMPLEX":
         prompt = (
-            "You are analyzing a COMPLEX invoice. This invoice contains complex layouts, multi-tax tables (like GST/VAT), "
+            EXTRACTION_INJECTION_GUARD_INSTRUCTION
+            + "You are analyzing a COMPLEX invoice. This invoice contains complex layouts, multi-tax tables (like GST/VAT), "
             "or item-level discount structures. Please perform a deep dynamic extraction. Do not restrict yourself to standard fields; "
             "extract all taxes, discounts, deductions, compliance metadata, and banking references into the appropriate list structures.\n\n"
             + GAP_46_VERBATIM_DIRECTIVE
@@ -840,10 +859,11 @@ def _build_inbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
         dynamic_qa_context = state.get("dynamic_qa_context")
         if dynamic_qa_context:
             prompt += f"\nDYNAMIC LAYOUT PRE-ANALYSIS FINDINGS (Gap 4 Targeted Q&A):\n{dynamic_qa_context}\n"
-        prompt += f"\nExtract structured details from the following invoice OCR text:\n\n{state['ocr_text']}"
+        prompt += f"\nExtract structured details from the following invoice OCR text:\n\n{fenced_ocr}"
     else:
         prompt = (
-            "Extract structured details from the following standard invoice OCR text:\n\n"
+            EXTRACTION_INJECTION_GUARD_INSTRUCTION
+            + "Extract structured details from the following standard invoice OCR text:\n\n"
             + GAP_46_VERBATIM_DIRECTIVE
         )
         prompt_constraints = normalize_constraints(rules)
@@ -852,7 +872,7 @@ def _build_inbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
             for rule in prompt_constraints:
                 prompt += f"- {rule}\n"
             prompt += "\n"
-        prompt += f"{state['ocr_text']}"
+        prompt += f"{fenced_ocr}"
     return prompt
 
 
@@ -873,8 +893,11 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
     and its field descriptions are what drive structured output. Prompt wording
     stays minimal and deliberately states no rule that decides correctness —
     every such check is deterministic code (CONVENTIONS hard rule 3)."""
+    tenant_id = str(state.get("tenant_id") or "")
+    fenced_ocr = wrap_document_content(state.get("ocr_text") or "", tenant_id=tenant_id)
     prompt = (
-        "This is the tenant's own outbound invoice, being sent to a customer. "
+        EXTRACTION_INJECTION_GUARD_INSTRUCTION
+        + "This is the tenant's own outbound invoice, being sent to a customer. "
         "Extract structured details from the following OCR text:\n\n"
         + GAP_46_VERBATIM_DIRECTIVE
     )
@@ -899,7 +922,7 @@ def _build_outbound_text_prompt(state: "ExtractionState", rules: Optional[Dict[s
         for rule in prompt_constraints:
             prompt += f"- {rule}\n"
         prompt += "\n"
-    prompt += state["ocr_text"]
+    prompt += fenced_ocr
     return prompt
 
 
@@ -910,7 +933,8 @@ def build_reference_multimodal_prompt(ocr_text: str, images: List[str], rules: O
     an amount owed, and a model told it is reading an invoice will happily
     relabel a 'Quotation Total' as a grand total due."""
     prompt_text = (
-        "You are reading a REFERENCE commercial document -- a PURCHASE ORDER or a "
+        EXTRACTION_INJECTION_GUARD_INSTRUCTION
+        + "You are reading a REFERENCE commercial document -- a PURCHASE ORDER or a "
         "QUOTATION. It is NOT an invoice and nothing on it is an amount currently "
         "owed: a purchase order records what was ordered, a quotation records what "
         "was offered. Analyze the following OCR text and visual representations and "
@@ -928,7 +952,7 @@ def build_reference_multimodal_prompt(ocr_text: str, images: List[str], rules: O
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"OCR Text:\n{wrap_document_content(ocr_text)}"
 
     content = [{"type": "text", "text": prompt_text}]
     for img_url in images:
@@ -964,8 +988,11 @@ REFERENCE_DOC_FAMILY_DIRECTIVE = (
 def _build_reference_text_prompt(state: "ExtractionState", rules: Optional[Dict[str, Any]]) -> str:
     """Text-only (no page images / non-Azure) reference-document prompt. Same
     framing as `build_reference_multimodal_prompt`."""
+    tenant_id = str(state.get("tenant_id") or "")
+    fenced_ocr = wrap_document_content(state.get("ocr_text") or "", tenant_id=tenant_id)
     prompt = (
-        "This is a REFERENCE commercial document -- not an invoice and not an amount "
+        EXTRACTION_INJECTION_GUARD_INSTRUCTION
+        + "This is a REFERENCE commercial document -- not an invoice and not an amount "
         "owed. Set `doc_type` from the printed document title. Extract structured "
         "details from the following OCR text.\n\n"
         + REFERENCE_DOC_FAMILY_DIRECTIVE
@@ -980,7 +1007,7 @@ def _build_reference_text_prompt(state: "ExtractionState", rules: Optional[Dict[
         for rule in prompt_constraints:
             prompt += f"- {rule}\n"
         prompt += "\n"
-    prompt += state["ocr_text"]
+    prompt += fenced_ocr
     return prompt
 
 
@@ -1327,7 +1354,7 @@ def build_generic_multimodal_prompt(
     `GENERIC` profile entry. Called with no `doc_type`, it produces the `OTHER`
     overlay — the conservative default, not an invoice-shaped one.
     """
-    prompt_text = _generic_base_prompt(doc_type)
+    prompt_text = EXTRACTION_INJECTION_GUARD_INSTRUCTION + _generic_base_prompt(doc_type)
     # Feature 18: same shared normalizer as every other builder in this file, so
     # a tenant's already-committed rule strings behave identically here.
     prompt_constraints = normalize_constraints(rules)
@@ -1337,7 +1364,7 @@ def build_generic_multimodal_prompt(
             prompt_text += f"- {rule}\n"
         prompt_text += "\n"
 
-    prompt_text += f"OCR Text:\n{ocr_text}"
+    prompt_text += f"OCR Text:\n{wrap_document_content(ocr_text)}"
 
     content = [{"type": "text", "text": prompt_text}]
     for img_url in images:
@@ -1355,7 +1382,9 @@ def _build_generic_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
     here needs `ExtractionState` widened to work, and widening it is G4's change
     to make.
     """
-    prompt = _generic_base_prompt(state.get("doc_type"))
+    tenant_id = str(state.get("tenant_id") or "")
+    fenced_ocr = wrap_document_content(state.get("ocr_text") or "", tenant_id=tenant_id)
+    prompt = EXTRACTION_INJECTION_GUARD_INSTRUCTION + _generic_base_prompt(state.get("doc_type"))
     dynamic_qa_context = state.get("dynamic_qa_context")
     if dynamic_qa_context:
         prompt += f"DYNAMIC LAYOUT PRE-ANALYSIS FINDINGS (Gap 4 Targeted Q&A):\n{dynamic_qa_context}\n\n"
@@ -1365,7 +1394,7 @@ def _build_generic_text_prompt(state: "ExtractionState", rules: Optional[Dict[st
         for rule in prompt_constraints:
             prompt += f"- {rule}\n"
         prompt += "\n"
-    prompt += state["ocr_text"]
+    prompt += fenced_ocr
     return prompt
 
 
@@ -1394,11 +1423,9 @@ class _DirectionProfile:
     required_fields: Tuple[str, ...]
     passed_status: str
     review_status: str
-    # Legacy `"audit" in file_path` short-circuit in verify_node, relied on by
-    # tests/test_sse.py. Inbound-only, exactly as before — an outbound invoice
-    # whose filename happens to contain "audit" must not land on an inbound-only
-    # status string that outbound's own lifecycle has no meaning for.
-    legacy_audit_path_shim: bool
+    # BE Gap 684: extraction provenance
+    prompt_version: str
+    schema_version: str
 
 
 _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
@@ -1410,7 +1437,8 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
         required_fields=(),
         passed_status="COMPLETED",
         review_status="AUDIT_REQUIRED",
-        legacy_audit_path_shim=True,
+        prompt_version="inbound_v2",
+        schema_version="invoice_v2",
     ),
     "OUTBOUND": _DirectionProfile(
         schema=OutboundInvoiceExtractionSchema,
@@ -1420,7 +1448,8 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
         required_fields=("customer_name", "invoice_number", "grand_total"),
         passed_status="VERIFIED",
         review_status="NEEDS_REVIEW",
-        legacy_audit_path_shim=False,
+        prompt_version="outbound_v2",
+        schema_version="outbound_invoice_v2",
     ),
     # Feature 26 (Gap 366). A third direction, purely additive: INBOUND and
     # OUTBOUND above are byte-for-byte unchanged, and `resolve_direction_profile`
@@ -1434,9 +1463,6 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
     # failure. The status vocabulary is its own -- "EXTRACTED"/"EXTRACT_FAILED"
     # rather than COMPLETED/AUDIT_REQUIRED -- because a reference document has no
     # audit lifecycle at all; it is never approved, sent or paid.
-    # `legacy_audit_path_shim=False`: the `"audit" in file_path` short-circuit is
-    # an inbound-only legacy behaviour and a reference doc whose filename happens
-    # to contain "audit" must not inherit an inbound status string.
     "REFERENCE": _DirectionProfile(
         schema=ReferenceDocExtractionSchema,
         max_tokens=8192,
@@ -1445,7 +1471,8 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
         required_fields=(),
         passed_status="EXTRACTED",
         review_status="EXTRACT_FAILED",
-        legacy_audit_path_shim=False,
+        prompt_version="reference_v2",
+        schema_version="reference_doc_v1",
     ),
     # Feature 27 (G3b) — the fourth entry, per §4 and amendment A2.
     #
@@ -1496,9 +1523,6 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
     #     delivery note has no audit lifecycle; it is never approved, sent or paid.
     #     E10 gives the `documents` table the same two values, so the profile and
     #     the table agree by construction rather than by a mapping table.
-    #   * `legacy_audit_path_shim=False` — the `"audit" in file_path` short-circuit
-    #     is an inbound-invoice legacy behaviour; a delivery challan whose filename
-    #     happens to contain "audit" must not inherit an invoice status string.
     "GENERIC": _DirectionProfile(
         schema=GenericDocumentSchema,
         max_tokens=8192,
@@ -1507,7 +1531,8 @@ _DIRECTION_PROFILES: Dict[str, _DirectionProfile] = {
         required_fields=(),
         passed_status="EXTRACTED",
         review_status="EXTRACT_FAILED",
-        legacy_audit_path_shim=False,
+        prompt_version="generic_v2",
+        schema_version="generic_doc_v2",
     ),
 }
 
@@ -2057,6 +2082,125 @@ def invoke_with_retry(llm_callable, payload, max_retries: int = 3):
                 raise e
 
 
+# ---------------------------------------------------------------------------
+# BE Gap 676: Verification Retry Guidance & Anti-Hallucination
+# ---------------------------------------------------------------------------
+RETRY_FEEDBACK_HEADER = "CRITICAL FEEDBACK FROM PREVIOUS EXTRACTION ATTEMPT:"
+
+NO_HALLUCINATION_DIRECTIVE = (
+    "CRITICAL RECONCILIATION RULE: You must NEVER invent, hallucinate, or fabricate line items, "
+    "charges, or adjustments to force arithmetic to reconcile. Extract only what is visibly and "
+    "explicitly printed on the source document."
+)
+
+ALERT_DIAGNOSTIC_GUIDANCE: Dict[str, str] = {
+    "tax_mismatch": (
+        "Check whether column headers or line item prices indicate amounts are tax-inclusive or tax-exclusive. "
+        "Check whether freight, shipping, carriage, or handling charges sit outside the subtotal or in the summary block; "
+        "report what is printed on the document rather than forcing figures to reconcile."
+    ),
+    "line_items_mismatch": (
+        "Check for a header-level discount, a freight or shipping charge, surcharge, or table rows spanning "
+        "merged cells or multi-line descriptions that may have been split or missed. Verify each row's quantity "
+        "and unit price against the printed line total."
+    ),
+    "line_item_calculation_mismatch": (
+        "Check if individual item prices are discounted, tax-inclusive, or if unit price and quantity were "
+        "transcribed with proper decimal places."
+    ),
+    "missing_required_field": (
+        "Carefully re-read the document header, footer, seller/buyer details, and metadata blocks for the missing field values."
+    ),
+    "source_text_mismatch": (
+        "Ensure every extracted amount, tax, and total is transcribed verbatim exactly as printed on the document "
+        "without rounding or auto-correcting math."
+    ),
+    "table_alignment": (
+        "Re-examine table columns and headers to ensure amounts, quantities, and descriptions align with their proper rows."
+    ),
+}
+
+
+def build_extraction_retry_feedback(
+    feedback: List[Union[str, Dict[str, Any]]],
+    alerts: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """
+    BE Gap 676: Shared feedback builder for verification retries (multimodal and text).
+    
+    1. Prohibits hallucinating or inventing line items to reconcile math.
+    2. Maps alert types to targeted diagnostic re-read guidance (e.g. tax-inclusive, freight, merged cells).
+    3. Formats unified feedback for both vision and text LLM retry prompts.
+    """
+    if not feedback and not alerts:
+        return ""
+
+    feedback_lines: List[str] = []
+    detected_types: set[str] = set()
+
+    if alerts:
+        for a in alerts:
+            if isinstance(a, dict):
+                atype = a.get("type")
+                if atype:
+                    detected_types.add(atype)
+                msg = a.get("message")
+                if msg and msg not in feedback_lines:
+                    feedback_lines.append(msg)
+
+    if feedback:
+        for fb in feedback:
+            if isinstance(fb, dict):
+                atype = fb.get("type")
+                if atype:
+                    detected_types.add(atype)
+                msg = fb.get("message")
+                if msg and msg not in feedback_lines:
+                    feedback_lines.append(msg)
+            elif isinstance(fb, str):
+                if fb not in feedback_lines:
+                    feedback_lines.append(fb)
+                # Infer alert type from message content if not explicitly detected
+                fb_lower = fb.lower()
+                if "tax" in fb_lower or "grand total" in fb_lower:
+                    detected_types.add("tax_mismatch")
+                if "line items sum" in fb_lower or "subtotal" in fb_lower:
+                    detected_types.add("line_items_mismatch")
+                if "does not match calculated amount" in fb_lower:
+                    detected_types.add("line_item_calculation_mismatch")
+                if "could not be extracted" in fb_lower or "required field" in fb_lower:
+                    detected_types.add("missing_required_field")
+                if "source document text" in fb_lower or "verbatim" in fb_lower:
+                    detected_types.add("source_text_mismatch")
+                if "table" in fb_lower or "alignment" in fb_lower:
+                    detected_types.add("table_alignment")
+
+    diagnostic_instructions: List[str] = []
+    for atype in [
+        "tax_mismatch",
+        "line_items_mismatch",
+        "line_item_calculation_mismatch",
+        "missing_required_field",
+        "source_text_mismatch",
+        "table_alignment",
+    ]:
+        if atype in detected_types and atype in ALERT_DIAGNOSTIC_GUIDANCE:
+            diagnostic_instructions.append(f"- {ALERT_DIAGNOSTIC_GUIDANCE[atype]}")
+
+    parts = [
+        f"\n\n{RETRY_FEEDBACK_HEADER}",
+        "\n".join(f"- {line}" for line in feedback_lines),
+        f"\n{NO_HALLUCINATION_DIRECTIVE}",
+    ]
+
+    if diagnostic_instructions:
+        parts.append("\nTARGETED RE-EXAMINATION GUIDANCE:\n" + "\n".join(diagnostic_instructions))
+
+    parts.append("\nPlease correct these math/verification issues in the next output according to the source document.")
+
+    return "\n".join(parts)
+
+
 # 4. LangGraph Nodes
 def extract_node(state: ExtractionState) -> Dict[str, Any]:
     """Node state for executing LLM structured output extraction."""
@@ -2078,9 +2222,16 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
     retry_count = state.get("retry_count") or 0
     feedback = state.get("feedback") or []
 
+    # BE Gap 684: resolve model deployment, prompt version, and schema version
+    model_deployment = resolve_model_name(llm)
+    prompt_version = profile.prompt_version
+    schema_version = profile.schema_version
+    llm_duration_ms: Optional[int] = None
+
     extracted_data = {}
     alerts = []
 
+    t0 = time.perf_counter()
     try:
         # Wrap LLM with structured output schema
         structured_llm = llm.with_structured_output(profile.schema)
@@ -2117,25 +2268,18 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
                 if dynamic_qa_context:
                     messages[0].content.append({"type": "text", "text": f"\n\nDYNAMIC LAYOUT PRE-ANALYSIS FINDINGS:\n{dynamic_qa_context}"})
                 if feedback:
-                    feedback_msg = (
-                        "\n\nCRITICAL FEEDBACK FROM PREVIOUS EXTRACTION ATTEMPT:\n"
-                        + "\n".join(f"- {fb}" for fb in feedback)
-                        + "\nPlease correct these math/verification issues in the next output."
-                    )
+                    feedback_msg = build_extraction_retry_feedback(feedback, alerts=state.get("alerts"))
                     messages[0].content.append({"type": "text", "text": feedback_msg})
                 result = invoke_with_retry(structured_llm.invoke, messages)
             else:
                 prompt = profile.build_text_prompt(state, rules)
 
                 if feedback:
-                    prompt += (
-                        "\n\nCRITICAL FEEDBACK FROM PREVIOUS EXTRACTION ATTEMPT:\n"
-                        + "\n".join(f"- {fb}" for fb in feedback)
-                        + "\nPlease correct these math/verification issues in the next output."
-                    )
+                    prompt += build_extraction_retry_feedback(feedback, alerts=state.get("alerts"))
 
                 result = invoke_with_retry(structured_llm.invoke, prompt)
 
+        llm_duration_ms = int((time.perf_counter() - t0) * 1000)
         if hasattr(result, "dict"):
             extracted_data = result.dict()
         elif isinstance(result, dict):
@@ -2153,6 +2297,7 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
             })
             
     except Exception as e:
+        llm_duration_ms = int((time.perf_counter() - t0) * 1000)
         logger.warning("Structured extraction failed: %s.", e)
         active_constraints = normalize_constraints(rules, for_prompt=False)
         alerts.append({
@@ -2195,7 +2340,15 @@ def extract_node(state: ExtractionState) -> Dict[str, Any]:
             )
             extracted_data["tax_amount"] = di_tax_sum
 
-    return {"extracted_data": extracted_data, "alerts": alerts, "retry_count": retry_count + 1}
+    return {
+        "extracted_data": extracted_data,
+        "alerts": alerts,
+        "retry_count": retry_count + 1,
+        "model_deployment": model_deployment,
+        "prompt_version": prompt_version,
+        "schema_version": schema_version,
+        "llm_duration_ms": llm_duration_ms,
+    }
 
 
 def verify_node(state: ExtractionState) -> Dict[str, Any]:
@@ -2218,11 +2371,6 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
     # sibling, the Gap 68 `tax_details_sum` backfill, is gated on the same rubric
     # in `extract_node`, resolved there from the same two state keys.
     rubric = resolve_verification_rubric(state.get("flow_direction"), state.get("doc_type"))
-
-    # Check for legacy test trigger path compat (inbound only -- see
-    # _DirectionProfile.legacy_audit_path_shim)
-    if profile.legacy_audit_path_shim and "audit" in state["file_path"].lower():
-        return {"alerts": ["Math mismatch"], "status": "AUDIT_REQUIRED"}
 
     data = state["extracted_data"] or {}
     alerts = list(state.get("alerts") or [])
@@ -2306,6 +2454,7 @@ def verify_node(state: ExtractionState) -> Dict[str, Any]:
             discount_amount=data.get("discount_amount"),
             discount_percent=data.get("discount_percent"),
             round_off=data.get("round_off"),
+            freight_amount=data.get("freight_amount"),
             tolerances=tolerances,
         )
         if totals_alert:
@@ -2561,14 +2710,17 @@ def dynamic_qa_node(state: ExtractionState) -> Dict[str, Any]:
     logger.info("Executing Dynamic QA Node for COMPLEX invoice: %s", state.get("file_path"))
     try:
         llm = get_llm(max_tokens=2048)
+        tenant_id = str(state.get("tenant_id") or "")
+        fenced_ocr = wrap_document_content(state.get("ocr_text") or "", tenant_id=tenant_id)
         prompt = (
-            "You are an expert invoice layout analyzer. Perform a targeted pre-analysis of this COMPLEX invoice.\n"
+            EXTRACTION_INJECTION_GUARD_INSTRUCTION
+            + "You are an expert invoice layout analyzer. Perform a targeted pre-analysis of this COMPLEX invoice.\n"
             "Analyze the document text and answer the following structural questions concisely:\n"
             "1. Tax Structure: Are there multiple tax rates/slabs (e.g. CGST/SGST, VAT 5%/20%, Reverse Charge)? List them.\n"
             "2. Deductions/Retentions: Are there advance payments, holdbacks, or retention withholdings listed?\n"
             "3. Compliance Metadata: Are there specific e-invoicing identifiers present (e.g. IRN, e-Way Bill, QR Code, Peppol ID, USt-IdNr)?\n"
             "4. References: Are there multiple Purchase Orders, Sales Orders, or Delivery Notes referenced?\n\n"
-            f"Invoice OCR Text:\n{state['ocr_text']}"
+            f"Invoice OCR Text:\n{fenced_ocr}"
         )
         # Feature 23 Phase 1: COMPLEX invoices pay for a second model round-trip
         # before extraction even starts, so it gets its own event rather than
@@ -2770,7 +2922,11 @@ def run_extraction_agent(
         return {
             "status": profile.review_status,
             "alerts": [alert],
-            "extracted_data": None
+            "extracted_data": None,
+            "model_deployment": None,
+            "prompt_version": None,
+            "schema_version": None,
+            "llm_duration_ms": None,
         }
 
     initial_state = {
@@ -2797,6 +2953,11 @@ def run_extraction_agent(
         "doc_type_evidence": None,
         "doc_type_confidence": None,
         "doc_attributes": None,
+        # BE Gap 684: extraction provenance
+        "model_deployment": None,
+        "prompt_version": None,
+        "schema_version": None,
+        "llm_duration_ms": None,
     }
 
     # Feature 27 (G4): flag OFF returns the module-level `graph` object itself,
@@ -2841,5 +3002,10 @@ def run_extraction_agent(
         # A6/R8. `None` on every flag-OFF run: the node that writes it is absent
         # from that graph, so the key is never in state to begin with.
         "doc_attributes": final_state.get("doc_attributes"),
+        # BE Gap 684: extraction provenance
+        "model_deployment": final_state.get("model_deployment"),
+        "prompt_version": final_state.get("prompt_version"),
+        "schema_version": final_state.get("schema_version"),
+        "llm_duration_ms": final_state.get("llm_duration_ms"),
     }
 

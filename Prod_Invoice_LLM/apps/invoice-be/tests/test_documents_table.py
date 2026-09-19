@@ -802,6 +802,14 @@ def test_document_model_carries_e10s_full_column_list():
         # design (A8 adds `rule_era`), every attribute is optional, and none is
         # queried on -- so typed columns would be a migration per amendment.
         "doc_attributes",
+        # BE Gap 684: extraction provenance, mirrored from `Invoice`. Typed columns
+        # rather than more `doc_attributes` keys because these are queried on --
+        # "which model extracted this" is the first question asked after a bad
+        # extraction, and after a model swap it has to be answerable in SQL.
+        "model_deployment", "prompt_version", "schema_version", "llm_duration_ms",
+        # BE Gap 674: freight printed outside the line items, mirrored from `Invoice`
+        # so the totals check has the same term on both tables.
+        "freight_amount",
     }
     assert {c.name for c in Document.__table__.columns} == expected
     assert Document.__tablename__ == "documents"

@@ -20,8 +20,18 @@ Rule of thumb: a flag only does what `config.py` says **if every process that re
 | `CHROMA_USE_SSL` | `False` | — | — | BE, Worker, Jobs = hard-coded `true` | Live Chroma is reached through the CAE ingress on 443 (Gap 422). |
 | `AZURE_COST_CLI_FALLBACK` | `False` | — | — | none | Cost workbook fallback. |
 | `BENCHMARK_ARTIFACT_UPLOAD` | `True` | — | — | none | Nightly benchmark job uploads artifacts. |
+| `MAX_PDF_PAGES` (BE Gap 681) | `50` | `50` | `50` | BE, Worker, Jobs | **Customer-facing rejection threshold.** Above it, intake returns HTTP 400. 50 comes from corpus measurement (68 PDFs, largest 11 pages) — ~4.5× headroom. Raising it is the second rollback lever for Gap 681. |
+| `SHADOW_MODE_MAX_PDF_PAGES` (BE Gap 681) | `False` | `false` | `false` | BE, Worker, Jobs | **Rollback lever for Gap 681.** `true` = log the page count and accept anyway, so a wrongly-tuned ceiling stops rejecting uploads with no deploy. |
+| `COMPLEX_MIN_LINE_ITEMS` (BE Gap 682) | `15` | `15` | `15` | BE, Worker, Jobs | Rows at or above which a document is COMPLEX and pays for the `dynamic_qa` pass (a second LLM reasoning call). **Provisional** — the COMPLEX rate has never been measured; see the note below the table. |
+| `COMPLEX_MIN_TAX_ENTRIES` (BE Gap 682) | `2` | `2` | `2` | BE, Worker, Jobs | Rows in DI's own `TaxDetails` breakdown signalling a real multi-tax split. One tax row is an ordinary invoice. |
+| `COMPLEX_DI_CONFIDENCE_FLOOR` (BE Gap 682) | `0.70` | `"0.70"` | `"0.70"` | BE, Worker, Jobs | Lowest DI field confidence below which the layout counts as difficult. **String in bicep** — bicep has no float type; pydantic coerces it. |
+| `USE_LEGACY_COMPLEXITY_CLASSIFIER` (BE Gap 682) | `False` | `false` | `false` | BE, Worker, Jobs | **Rollback lever for Gap 682.** `true` restores the pre-gap triggers (DI field presence + bare `gst`/`vat`/`discount`), which fired on essentially every itemised invoice. |
 
 Bicep param defaults (`08-apps.bicep` lines 92-104) are all `false`. Anything not named in a params file therefore deploys as **off**, regardless of `config.py`. That is the single most common way a "working on dev" feature goes dark on a new environment.
+
+**The six BE Gap 681/682 rows above are the first entries in this table whose `params.prod.json` column is not "not set".** They are written into both params files deliberately, with identical values, because two of them are documented rollback levers: a switch you cannot flip without a deploy is not a rollback plan. Leaving them unset would have made the bicep default (`false` / `0`) the deployed value while `config.py` said something else — which is the same class of mistake as reading `config.py:560` for the deployed model deployment name, the error that produced the withdrawn audit finding EX-5.
+
+**Tuning `COMPLEX_*` without a corpus run:** `classify_invoice_complexity` logs the legacy verdict beside the new one on every call (`complexity_legacy`, `complexity_changed` in `extra_fields`). So the COMPLEX-rate change from BE Gap 682 is readable from App Insights directly, and these three thresholds can be tuned from real traffic rather than guessed. Do that before treating `15` / `2` / `0.70` as settled.
 
 ## 2. Model deployments (Gaps 465/466, Feature 29)
 

@@ -26,6 +26,7 @@ from services.file_intake import (
     MAX_IMAGE_PIXELS,
     ImageTooLargeError,
     NormalizedUpload,
+    PdfTooManyPagesError,
     UnsupportedUploadError,
     convert_image_to_pdf,
     normalize_upload,
@@ -261,3 +262,55 @@ def test_pillows_own_bomb_error_is_reported_as_too_large_not_unsupported(monkeyp
 
     with pytest.raises(ImageTooLargeError):
         convert_image_to_pdf(_fixture("invoice_photo.png"), ".png")
+
+
+# ── BE Gap 681: PDF page ceiling ─────────────────────────────────────────────
+
+def test_pdf_at_or_below_page_ceiling_passes():
+    import fitz
+    doc = fitz.open()
+    for _ in range(5):
+        doc.new_page()
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    result = normalize_upload("five_page.pdf", pdf_bytes, max_pages=5)
+    assert result.pdf_bytes == pdf_bytes
+    assert result.was_converted is False
+
+
+def test_pdf_above_page_ceiling_is_refused():
+    import fitz
+    doc = fitz.open()
+    for _ in range(6):
+        doc.new_page()
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    with pytest.raises(PdfTooManyPagesError) as exc_info:
+        normalize_upload("six_page.pdf", pdf_bytes, max_pages=5)
+
+    err = exc_info.value
+    assert err.page_count == 6
+    assert err.max_pages == 5
+    assert err.filename == "six_page.pdf"
+    assert "6 pages" in err.detail
+    assert "limit of 5 pages" in err.detail
+    assert isinstance(err, UnsupportedUploadError)
+
+
+def test_multiframe_tiff_above_page_ceiling_is_refused_after_conversion():
+    from PIL import Image
+    imgs = [Image.new("RGB", (30, 30)) for _ in range(6)]
+    buf = io.BytesIO()
+    imgs[0].save(buf, format="TIFF", save_all=True, append_images=imgs[1:])
+    tiff_bytes = buf.getvalue()
+
+    with pytest.raises(PdfTooManyPagesError) as exc_info:
+        normalize_upload("six_frame.tiff", tiff_bytes, max_pages=5)
+
+    err = exc_info.value
+    assert err.page_count == 6
+    assert err.max_pages == 5
+    assert "six_frame.tiff" in err.detail
+

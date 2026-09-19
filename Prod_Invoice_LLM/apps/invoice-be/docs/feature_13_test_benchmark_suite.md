@@ -195,3 +195,68 @@ Note on the api-version paragraph above: since Gap 465 the value is `2024-10-21`
 Rules baked in: same prompts, api-version from settings (`2024-10-21`), one run per cell, a failed subprocess is recorded (rc + log) and the matrix continues. Costs are registry list prices × captured tokens (`llm_agent_call` events caught by a logging handler in each runner's process). `--ids`/`--cases` shrink a run for a smoke test.
 
 `run_agent_eval.py`'s judge now comes from `get_llm_for_role("judge")`, so `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME` pins it; blank means the primary, as before.
+
+
+---
+
+## Build note — extraction suites and the benchmark protocol, 2026-09-17 (BE Gaps 685, 687)
+
+**BE Gap 685 — the three extraction suites can now run on Postgres. Nothing makes them.**
+
+`tests/test_extraction.py`, `tests/test_extraction_quality_rollup.py` and
+`tests/test_generic_extraction.py` hardcoded `sqlite:///:memory:` with no option to run against the
+engine the product uses. CONVENTIONS hard rule 2 exists because that divergence has been the root
+cause of 4+ incidents, and it is already documented in-tree: `tests/test_c3_zero_rows_diagnosis.py`
+records that `file_path` is NOT NULL on Postgres though the model defaults it to `None`, and "the
+SQLite suites never notice".
+
+All three now route through `tests/_postgres_test_engine.py::make_test_engine()`, which holds the
+Gap 525 guard in **one** place — `TEST_DATABASE_URL` accepted only when the hostname is
+`localhost`/`127.0.0.1` **and** the database name contains `test`. The guard is **copied verbatim
+from `tests/test_audit.py:15-37` rather than redesigned**, because these fixtures call `drop_all`
+after every test and the guard is the entire safety mechanism. BE Gap 570's chat port should adopt
+the same helper rather than writing a fourth copy.
+
+`tests/test_postgres_test_engine.py` (13 cases) pins the guard itself — **which Gap 525 never did**:
+remote host refused, database name without `test` refused, an exported-but-empty variable falling
+back to SQLite, and no SQLite-only `StaticPool`/`check_same_thread` reaching psycopg. No database is
+needed for any of it, since the guard runs on the URL string and `create_engine` does not connect.
+
+Also fixed while in there: `test_extraction_quality_rollup.py`'s fixture had `create_all` and no
+`drop_all`. On in-memory SQLite that is harmless; on a shared Postgres database rows leak between
+tests, and both rollups aggregate over every `AuditLog` row for a tenant — so a leaked row silently
+changes a rate rather than failing a test.
+
+**Why BE Gap 685 is still open, and the finding that outlives it.** The SQLite branch passes (417
+across the three suites, i.e. behaviour is unchanged when the variable is unset), but **no Postgres
+run exists**, and a Postgres run is the entire point of the gap. More importantly: **no CI workflow
+sets `TEST_DATABASE_URL`** — zero hits across all four workflows in `.github/workflows/`. Porting a
+suite grants it the *capability* to run against Postgres; it does not cause that to happen. Any
+"verified on Postgres" claim for these suites means someone exported the variable, ran them, and
+cited the run. **This is equally true of BE Gap 525, which is marked closed, and of BE Gap 570** —
+so the two suite families already considered ported are in the same position.
+
+Note also **BE Gap 642**, open: these fixtures build the schema with `SQLModel.metadata.create_all`,
+which neither owns nor tolerates an Alembic-built schema (`61 failed, 559 passed, 308 errors` against
+a migrated database, against `50 passed` on a virgin one). `TEST_DATABASE_URL` must name an **empty,
+throwaway** database. The deeper consequence is 642's: the schema these suites test is the one
+`create_all` builds, never the one the migrations build.
+
+**BE Gap 687 — the clean-set runner is no longer invoice-only.**
+
+`run_clean_case` and `score_clean_run` were typed to `InvoiceSpec` concretely, so the benchmark could
+only grade invoices. They now take an `ExtractionSpec` **Protocol** — structural rather than a
+`Union`, so a third fixture family needs no harness change — and the clean set iterates invoice specs
+plus `CLEAN_GENERIC_DOCUMENTS`. The substantive change was not the annotation: `run_clean_case` was
+dropping `doc_type` before `verify_node`, and `doc_type` is what resolves the verification rubric, so
+a non-invoice document was being checked as an invoice missing a total. `doc_type` is now forwarded,
+and is `None` for every `InvoiceSpec`, which reproduces the pre-gap state dict exactly.
+
+Live mode deliberately does **not** pass the spec's own `doc_type`: the classifier decides the type
+from the document, which is the behaviour under test. Overriding it would grade extraction while
+hiding a misclassification.
+
+**Benchmark Run Log note.** `docs/extraction_benchmark/runs/verify-20260917T153125Z.json` predates
+these fixtures and reports **4** clean documents. The corpus is now **9**. That file is a valid
+historical record of its own run and is left alone; it is simply not current, and a re-run is the
+before/after evidence for Gap 687.
