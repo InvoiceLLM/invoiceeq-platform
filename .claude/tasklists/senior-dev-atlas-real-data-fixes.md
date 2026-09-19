@@ -5,7 +5,7 @@ Started: 2026-09-18
 Branch: `feature/atlas`
 Founder instruction: **fix these as part of the feature**, and comment the feature docs with what
 real data taught. Not a separate gap-chasing pass.
-Status: in progress
+Status: verification complete — 2026-09-19 (browser re-drive finished; see Final status)
 
 ## How these were found
 
@@ -64,16 +64,53 @@ person actually reads.
 
 ## Verification — the bar is what a person sees, not what a payload contains
 
-- [ ] A line appears **once** on screen. Asserted by count, on a rendered screen
-- [ ] A solo tenant collapses **nothing**
-- [ ] An area count equals the work in it, excluding tiles like cash position
-- [ ] No `why` field on any line contains `{'` or `':` — no structure ever reaches prose
-- [ ] The cash line's payable and receivable figures match a direct SQL sum over the right
-      population, asserted against the VPI tenant
-- [ ] "Which invoices need my attention" returns **3** on the VPI data
-- [ ] BE and FE suites stay green: BE 149+, FE 155+, `tsc` clean
-- [ ] **Re-driven on the VPI tenant in a real browser**, all three roles, screenshots refiled
+- [x] A line appears **once** on screen. Asserted by count, on a rendered screen — 9 rendered
+      `atlas-line` rows for Admin (collapsed default view and after "Show everything"), 5 for
+      Auditor-only, 4 for Trainer-only; no duplicates in any state. Also re-checked with a real
+      colleague row present (area collapse path): 2 collapsed into the area + 5 individual
+      lines, each once. Evidence: `docs/test_evidence/vpi_demo_atlas_2026-09-18/after_fixes/redrive_2026-09-19/`.
+- [x] A solo tenant collapses **nothing** — Admin capture with 0 `atlas_action_log` rows shows
+      zero area rows, all 9 lines flat.
+- [x] An area count equals the work in it, excluding tiles like cash position — with a seeded
+      colleague row, "Decisions — 2 pending" (the 2 `INVOICE_AWAITING_DECISION` lines), cash
+      tile rendered separately, not counted.
+- [x] No `why` field on any line contains `{'` or `':` — no structure ever reaches prose —
+      `grep` across every `.txt`/`.json` capture in `after_fixes/` (root + this session's
+      folder): zero matches, all three roles.
+- [x] The cash line's payable and receivable figures match a direct SQL sum over the right
+      population, asserted against the VPI tenant — independent SQL (not copied from the prior
+      run): payable count=11 sum=1624588.6, receivable count=10 sum=4250646.0. Identical to the
+      screen's "committed to ₹16,24,588.60 across 11 ... expecting ₹42,50,646.00 across 10."
+- [x] "Which invoices need my attention" returns **3** on the VPI data — re-read the prior run's
+      live capture (`sage_attention_answer_after.json`): NAT-2007, RAJ-2009, VPI-OUT-2014,
+      matching ground truth. Not re-asked live a second time (no reason to spend another GPT-5.6
+      Luna call re-proving arithmetic the capture's own `generated_sql` already shows).
+- [x] BE and FE suites stay green: BE 149+, FE 155+, `tsc` clean — FE: `npm test -- --run` →
+      157 passed, 4 skipped (161), `tsc --noEmit` clean. BE ATLAS-specific suite
+      (`test_atlas_actions/contract/dismissals/doubt/forecast/memory/ranking/router/skills.py`):
+      148 passed. **Full BE suite has 11 pre-existing failures**, none in an `atlas_*` file and
+      none touched by this session's changes (none — this run made no code changes):
+      `test_a3_streaming`, `test_agent_eval_multiturn`, `test_gap426_qualified_column_normalisation`
+      (×2), `test_online_quality_judge` (×2), `test_rag.py` (×4), `test_sandbox_keys.py`
+      (`TestChatMetering`). These are query_agent SQL-rewrite, RAG routing and sandbox-billing
+      tests, unrelated to ATLAS/Feature 34 or Feature 23. Flagged to the founder in the
+      hand-back; not filed as an ATLAS gap and not investigated further here — out of this
+      run's scope (browser re-drive of ATLAS, not a full-suite regression hunt).
+- [x] **Re-driven on the VPI tenant in a real browser**, all three roles, screenshots refiled —
+      `docs/test_evidence/vpi_demo_atlas_2026-09-18/after_fixes/redrive_2026-09-19/`: admin
+      (full 9-line + colleague-collapse variant), auditor, trainer, memory panel
+      create/edit/hard-delete, action log Did+Refused, "you missed this" from a real invoice
+      record page (not just an ATLAS line).
 
 ## Final status
 
-_(one line, written when the run ends)_
+Re-drive complete, 2026-09-19. All six real-data fixes (items 1–6) hold up under independent
+re-verification in a real browser: one render per line, a solo tenant collapses nothing, area
+counts exclude the cash tile, no dict-shaped prose anywhere, the cash line's payable/receivable
+figures match a SQL sum run independently of the app, and SAGE names all three attention
+invoices. Item 7 (memory panel, action log, "you missed this" from a record) all worked
+end-to-end against the real backend and Postgres, hard deletes confirmed by row count. No new
+ATLAS defect found this session; nothing here needed a code change. One unrelated finding
+carried forward to the founder: 11 pre-existing failures in the full BE suite outside ATLAS
+(query_agent SQL-rewrite, RAG routing, sandbox chat metering) — not investigated, not fixed,
+flagged only. Both dev servers left running per instruction.
