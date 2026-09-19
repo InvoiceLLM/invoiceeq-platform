@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from functools import lru_cache, partial
-from typing import List, Dict, Any, Tuple, Type, TypedDict, Optional, Callable
+from typing import List, Dict, Any, Tuple, Type, TypedDict, Optional, Callable, Union
 from pydantic import BaseModel, Field
 import fitz  # PyMuPDF
 
