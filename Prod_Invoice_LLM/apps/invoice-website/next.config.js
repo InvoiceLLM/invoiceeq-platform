@@ -12,7 +12,21 @@ const nextConfig = {
     const feUrl = process.env.FE_INTERNAL_URL;
     if (!feUrl) throw new Error("FE_INTERNAL_URL is not set but ENABLE_FE_PROXY=true");
 
-    const fePages = ["dashboard", "chat", "ingestion", "invoices", "trainer", "settings", "admin", "flows", "help", "history"];
+    // FE Gap 705 (2026-09-19): "work" added. FE Feature 23 landed the ATLAS work
+    // screen at invoice-fe's app/work/page.tsx, and this array was not re-diffed, so
+    // https://invoicellm.admsofttech.com/work was answered by invoice-website's own
+    // router -- which has no app/work/ -- and 404'd. The page existed and was built
+    // into the FE container the whole time; nothing ever rewrote to it.
+    //
+    // This is the fifth instance of one miss: "auth" (2026-08-04), "webhooks"
+    // (2026-08-05), "docs" (Gap 230), "history"/"ingestion-history" (FE Gap 469).
+    // Every one of them shipped a working screen that was unreachable, and every one
+    // was found by a human hitting a 404 rather than by a test. The real fix is a
+    // check that diffs invoice-fe/app/* against this array in CI; it is not done here
+    // because a routing outage should not wait on a tooling change.
+    //
+    // invoice-website has no app/work/ of its own, so this prefix shadows nothing.
+    const fePages = ["dashboard", "chat", "ingestion", "invoices", "trainer", "settings", "admin", "flows", "help", "history", "work"];
     // Bug fix (2026-09-05, FE Gap 469): "history" was missing. FE Gap 464 added
     // invoice-fe's app/history/page.tsx and swapped the sidebar's "Documents"
     // entry for "History", but this array was never re-diffed against
@@ -72,7 +86,17 @@ const nextConfig = {
     // has no app/api/ingestion-history/ of its own. Still deliberately absent,
     // unchanged by this fix: "billing" (shadows a real local route, see above),
     // "documents" and "config" (no page served through this proxy calls them).
-    const feApiPrefixes = ["admin", "audit", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "email", "ingestion-history", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
+    // FE Gap 705: "atlas" added with the "work" page prefix above, and it is not
+    // optional -- without it the screen would load and then fail silently. Every
+    // ATLAS call in components/atlas/ is a relative fetch to /api/atlas/..., which
+    // resolves against invoice-website's domain for any FE-proxied page. That is the
+    // exact failure the "auth" note above describes: the screen renders, the data
+    // never arrives, and it reads as "the feature is broken" rather than "the request
+    // never left this tier". Re-diffed against invoice-fe/app/api/ on 2026-09-19:
+    // 22 folders. Still deliberately absent -- "billing" (shadows invoice-website's
+    // own app/api/billing/), "documents", "config", "audit-history" (no page served
+    // through this proxy calls them). invoice-website has no app/api/atlas/.
+    const feApiPrefixes = ["admin", "atlas", "audit", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "email", "ingestion-history", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
 
     const pageRewrites = [
       ...fePages.flatMap((p) => [
