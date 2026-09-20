@@ -710,6 +710,20 @@ timestamps compared at read time, no clock anywhere in the module — and D46's 
 Stuck-vs-in-flight is deliberately **tenant-wide, not per source**: an invoice reaches a tenant
 through any door, so attributing a stuck invoice to a source would be a guess.
 
+### 14.3.1 Amendment — BE Gap 712 (2026-09-20): the Trainer's arithmetic line is removed
+
+The "drafted correction" line type described above no longer exists. `_arithmetic_correction()`,
+`_line_items_total()` and `_ARITHMETIC_SLACK` are deleted from `services/atlas_skills.py`. The
+extraction pipeline already verifies invoice arithmetic (`utils/verification_tools.py`
+`verify_totals_math` / `verify_line_items_math`) and records the result in `sa_alerts`; ATLAS
+re-adding the items was a second, duplicated correctness decision with its own tolerance, and the
+founder ruled the line is not needed at all — not replaced by an alert-reading line, removed. The
+Trainer now emits **one** line type, `low_confidence_fields`, which additionally carries
+`vendor_invoice_count` in its action params so D21's consequence ordering still has a key. No
+emitter produces a `Correction` block; the contract type stays (hard rule 4) and
+`apply_field_correction` remains a registered suggest-only action kind with no line that offers
+it. §17.4's `train-arithmetic-` ranking row and §17.11's example `act` call are history.
+
 ### 14.4 34.4 — vendor statement recon
 
 `reconcile()` is the comparison and it is ordinary `Decimal` arithmetic (hard rule 3): every

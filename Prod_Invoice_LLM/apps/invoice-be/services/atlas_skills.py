@@ -68,7 +68,6 @@ from services.atlas_capabilities import AtlasCapability, GrantSet, visible_to
 from services.atlas_contract import (
     Action,
     Certainty,
-    Correction,
     Recommendation,
     Reversibility,
     Verify,
@@ -147,7 +146,6 @@ _STUCK_HOURS = 6
 _QUIET_DAYS = 7
 #: Rounding slack when checking an invoice's own arithmetic. Two decimals of
 #: currency, not a tolerance for disagreement.
-_ARITHMETIC_SLACK = Decimal("0.02")
 
 
 @dataclass(frozen=True)
@@ -634,11 +632,13 @@ def _cash_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
 def trainer_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
     """Extraction that is wrong, ranked by consequence, with the fix drafted.
 
-    Two kinds of line:
+    One kind of line (two before BE Gap 712):
 
-    * **A drafted correction** -- the invoice's own arithmetic disagrees with its
-      total, so there is a defensible "after" and the line carries the
-      before/after pair D45 requires.
+    * ~~A drafted arithmetic correction~~ -- **removed, BE Gap 712.** The
+      extraction pipeline already verifies the invoice's arithmetic and records
+      it in `sa_alerts`; ATLAS re-doing that sum was a second, duplicated
+      correctness decision. The founder ruled the line is not needed at all,
+      so the Trainer emits no arithmetic line and drafts no `Correction`.
     * **A field ATLAS is unsure of** -- no computed replacement exists, so there
       is *no* `Correction` block. A before/after with an invented "after" would
       be worse than no after at all; the ask is to look, not to accept.
@@ -655,8 +655,7 @@ def trainer_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
 
     lines: list[Recommendation] = []
     for inv in invoices:
-        lines.extend(_arithmetic_correction(inv, ctx, vendor_volume))
-        lines.extend(_low_confidence_fields(inv, ctx))
+        lines.extend(_low_confidence_fields(inv, ctx, vendor_volume))
 
     # Consequence first: a fix on the vendor ATLAS sees most often is worth more
     # than a one-off, which is exactly what D21 asks for.
@@ -664,129 +663,15 @@ def trainer_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
     return lines
 
 
-def _line_items_total(inv: Invoice) -> Decimal | None:
-    """What the printed line items add up to, or None if they cannot be read.
-
-    Returns None rather than 0 when no item carries a readable amount: "the
-    items add up to nothing" and "there are no readable items" are different
-    claims, and only one of them is ever true here.
-    """
-    total = Decimal("0")
-    seen = False
-    for item in inv.items or []:
-        if not isinstance(item, dict):
-            continue
-        raw = item.get("total") or item.get("amount") or item.get("line_total")
-        if raw is None:
-            continue
-        try:
-            total += Decimal(str(raw))
-            seen = True
-        except (ArithmeticError, ValueError):
-            continue
-    return total if seen else None
-
-
-def _arithmetic_correction(
-    inv: Invoice, ctx: SkillContext, vendor_volume: dict[str, int]
+def _low_confidence_fields(
+    inv: Invoice, ctx: SkillContext, vendor_volume: dict[str, int] | None = None
 ) -> list[Recommendation]:
-    """The invoice's own numbers disagree — before and after, on the line (D45).
+    """A field the extractor was unsure of. No `Correction` — there is no after.
 
-    Deterministic per hard rule 3: the disagreement is arithmetic, and the
-    proposed "after" is the sum of what the document itself prints, never a
-    guess. Tax and discount are added back before comparing, because a total that
-    legitimately includes them is not a defect.
+    Carries `vendor_invoice_count` so D21's consequence ordering in
+    `trainer_lines()` still has something to sort on now that BE Gap 712 removed
+    the only other line that declared it.
     """
-    if inv.grand_total is None:
-        return []
-    items_total = _line_items_total(inv)
-    if items_total is None:
-        return []
-
-    tax = Decimal(str(inv.tax_amount or 0))
-    discount = Decimal(str(inv.discount_amount or 0))
-    expected = items_total + tax - discount
-    stated = _amount(inv)
-    if abs(expected - stated) <= _ARITHMETIC_SLACK:
-        return []
-
-    currency = _currency_of(inv, ctx)
-    mark = money_prefix(currency)
-    vendor = inv.vendor_name or "an unnamed vendor"
-    number = f"#{inv.invoice_number}" if inv.invoice_number else "no invoice number"
-    count = vendor_volume.get(inv.vendor_name or "", 1)
-
-    figures = [
-        computed_figure(stated, currency, "the invoice total as extracted"),
-        computed_figure(
-            expected,
-            currency,
-            "the printed line items added up, plus tax, less discount",
-        ),
-    ]
-    return [
-        validate_recommendation(
-            Recommendation(
-                id=f"train-arithmetic-{inv.id}",
-                capability=AtlasCapability.TRAIN,
-                skill="invoice_total_disagrees_with_its_items",
-                what=What(
-                    headline=f"{vendor} {number} does not add up",
-                    entity_kind="invoice",
-                    entity_id=str(inv.id),
-                ),
-                why=Why(
-                    text=(
-                        f"The total was read as {mark}{render_amount(stated, currency)}, "  # hardcode-ok: every amount goes through `render_amount()`; `mark` is the currency symbol for that line's own currency
-                        f"but the printed line items add up to "
-                        f"{mark}{render_amount(expected, currency)}. This vendor has "
-                        f"{count_reference(count)} invoice(s) here, so the same fix "
-                        f"applies to every one that follows."
-                    ),
-                    figures=figures,
-                    references=[number, count_reference(count)],
-                ),
-                action=Action(
-                    kind="apply_field_correction",
-                    label="Correct the total",
-                    target_id=str(inv.id),
-                    params={
-                        "field": "grand_total",
-                        "value": str(expected),
-                        "vendor_invoice_count": count,
-                    },
-                ),
-                verify=Verify(
-                    question=(
-                        f"Attach {number} here and show me the line items you "
-                        f"added up and how you got to the total."
-                    ),
-                    document_id=str(inv.id),
-                ),
-                correction=Correction(
-                    field_label="Invoice total",
-                    field_name="grand_total",
-                    before_rendered=render_amount(stated, currency),
-                    after_rendered=render_amount(expected, currency),
-                ),
-                # §7.3: the money at stake on a correction is the size of the
-                # ERROR, not the size of the invoice. A wrong total on a small
-                # invoice is a small problem, and ranking it by the invoice
-                # would push every large invoice's tiny rounding slip above a
-                # genuinely wrong small one. No deadline: a wrong extraction
-                # does not expire, it just keeps teaching the wrong thing.
-                stake=abs(expected - stated),
-                since=_arrived_on(inv),
-                certainty=Certainty.CERTAIN,
-                reversibility=Reversibility.REVERSIBLE,
-                currency=currency,
-            )
-        )
-    ]
-
-
-def _low_confidence_fields(inv: Invoice, ctx: SkillContext) -> list[Recommendation]:
-    """A field the extractor was unsure of. No `Correction` — there is no after."""
     confidences = inv.field_confidence or {}
     if not isinstance(confidences, dict):
         return []
@@ -830,7 +715,10 @@ def _low_confidence_fields(inv: Invoice, ctx: SkillContext) -> list[Recommendati
                     kind="open_field_review",
                     label="Check these fields",
                     target_id=str(inv.id),
-                    params={"fields": [name for name, _ in weak]},
+                    params={
+                        "fields": [name for name, _ in weak],
+                        "vendor_invoice_count": (vendor_volume or {}).get(inv.vendor_name or "", 1),
+                    },
                 ),
                 verify=Verify(
                     question=f"Attach {number} here and show me where you read {names} from.",

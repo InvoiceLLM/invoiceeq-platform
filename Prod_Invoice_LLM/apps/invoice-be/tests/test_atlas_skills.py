@@ -29,8 +29,6 @@ import pytest
 from models import Invoice, Tenant
 from services.atlas_capabilities import AtlasCapability, GrantSet, visible_to
 from services.atlas_contract import (
-    InventedNumberError,
-    assert_no_undeclared_numbers,
     validate_recommendation,
 )
 from services.atlas_skills import (
@@ -209,57 +207,38 @@ def test_the_cash_line_never_blends_currencies(pg):
 # ═════════════════════════════════════════════════════════════════════════════
 
 @postgres_only
-def test_a_correction_line_shows_the_invoice_before_and_after(pg):
-    """D45 — the concrete form of D21's "proof the teaching worked"."""
+def test_the_trainer_never_emits_an_arithmetic_line_or_a_drafted_correction(pg):
+    """BE Gap 712. The pipeline verifies invoice arithmetic and records it in
+    `sa_alerts`; ATLAS re-adding the items was a duplicated correctness decision
+    and the founder ruled the line is not needed at all. Both provocations --
+    items that do not sum, and a pipeline arithmetic alert -- must produce no
+    `train-arithmetic-*` line and no `Correction` block on any Trainer line."""
     session, tenant, written = pg
-    inv = _invoice(
+    silent = _invoice(
         session, written, tenant,
-        vendor_name="Bad Arithmetic Ltd", invoice_number="9001",
+        vendor_name="Silent Sum Pvt", invoice_number="9002",
         grand_total=9000.0, tax_amount=0.0,
         items=[{"total": 4000}, {"total": 4500}],
     )
-    lines = [
-        line for line in trainer_lines(session, _ctx(tenant))
-        if line.what.entity_id == str(inv.id)
-        and line.skill == "invoice_total_disagrees_with_its_items"
-    ]
-    assert len(lines) == 1
-    line = lines[0]
-    assert line.capability is AtlasCapability.TRAIN
-    assert line.correction is not None
-    assert line.correction.field_name == "grand_total"
-    assert line.correction.before_rendered == "9,000.00"
-    assert line.correction.after_rendered == "8,500.00"
-    # Both halves of the pair are prose the user reads, so both are covered by
-    # the §5.3 number checks.
-    assert line.correction.before_rendered in " ".join(line.prose())
-    assert line.correction.after_rendered in " ".join(line.prose())
-
-
-@postgres_only
-def test_a_rounded_after_value_is_rejected_like_any_other_invented_number(pg):
-    """The `Correction` block is not a hole in §5.3.
-
-    A correction whose "after" does not match the figure the line declares is
-    refused -- and this is the worst place for a rounded number to reach, because
-    the "after" is the value the click writes.
-    """
-    session, tenant, written = pg
-    inv = _invoice(
+    flagged = _invoice(
         session, written, tenant,
-        vendor_name="Bad Arithmetic Ltd", invoice_number="9002",
-        grand_total=9000.0, tax_amount=0.0,
-        items=[{"total": 4000}, {"total": 4500}],
+        vendor_name="Acme Widgets LLC", invoice_number="US-77",
+        grand_total=1200.0, currency="USD",
+        field_confidence={"tax_amount": 0.2},
+        sa_alerts=[
+            {"type": "tax_mismatch",
+             "message": "Subtotal (1000.00) + Tax (100.00) does not match Grand Total (1200.00)"},
+            {"type": "line_items_mismatch",
+             "message": "Line items sum (900.00) does not match subtotal (1000.00)"},
+        ],
     )
-    line = next(
-        line for line in trainer_lines(session, _ctx(tenant))
-        if line.what.entity_id == str(inv.id) and line.correction is not None
-    )
-    rounded = line.model_copy(
-        update={"correction": line.correction.model_copy(update={"after_rendered": "8,500.99"})}
-    )
-    with pytest.raises(InventedNumberError):
-        assert_no_undeclared_numbers(rounded)
+    lines = trainer_lines(session, _ctx(tenant))
+    ours = [l for l in lines if l.what.entity_id in {str(silent.id), str(flagged.id)}]
+    assert not [l for l in lines if l.id.startswith("train-arithmetic-")]
+    assert all(l.correction is None for l in lines)
+    # The flagged invoice still reaches the Trainer -- through the field the
+    # extractor was unsure of, which is the line type that survives.
+    assert [l.skill for l in ours] == ["low_confidence_fields"]
 
 
 @postgres_only
