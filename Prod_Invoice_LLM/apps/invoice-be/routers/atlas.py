@@ -55,15 +55,19 @@ that is missing checks can say so instead of looking complete.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
+from agents.atlas_agent import run_briefing
+from agents.atlas_prompts import welcome_for
 from dependencies import TenantContext, get_db_session, get_tenant_context
 from models import Document, Invoice
 from services.atlas_actions import (
@@ -87,13 +91,21 @@ from services.atlas_collapse import (
 from services.atlas_ranking import RANK_CUT, rank
 from services.atlas_contract import (
     AtlasContractError,
+    BriefingEvent,
     CurrencyBlendError,
     Recommendation,
     validate_recommendation,
 )
 from services.atlas_dismissals import dismiss, dismissed_ids, drop_dismissed
 from services.atlas_forecast import forecast_recommendations, shortfalls
+from services.atlas_briefing_cache import (
+    get_cached as cached_briefing,
+    invalidate as invalidate_briefing,
+    replay_events,
+    store as store_briefing,
+)
 from services.atlas_memory import (
+    RuleSource,
     add_rule,
     delete_rule,
     edit_rule,
@@ -101,7 +113,7 @@ from services.atlas_memory import (
     noise_suggestions,
     report_missed,
 )
-from services.atlas_orientation import orientation
+from services.atlas_orientation import orientation, tenant_has_history
 from services.atlas_doubt import doubt_recommendations, doubts_for_invoice, witnesses_held
 from services.atlas_figures import render_amount
 from services.atlas_recon import (
@@ -112,6 +124,8 @@ from services.atlas_recon import (
     statement_lines_from_items,
 )
 from services.atlas_skills import SkillContext, atlas_lines
+from services.atlas_tools import BriefingRun, ToolContext
+from utils.llm import get_llm_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -617,6 +631,10 @@ def dismiss_atlas_line(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
 
+    # Feature 35 task 35.8: the briefing described this line; it no longer
+    # describes today. Marked stale, never regenerated here (§8 ruling 4).
+    invalidate_briefing(db, context.tenant_id, context.user_id)
+
     return DismissResponse(
         recommendation_id=recommendation_id.strip(),
         dismissed=True,
@@ -747,6 +765,9 @@ async def act_on_atlas_line(
         ) from exc
 
     _log(True, outcome.summary)
+    # Feature 35 task 35.8: something the briefing reported as pending has been
+    # done. Only on success -- a refused action changed nothing to be stale about.
+    invalidate_briefing(db, context.tenant_id, context.user_id)
     return ActResponse(
         recommendation_id=recommendation_id.strip(),
         kind=outcome.kind,
@@ -1017,6 +1038,9 @@ def post_atlas_memory(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    # Feature 35 task 35.8: memory rules go into the briefing's prompt, so a new
+    # one makes today's briefing a briefing written without it.
+    invalidate_briefing(db, context.tenant_id, context.user_id)
     return _rule_out(rule)
 
 
@@ -1113,3 +1137,264 @@ def post_atlas_missed(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     return MissedReportResponse(id=str(report.id), rule=_rule_out(rule))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /atlas/briefing  and  POST /atlas/briefing/answer
+# Feature 35 (ATLAS Intelligence) tasks 35.7 and 35.9
+#
+# Spec: `docs/feature_35_atlas_intelligence.md` §3.1, §3.3, §3.5, §4.
+#
+# This is the only place in the product that calls `agents/atlas_agent.py`. Four
+# paths, decided in this order and each one cheaper than the next:
+#
+#   1. no grants           -> `welcome` for "user", `done`. No LLM, nothing stored.
+#   2. no tenant history   -> `welcome` for the role, `done`. No LLM, nothing
+#                             stored (§3.5: a welcome is not a briefing, and
+#                             storing one would make a cold tenant look briefed).
+#   3. fresh, not stale    -> the stored frames replayed, `done{cached: true}`.
+#   4. otherwise           -> `run_briefing()`, streamed as it is produced, then
+#                             stored.
+#
+# **Why the whole thing is inside one `try`.** An SSE response's headers are on
+# the wire the moment the first frame is yielded, so an exception after that
+# point is not a 500 -- it is a truncated stream, which the FE sees as a
+# briefing that simply stopped. Feature 34 §15.6 (BE Gap 692) is the precedent
+# for what that costs: a guard raising in a response path took out the whole
+# screen. Here the failure is contained to the briefing panel: `error` then
+# `done`, and the connection closes cleanly.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _frame(event) -> str:
+    """One SSE frame in §3.3's shape: an `event:` line, a `data:` line, a blank one.
+
+    Named events rather than `routers/chat.py`'s bare `data:` lines, because §3.3
+    defines six event types the FE dispatches on by name. `default=str` for the
+    same reason every other JSON dump in ATLAS carries it: a `Decimal` amount or
+    a `date` reaching the encoder must not be the thing that ends the stream.
+    """
+    return "event: {}\ndata: {}\n\n".format(
+        event.type, json.dumps(event.data, default=str)
+    )
+
+
+@router.get("/briefing")
+def get_atlas_briefing(
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db_session),
+) -> StreamingResponse:
+    """The briefing, as Server-Sent Events (§3.3).
+
+    A **synchronous** generator handed to `StreamingResponse`, which Starlette
+    iterates in a worker thread. That is deliberate: `run_briefing()` is a
+    blocking generator (the model call and every tool dispatch are synchronous
+    SQLAlchemy and HTTP work), and wrapping it in an `async def` would run all of
+    it on the event loop -- the exact defect BE Gap 602 records for the chat
+    stream, where one blocking read per iteration stalled every other request in
+    the process.
+    """
+    grants = GrantSet.from_context(context)
+    today = date.today()
+    tenant_id = context.tenant_id
+    user_id = context.user_id
+
+    def stream():
+        try:
+            for frame in _briefing_frames(db, tenant_id, user_id, grants, today):
+                yield frame
+        except Exception as exc:  # noqa: BLE001 -- see this section's header
+            logger.exception(
+                "ATLAS briefing failed for tenant %s user %s", tenant_id, user_id
+            )
+            yield _frame(BriefingEvent(type="error", data={"message": str(exc)}))
+            yield _frame(
+                BriefingEvent(
+                    type="done",
+                    data={"cached": False, "model": "", "dropped_paragraphs": 0},
+                )
+            )
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Same three headers `routers/chat.py` sends: without
+            # `X-Accel-Buffering` the reverse proxy in front of the container
+            # buffers the whole stream and the briefing arrives all at once,
+            # which defeats the reason `run_briefing()` is a generator at all.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _briefing_frames(db, tenant_id, user_id, grants, today):
+    """The four paths, in order. Yields SSE frame strings."""
+    # -- 1 and 2: the welcome paths. No model call on either (§3.5) ----------
+    if grants.is_ungranted() or not tenant_has_history(db, tenant_id):
+        role = _briefing_role(grants)
+        yield _frame(
+            BriefingEvent(type="welcome", data={"role": role, "text": welcome_for(role)})
+        )
+        yield _frame(
+            BriefingEvent(
+                type="done",
+                data={"cached": False, "model": "", "dropped_paragraphs": 0},
+            )
+        )
+        return
+
+    # -- 3: a briefing already written today, still current ------------------
+    row = cached_briefing(db, tenant_id, user_id, today)
+    if row is not None and not row.stale:
+        for event in replay_events(row):
+            yield _frame(event)
+        yield _frame(
+            BriefingEvent(
+                type="done",
+                data={
+                    "cached": True,
+                    "model": row.model,
+                    "dropped_paragraphs": row.dropped,
+                },
+            )
+        )
+        return
+
+    # -- 4: a fresh run, streamed as it is produced, then stored -------------
+    ctx = ToolContext(
+        db=db,
+        skill=SkillContext(tenant_id=tenant_id, today=today),
+        grants=grants,
+        user_id=user_id,
+    )
+    run = BriefingRun(tenant_id=tenant_id, user_id=user_id)
+    produced: list = []
+
+    for event in run_briefing(
+        db,
+        ctx,
+        today=today,
+        llm=get_llm_for_role("atlas"),
+        role=_briefing_role(grants),
+        run=run,
+    ):
+        # The `done` the agent emits is the agent's; this route owns the wire's,
+        # because only the route knows whether the answer came from a cache
+        # (§3.3's `cached` field). Every other frame goes out as produced.
+        if event.type == "done":
+            continue
+        produced.append(event)
+        yield _frame(event)
+
+    # Stored **after** the stream, from the frames that were actually sent, so a
+    # replay tomorrow is what the browser saw today rather than what the model
+    # said. A storage failure must not truncate a briefing the user already has.
+    try:
+        store_briefing(db, run, produced, today=today)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "ATLAS briefing could not be stored for tenant %s user %s",
+            tenant_id, user_id,
+        )
+
+    yield _frame(
+        BriefingEvent(
+            type="done",
+            data={
+                "cached": False,
+                "model": run.model,
+                "dropped_paragraphs": run.dropped,
+            },
+        )
+    )
+
+
+def _briefing_role(grants: GrantSet) -> str:
+    """The §3.5 role word for this caller.
+
+    Duplicates `agents.atlas_agent._role_from()`'s ladder rather than importing
+    a private name. The two agree by test (`test_atlas_briefing_router.py`), not
+    by import, and the welcome path must work without the agent module being
+    involved at all.
+    """
+    if grants.is_admin:
+        return "admin"
+    if grants.can_audit:
+        return "auditor"
+    if grants.can_train:
+        return "trainer"
+    if grants.can_load:
+        return "loader"
+    return "user"
+
+
+class BriefingAnswerRequest(BaseModel):
+    """The answer to the briefing's one question (§3.3).
+
+    `question_text` is sent back by the client that rendered it and is stored as
+    part of the lesson rather than trusted as a key: there is no question row to
+    look up, because §3.1 step 6 allows exactly one question per briefing and it
+    lives in `atlas_briefings.question`. What makes the answer judgeable later is
+    that the rule reads as a question and its answer, which is what
+    `_interview_rule_text()` composes.
+    """
+
+    question_text: str = Field(min_length=1, max_length=2000)
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+def _interview_rule_text(question: str, answer: str) -> str:
+    """One lesson, in the user's own words, with the question that prompted it.
+
+    **Neither half is paraphrased**, for `report_missed()`'s reason (§7.2): the
+    sentence is the evidence, and ATLAS rewriting it would make ATLAS the author
+    of a belief the user was supposed to own. The question is kept with it
+    because an answer without its question is unjudgeable six weeks later --
+    "yes, always" means nothing on its own.
+    """
+    return "{} — {}".format(question.strip(), answer.strip())
+
+
+@router.post(
+    "/briefing/answer",
+    response_model=MemoryRuleOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def post_atlas_briefing_answer(
+    payload: BriefingAnswerRequest,
+    context: TenantContext = Depends(get_tenant_context),
+    db: Session = Depends(get_db_session),
+) -> MemoryRuleOut:
+    """Answer the briefing's question; it becomes a memory rule (task 35.9).
+
+    **The question is not re-validated here, and that is deliberate.** It was
+    already validated in the loop (tasks 35.4/35.5): `validate_briefing_paragraph()`
+    runs over the question exactly as over a paragraph, so a question that
+    invented a number or cited nothing never reached the browser and cannot be
+    answered. Re-checking it here would need the run's emitted-id set, which is
+    gone by the time the user types, and would mean re-implementing the guard
+    against a weaker input -- which is how one control becomes two that disagree.
+
+    The source is fixed to `interview` and is not a request field, for the same
+    reason `POST /atlas/memory` fixes `told`: a client that could name its own
+    provenance could label a lesson it invented as one the user gave.
+    """
+    try:
+        rule = add_rule(
+            db,
+            context.tenant_id,
+            context.user_id,
+            text=_interview_rule_text(payload.question_text, payload.answer),
+            source=RuleSource.INTERVIEW,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    # Feature 35 task 35.9: the briefing asked, it has been answered, and the
+    # answer is now a rule the next briefing's prompt carries.
+    invalidate_briefing(db, context.tenant_id, context.user_id)
+    return _rule_out(rule)

@@ -35,8 +35,60 @@ class MockInvoiceLLM:
     """High-fidelity Mock LLM engine for local development, automated testing,
     and Gap 280 architecture verification without external cloud dependencies."""
 
-    def __init__(self, max_tokens: int | None = None):
+    # ── Feature 35 task 35.2: the scripted tool-call surface ────────────────
+    #
+    # The mock had no tool-call surface at all, so ATLAS Intelligence's loop
+    # (task 35.4) could not be exercised without Azure. This is the script it
+    # replays, and it is deliberately **data, not behaviour**: a test states the
+    # exact sequence of rounds it wants and the loop under test runs unmodified,
+    # rather than every test monkeypatching a different fake model.
+    #
+    # One entry per round, in order:
+    #   * a `list` of `{"name": str, "args": dict, "id": str | None}` → that
+    #     round returns an AIMessage whose `.tool_calls` is exactly that list
+    #     (empty `.content`), which is the shape LangChain produces for a real
+    #     tool-calling model;
+    #   * a `str` → that round returns an AIMessage carrying it as `.content`
+    #     and no tool calls, which is how the loop learns the model has stopped
+    #     calling and started writing.
+    #
+    # Class-level so a test can set `MockInvoiceLLM.tool_script = [...]` and
+    # have it apply to a model built deep inside a route; instance-level
+    # (`MockInvoiceLLM(tool_script=[...])`) and per-bind
+    # (`llm.bind_tools(tools, script=[...])`) both override it, most specific
+    # winning. An exhausted or empty script keeps returning the final text
+    # below, so a loop with a cap bug runs out of rounds rather than out of
+    # script and hangs on a StopIteration nobody catches.
+    tool_script: list = []
+
+    #: What an exhausted script says. Content, no tool calls — a terminating
+    #: round, because the alternative (another tool call) would make an
+    #: off-by-one in the loop's cap invisible.
+    SCRIPT_EXHAUSTED_TEXT = "I have nothing further to add."
+
+    def __init__(self, max_tokens: int | None = None, tool_script: list | None = None):
         self.max_tokens = max_tokens
+        # Only shadow the class attribute when a script was actually passed, so
+        # setting `MockInvoiceLLM.tool_script` after construction still applies.
+        if tool_script is not None:
+            self.tool_script = list(tool_script)
+
+    def bind_tools(self, tools, script: list | None = None, **kwargs):
+        """Return a bound mock that replays `script`, matching LangChain's shape.
+
+        Mirrors `AzureChatOpenAI.bind_tools()` closely enough that task 35.4's
+        loop needs no special-casing: it takes the tool schemas, returns an
+        object with `.invoke(messages)`, and that call returns a real
+        `AIMessage` — the actual LangChain class, not a stand-in — so
+        `.tool_calls`, `.content` and `.usage_metadata` are read off it exactly
+        as they are off a live response.
+        """
+        return _BoundMockLLM(
+            self,
+            tools,
+            script if script is not None else self.tool_script,
+            kwargs,
+        )
 
     def with_structured_output(self, schema_cls):
         parent = self
@@ -148,6 +200,66 @@ class MockInvoiceLLM:
             "How can I help you today?"
         )
         return MockResponse(content=content)
+
+
+class _BoundMockLLM:
+    """`MockInvoiceLLM.bind_tools()`'s return value (Feature 35 task 35.2).
+
+    Holds the tool schemas it was bound with, the script it replays, and a
+    cursor into that script. It also records every `invoke()` it received, which
+    is what lets a test assert the loop's **dispatch order** (Verification Plan
+    35.2) rather than just its final output.
+    """
+
+    def __init__(self, parent: "MockInvoiceLLM", tools, script, bind_kwargs: dict):
+        self.parent = parent
+        #: Exactly what was passed to `bind_tools()` — the schema list a test
+        #: asserts a forbidden tool is absent from.
+        self.tools = list(tools or [])
+        self.script = list(script or [])
+        self.bind_kwargs = dict(bind_kwargs or {})
+        self.cursor = 0
+        #: One entry per `invoke()`, in order: the messages it was given.
+        self.calls: list = []
+
+    @property
+    def invocations(self) -> int:
+        return len(self.calls)
+
+    def bind_tools(self, tools, script: list | None = None, **kwargs):
+        """Re-binding a bound mock rebinds from the parent, as LangChain does."""
+        return self.parent.bind_tools(
+            tools, script=script if script is not None else self.script, **kwargs
+        )
+
+    def invoke(self, messages, **kwargs):
+        from langchain_core.messages import AIMessage
+
+        # A snapshot, not the caller's list: a loop appends its tool results to
+        # one list and invokes again, so storing the reference would make every
+        # recorded round look like the last one.
+        self.calls.append(list(messages) if isinstance(messages, (list, tuple)) else [messages])
+        step = None
+        if self.cursor < len(self.script):
+            step = self.script[self.cursor]
+            self.cursor += 1
+
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+        if isinstance(step, (list, tuple)):
+            tool_calls = [
+                {
+                    "name": call["name"],
+                    "args": dict(call.get("args") or {}),
+                    "id": call.get("id") or f"call_{self.cursor}_{index}",
+                    "type": "tool_call",
+                }
+                for index, call in enumerate(step)
+            ]
+            return AIMessage(content="", tool_calls=tool_calls, usage_metadata=usage)
+
+        text = step if isinstance(step, str) else self.parent.SCRIPT_EXHAUSTED_TEXT
+        return AIMessage(content=text, usage_metadata=usage)
 
 
 class LlmConfigurationError(RuntimeError):

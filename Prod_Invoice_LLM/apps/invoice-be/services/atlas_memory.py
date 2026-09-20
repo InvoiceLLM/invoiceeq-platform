@@ -78,19 +78,30 @@ __all__ = [
 
 
 class RuleSource:
-    """Where a lesson came from. Four values, and no fifth without a decision.
+    """Where a lesson came from. Five values, and no sixth without a decision.
 
     Recorded because §5.2's "wrong lesson" is far easier to judge when you know
     whether ATLAS was told it, worked it out from a correction, or inferred it
     from somebody clicking Dismiss forty times.
+
+    **Feature 35 task 35.9 added the fifth, `INTERVIEW`** (additive; the four
+    above are unchanged). An interview answer is a lesson the user gave, like
+    `TOLD` -- but they gave it because ATLAS asked, about a specific ambiguous
+    tool result, in the middle of a briefing. Folding it into `TOLD` would lose
+    the only thing that makes the briefing's one question worth asking: whether
+    the answers to it turn out to be better or worse lessons than the ones people
+    volunteer. That is a question about provenance, and provenance is what this
+    class is for.
     """
 
     TOLD = "told"
     CORRECTION = "correction"
     MISSED_REPORT = "missed_report"
     DISMISSAL_PATTERN = "dismissal_pattern"
+    #: Feature 35 §3.1 step 6 / task 35.9 -- answered the briefing's one question.
+    INTERVIEW = "interview"
 
-    ALL = (TOLD, CORRECTION, MISSED_REPORT, DISMISSAL_PATTERN)  # hardcode-ok: this class's own four values, not domain data
+    ALL = (TOLD, CORRECTION, MISSED_REPORT, DISMISSAL_PATTERN, INTERVIEW)  # hardcode-ok: this class's own five values, not domain data
 
 
 #: Every `Recommendation.id` prefix any emitter produces, with the words D12's

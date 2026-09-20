@@ -53,6 +53,9 @@
     "azureOpenAiChatSummaryDeploymentName": {
       "value": ""
     },
+    "azureOpenAiAtlasDeploymentName": {
+      "value": ""
+    },
     "enableEntityResolver": {
       "value": false
     },

@@ -1,0 +1,15 @@
+event: paragraph
+data: {"text": "Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue. RAJ-2009 is waiting on a decision for \u20b94,37,190.00, due 15 September, and its PaymentTerm was not read confidently.", "citations": [{"tool": "list_lines", "record_id": "audit-approve-530bd65a-be04-4953-988b-2932f52a6f89", "record_kind": "recommendation"}, {"tool": "list_lines", "record_id": "train-lowconf-530bd65a-be04-4953-988b-2932f52a6f89", "record_kind": "recommendation"}]}
+
+event: paragraph
+data: {"text": "Possible duplicate: National MRO Traders invoice NAT-2006 has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue. NAT-2007 is waiting on a decision for \u20b979,956.80, due 15 September.", "citations": [{"tool": "list_lines", "record_id": "audit-approve-22490a93-94a8-4511-90ba-52d495e0cc05", "record_kind": "recommendation"}]}
+
+event: paragraph
+data: {"text": "Over the next 30 days, \u20b916,24,588.60 is committed across 11 invoices and \u20b942,50,646.00 is expected across 10, assuming every invoice is settled on its due date.", "citations": [{"tool": "list_lines", "record_id": "audit-cash-INR", "record_kind": "recommendation"}]}
+
+event: paragraph
+data: {"text": "Review the unclear PaymentTerm readings on Ganesh Bearings Pvt Ltd GBP-2012, Rajesh Steel Corporation RAJ-2008, and Om Stationery Mart OM -2002. Teaching these fields fixes each vendor\u2019s layout, not just these invoices.", "citations": [{"tool": "list_lines", "record_id": "train-lowconf-33d6ccd5-57a4-4c16-a4f1-9708a05c205a", "record_kind": "recommendation"}, {"tool": "list_lines", "record_id": "train-lowconf-d5869da2-b3bc-4d41-9356-2c6a02352616", "record_kind": "recommendation"}, {"tool": "list_lines", "record_id": "train-lowconf-ff4a9fe0-df7a-401d-a9b3-29e128f66663", "record_kind": "recommendation"}]}
+
+event: done
+data: {"cached": true, "model": "gpt-5.6-terra", "dropped_paragraphs": 0}
+

@@ -9,7 +9,10 @@ import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 
 // MessageStream calls this on every render; jsdom does not implement it.
-if (!Element.prototype.scrollIntoView) {
+// Guarded on `Element` itself, not only on the method: FE Feature 24's proxy
+// test runs in the node environment (a Route Handler builds a `NextResponse`),
+// where there is no DOM at all and this file still runs.
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
 

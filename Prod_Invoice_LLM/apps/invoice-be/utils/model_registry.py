@@ -40,7 +40,7 @@ from typing import Dict, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-Role = Literal["primary", "fast", "judge", "chat_summary"]
+Role = Literal["primary", "fast", "judge", "chat_summary", "atlas"]
 
 
 @dataclass(frozen=True)
@@ -245,6 +245,15 @@ def resolve_model(role: Role = "primary", settings=None) -> ModelSpec:
             deployment = (getattr(settings, "AZURE_OPENAI_FAST_DEPLOYMENT_NAME", "") or "").strip() or primary
         elif role == "judge":
             deployment = (getattr(settings, "AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME", "") or "").strip() or primary
+        elif role == "atlas":
+            # Feature 35 (ATLAS Intelligence) §3.4: every briefing call runs on
+            # GPT-5.6 Terra, and nothing else changes model. Falls back to the
+            # primary when blank -- an environment that has not created the Terra
+            # deployment yet gets a briefing on the primary rather than a call
+            # against a deployment name that does not exist.
+            deployment = (
+                getattr(settings, "AZURE_OPENAI_ATLAS_DEPLOYMENT_NAME", "") or ""
+            ).strip() or primary
         elif role == "chat_summary":
             # Feature 29 decision 2: the full-record chat route narrates on
             # gpt-5-mini. Falls back to the JUDGE deployment before the primary,
@@ -281,7 +290,13 @@ def resolve_model(role: Role = "primary", settings=None) -> ModelSpec:
 def registry_snapshot(settings=None) -> dict:
     """Everything a health endpoint, a benchmark artifact or a log line should
     say about the models in force. JSON-safe."""
-    out = {role: resolve_model(role, settings).__dict__ for role in ("primary", "fast", "judge")}
+    out = {
+        role: resolve_model(role, settings).__dict__
+        # `chat_summary` is deliberately NOT added here by Feature 35: it was
+        # already missing before this change and adding it is someone else's
+        # scope -- filed as BE Gap 713 rather than fixed in passing.
+        for role in ("primary", "fast", "judge", "atlas")  # hardcode-ok: this module's own role names, the `Role` literal, not domain data
+    }
     if settings is None:
         from config import get_settings
         settings = get_settings()

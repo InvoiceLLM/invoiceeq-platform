@@ -64,6 +64,9 @@ param azureOpenAiJudgeDeploymentName string = ''
 @description('Feature 29 decision 2: deployment that narrates the full-record chat route (gpt-5-mini in dev; Luna keeps the attachment branches). Empty = use azureOpenAiJudgeDeploymentName, then azureOpenAiDeploymentName -- the pre-29.5 behaviour.')
 param azureOpenAiChatSummaryDeploymentName string = ''
 
+@description('BE Feature 35 task 35.0: deployment for the `atlas` registry role (ATLAS Intelligence briefing). Empty = resolve_model("atlas") falls back to azureOpenAiDeploymentName.')
+param azureOpenAiAtlasDeploymentName string = ''
+
 @description('Gap 465: Azure OpenAI data-plane api-version. GA 2024-10-21 verified live 2026-09-05. Must equal config.py AZURE_OPENAI_API_VERSION; one value, threaded from params.*.json.')
 param azureOpenAiApiVersion string = '2024-10-21'
 
@@ -276,6 +279,10 @@ resource scheduledJob 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME'
               value: azureOpenAiChatSummaryDeploymentName
+            }
+            {
+              name: 'AZURE_OPENAI_ATLAS_DEPLOYMENT_NAME'
+              value: azureOpenAiAtlasDeploymentName
             }
             {
               name: 'ENABLE_ENTITY_RESOLVER'

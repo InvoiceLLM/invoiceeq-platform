@@ -1,0 +1,21 @@
+ROLE trainer
+grants {"can_audit": false, "can_train": true, "can_load": false, "is_admin": false}
+
+event: paragraph
+data: {"text": "Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue. The PaymentTerm on RAJ-2009 was read from a part of the document the extractor could not see clearly.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-530bd65a-be04-4953-988b-2932f52a6f89"}]}
+
+event: paragraph
+data: {"text": "Check the PaymentTerm on Ganesh Bearings Pvt Ltd #GBP-2012, Rajesh Steel Corporation #RAJ-2008, and Om Stationery Mart #OM -2002. The documents did not read cleanly there, and teaching these fields fixes each vendor's layout, not just these invoices.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-33d6ccd5-57a4-4c16-a4f1-9708a05c205a"}, {"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-d5869da2-b3bc-4d41-9356-2c6a02352616"}, {"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-ff4a9fe0-df7a-401d-a9b3-29e128f66663"}]}
+
+event: question
+data: {"text": "Rajesh Steel Corporation RAJ-2009 looks like a copy of RAJ-2008. Is it a genuine second order?", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-530bd65a-be04-4953-988b-2932f52a6f89"}], "answer_kind": "free_text"}
+
+event: done
+data: {"cached": false, "model": "gpt-5.6-terra", "dropped_paragraphs": 0}
+
+-- run --
+model gpt-5.6-terra
+tokens_in 2349 tokens_out 409
+cost_usd 0.009606
+dropped 0 truncated None
+tool_calls [{"tool": "list_lines", "args": {}, "ms": 44, "rows": 4, "refused": null}]

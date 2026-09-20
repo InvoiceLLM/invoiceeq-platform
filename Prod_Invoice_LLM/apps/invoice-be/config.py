@@ -599,6 +599,13 @@ class Settings(BaseSettings):
     # environment that never heard of this setting behaves exactly as decision 2
     # requires with no change at all.
     AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME: str = ""
+    # Feature 35 (ATLAS Intelligence) §3.4: the deployment every briefing call
+    # runs on -- GPT-5.6 Terra, chosen for long-context recall (MRCR 89%+ vs
+    # Luna's ~41%), because a briefing reads the whole day's tool output at once.
+    # Empty = the primary, so an environment that has not created the Terra
+    # deployment yet still produces a briefing instead of calling a deployment
+    # name that does not exist. Set per environment by task 35.0.
+    AZURE_OPENAI_ATLAS_DEPLOYMENT_NAME: str = ""
     # Gap 465: the two non-OpenAI model choices, previously hardcoded at their
     # single call sites (`queue_worker/handlers.py::_run_ocr` and
     # `chroma_client.py::get_embedding_model`). Changing EMBEDDING_MODEL_NAME

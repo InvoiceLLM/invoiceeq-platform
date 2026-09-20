@@ -61,6 +61,7 @@ from services.atlas_contract import (
     What,
     Why,
     validate_recommendation,
+    verbatim_references,
 )
 from services.atlas_figures import (
     computed_figure,
@@ -492,7 +493,10 @@ def doubt_recommendations(
                 "the total on this invoice, as extracted",
             )
         ]
-        references = [number]
+        # BE Gap 714: `vendor` is the stored `vendor_name`, copied verbatim
+        # into the headline and (on the no-history branch) into `doubt.working`,
+        # which becomes `why.text`.
+        references = [number, *verbatim_references(vendor)]
         if baseline is not None and baseline.is_established:
             figures.extend(
                 [

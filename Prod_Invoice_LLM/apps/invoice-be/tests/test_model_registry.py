@@ -96,7 +96,11 @@ def test_there_is_no_long_doc_role_after_29_10():
 
     assert "long_doc" not in get_args(reg.Role)
     assert "AZURE_OPENAI_LONG_DOC_DEPLOYMENT_NAME" not in Settings.model_fields
-    assert set(get_args(reg.Role)) == {"primary", "fast", "judge", "chat_summary"}
+    # Feature 35 task 35.3 added `atlas` (§3.4: Terra, for the briefing only).
+    # The set is still pinned rather than loosened to a subset test: the point of
+    # this assertion is that a role cannot appear without a decision behind it,
+    # and a `>=` here would let the next inert role in silently.
+    assert set(get_args(reg.Role)) == {"primary", "fast", "judge", "chat_summary", "atlas"}
 
 
 def test_chat_summary_role_prefers_the_judge_deployment_over_the_primary():

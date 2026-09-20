@@ -1,0 +1,3814 @@
+[
+  {
+    "turn": 1,
+    "attachment_file": "PO_PO-VPI-1041_RAJ.pdf",
+    "question": "Does this PO match the Rajesh Steel invoice?",
+    "attachment_row": {
+      "id": "06397de2-1c0d-4216-8607-ae105fd4d6e0",
+      "session_id": "eea2d3ce-1dbf-4249-b015-69df65332d57",
+      "filename": "PO_PO-VPI-1041_RAJ.pdf",
+      "doc_type": "PURCHASE_ORDER",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PO-VPI-1041",
+      "party_name": "Rajesh Steel Corporation",
+      "doc_date": "2026-08-05",
+      "currency": "INR",
+      "grand_total": 437190.0,
+      "file_size_bytes": 2917,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 2,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "PURCHASE_ORDER",
+        "doc_number": "PO-VPI-1041",
+        "party_name": "Rajesh Steel Corporation",
+        "doc_date": "2026-08-05",
+        "currency": "INR",
+        "subtotal": 370500.0,
+        "tax_amount": 66690.0,
+        "grand_total": 437190.0,
+        "payment_terms": "Net 30",
+        "delivery_terms": "Deliver by: 20-Aug-2026",
+        "line_count": 2,
+        "lines": [
+          {
+            "description": "HR Steel Coil 2mm",
+            "quantity": 6.0,
+            "unit_price": 48500.0,
+            "amount": 291000.0
+          },
+          {
+            "description": "Steel Angle Bar 2x2x1/4, 20ft",
+            "quantity": 30.0,
+            "unit_price": 2650.0,
+            "amount": 79500.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "eea2d3ce-1dbf-4249-b015-69df65332d57",
+    "answer": "Yes\u2014**each invoice individually matches PO-VPI-1041**:\n\n- **RAJ-2008:** Match  \n- **RAJ-2009:** Match  \n- Currency: **INR**\n- Subtotal: **INR 370,500.0**\n- Tax: **INR 66,690.0** \u2014 CGST **INR 33,345.0** and SGST **INR 33,345.0**\n- Grand total: **INR 437,190.0**\n- Both line items, quantities, unit prices, and amounts match the PO.\n\nHowever, **RAJ-2009 is marked AUDIT_REQUIRED** with a possible-duplicate alert: it has the same date and total as RAJ-2008 but a different invoice number. Treating both invoices as payable produces a computed net of **INR 874,380.0**, which is **INR 437,190.0 higher** than the PO total.",
+    "raw_payload": {
+      "id": "1bc44165-5dd2-43be-9d3f-0d3a50b157ff",
+      "session_id": "eea2d3ce-1dbf-4249-b015-69df65332d57",
+      "role": "assistant",
+      "content": "Yes\u2014**each invoice individually matches PO-VPI-1041**:\n\n- **RAJ-2008:** Match  \n- **RAJ-2009:** Match  \n- Currency: **INR**\n- Subtotal: **INR 370,500.0**\n- Tax: **INR 66,690.0** \u2014 CGST **INR 33,345.0** and SGST **INR 33,345.0**\n- Grand total: **INR 437,190.0**\n- Both line items, quantities, unit prices, and amounts match the PO.\n\nHowever, **RAJ-2009 is marked AUDIT_REQUIRED** with a possible-duplicate alert: it has the same date and total as RAJ-2008 but a different invoice number. Treating both invoices as payable produces a computed net of **INR 874,380.0**, which is **INR 437,190.0 higher** than the PO total.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:03:29.897547",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": "INR",
+          "doc_date": "2026-08-05",
+          "doc_type": "PURCHASE_ORDER",
+          "doc_number": "PO-VPI-1041",
+          "party_name": "Rajesh Steel Corporation",
+          "grand_total": "437190.0"
+        },
+        "amount_owed": {
+          "net": "874380.0",
+          "terms": [
+            {
+              "sign": 1,
+              "amount": "437190.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "RAJ-2008"
+            },
+            {
+              "sign": 1,
+              "amount": "437190.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "RAJ-2009"
+            }
+          ],
+          "agreed": {
+            "delta": "437190.0",
+            "amount": "437190.0",
+            "status": "net_higher",
+            "doc_type": "PURCHASE_ORDER",
+            "doc_number": "PO-VPI-1041"
+          },
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": "0.0",
+                "field": "subtotal",
+                "status": "match",
+                "invoice_value": "370500.0",
+                "reference_value": "370500.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "tax_amount",
+                "status": "match",
+                "invoice_value": "66690.0",
+                "reference_value": "66690.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "grand_total",
+                "status": "match",
+                "invoice_value": "437190.0",
+                "reference_value": "437190.0"
+              }
+            ],
+            "outcome": "match",
+            "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "RAJ-2008",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "HR Steel Coil 2mm",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "7208",
+                  "invoice_page": null,
+                  "invoice_amount": 291000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 6.0,
+                  "reference_amount": 291000.0,
+                  "invoice_unit_price": 48500.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": 48500.0
+                },
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Steel Angle Bar 2x2x1/4, 20ft",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "7216",
+                  "invoice_page": null,
+                  "invoice_amount": 79500.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 30.0,
+                  "reference_amount": 79500.0,
+                  "invoice_unit_price": 2650.0,
+                  "reference_quantity": 30.0,
+                  "reference_unit_price": 2650.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 2,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 2,
+            "reference_currency": "INR",
+            "reference_line_count": 2
+          },
+          {
+            "fields": [
+              {
+                "delta": "0.0",
+                "field": "subtotal",
+                "status": "match",
+                "invoice_value": "370500.0",
+                "reference_value": "370500.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "tax_amount",
+                "status": "match",
+                "invoice_value": "66690.0",
+                "reference_value": "66690.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "grand_total",
+                "status": "match",
+                "invoice_value": "437190.0",
+                "reference_value": "437190.0"
+              }
+            ],
+            "outcome": "match",
+            "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "RAJ-2009",
+            "invoice_status": "AUDIT_REQUIRED",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "HR Steel Coil 2mm",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "7208",
+                  "invoice_page": null,
+                  "invoice_amount": 291000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 6.0,
+                  "reference_amount": 291000.0,
+                  "invoice_unit_price": 48500.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": 48500.0
+                },
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Steel Angle Bar 2x2x1/4, 20ft",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "7216",
+                  "invoice_page": null,
+                  "invoice_amount": 79500.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 30.0,
+                  "reference_amount": 79500.0,
+                  "invoice_unit_price": 2650.0,
+                  "reference_quantity": 30.0,
+                  "reference_unit_price": 2650.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 2,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 2,
+            "reference_currency": "INR",
+            "reference_line_count": 2
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 2
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "HR Steel Coil 2mm",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "7208",
+          "invoice_page": null,
+          "invoice_amount": 291000.0,
+          "invoice_number": "RAJ-2008",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 6.0,
+          "reference_amount": 291000.0,
+          "invoice_unit_price": 48500.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": 48500.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Steel Angle Bar 2x2x1/4, 20ft",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "7216",
+          "invoice_page": null,
+          "invoice_amount": 79500.0,
+          "invoice_number": "RAJ-2008",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 30.0,
+          "reference_amount": 79500.0,
+          "invoice_unit_price": 2650.0,
+          "reference_quantity": 30.0,
+          "reference_unit_price": 2650.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "HR Steel Coil 2mm",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "7208",
+          "invoice_page": null,
+          "invoice_amount": 291000.0,
+          "invoice_number": "RAJ-2009",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 6.0,
+          "reference_amount": 291000.0,
+          "invoice_unit_price": 48500.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": 48500.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Steel Angle Bar 2x2x1/4, 20ft",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "7216",
+          "invoice_page": null,
+          "invoice_amount": 79500.0,
+          "invoice_number": "RAJ-2009",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 30.0,
+          "reference_amount": 79500.0,
+          "invoice_unit_price": 2650.0,
+          "reference_quantity": 30.0,
+          "reference_unit_price": 2650.0
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [],
+        "reference_lines": []
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 6.9,
+    "error": null
+  },
+  {
+    "turn": 2,
+    "attachment_file": "PO_PO-VPI-1042_GBP.pdf",
+    "question": "Is the Ganesh Bearings invoice within this PO?",
+    "attachment_row": {
+      "id": "ba1b01f5-e74e-47e8-a6cc-6fe73f958e6a",
+      "session_id": "e2808a8b-d0ea-4f0c-8d2f-0af3e7d3e5e9",
+      "filename": "PO_PO-VPI-1042_GBP.pdf",
+      "doc_type": "PURCHASE_ORDER",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PO-VPI-1042",
+      "party_name": "Ganesh Bearings Pvt Ltd",
+      "doc_date": "2026-08-08",
+      "currency": "INR",
+      "grand_total": 68676.0,
+      "file_size_bytes": 2922,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 2,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "PURCHASE_ORDER",
+        "doc_number": "PO-VPI-1042",
+        "party_name": "Ganesh Bearings Pvt Ltd",
+        "doc_date": "2026-08-08",
+        "currency": "INR",
+        "subtotal": 58200.0,
+        "tax_amount": 10476.0,
+        "grand_total": 68676.0,
+        "payment_terms": "Net 30 (new vendor)",
+        "delivery_terms": "Deliver by: 20-Aug-2026",
+        "line_count": 2,
+        "lines": [
+          {
+            "description": "Deep Groove Ball Bearing 6205",
+            "quantity": 60.0,
+            "unit_price": 520.0,
+            "amount": 31200.0
+          },
+          {
+            "description": "Tapered Roller Bearing 30205",
+            "quantity": 25.0,
+            "unit_price": 1080.0,
+            "amount": 27000.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "e2808a8b-d0ea-4f0c-8d2f-0af3e7d3e5e9",
+    "answer": "Using the comparison against **PO-VPI-1042**:\n\n- **Invoice GBP-2011 \u2014 within the PO: Yes.**  \n  - PO total: **INR 68,676.0**; invoice total: **INR 68,676.0** \u2014 match.\n  - Subtotal and tax also match: **INR 58,200.0** subtotal and **INR 10,476.0** CGST/SGST tax.\n  - Both line items, quantities, and unit prices match.\n\n- **Invoice GBP-2012 \u2014 within the PO: No.**  \n  - Invoice total is **INR 103,368.0**, which is **INR 34,692.0 higher** than the PO.\n  - It bills **100** Deep Groove Ball Bearing 6205 units versus **60** on the PO.\n  - It includes **40 Bearing Housing P205** units, which is not on the PO.\n  - The PO\u2019s **25 Tapered Roller Bearing 30205** units are not on this invoice.",
+    "raw_payload": {
+      "id": "2342424c-84f8-4570-acf5-64daf7547bdf",
+      "session_id": "e2808a8b-d0ea-4f0c-8d2f-0af3e7d3e5e9",
+      "role": "assistant",
+      "content": "Using the comparison against **PO-VPI-1042**:\n\n- **Invoice GBP-2011 \u2014 within the PO: Yes.**  \n  - PO total: **INR 68,676.0**; invoice total: **INR 68,676.0** \u2014 match.\n  - Subtotal and tax also match: **INR 58,200.0** subtotal and **INR 10,476.0** CGST/SGST tax.\n  - Both line items, quantities, and unit prices match.\n\n- **Invoice GBP-2012 \u2014 within the PO: No.**  \n  - Invoice total is **INR 103,368.0**, which is **INR 34,692.0 higher** than the PO.\n  - It bills **100** Deep Groove Ball Bearing 6205 units versus **60** on the PO.\n  - It includes **40 Bearing Housing P205** units, which is not on the PO.\n  - The PO\u2019s **25 Tapered Roller Bearing 30205** units are not on this invoice.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:03:57.565828",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": "INR",
+          "doc_date": "2026-08-08",
+          "doc_type": "PURCHASE_ORDER",
+          "doc_number": "PO-VPI-1042",
+          "party_name": "Ganesh Bearings Pvt Ltd",
+          "grand_total": "68676.0"
+        },
+        "amount_owed": {
+          "net": "172044.0",
+          "terms": [
+            {
+              "sign": 1,
+              "amount": "68676.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "GBP-2011"
+            },
+            {
+              "sign": 1,
+              "amount": "103368.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "GBP-2012"
+            }
+          ],
+          "agreed": {
+            "delta": "103368.0",
+            "amount": "68676.0",
+            "status": "net_higher",
+            "doc_type": "PURCHASE_ORDER",
+            "doc_number": "PO-VPI-1042"
+          },
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": "0.0",
+                "field": "subtotal",
+                "status": "match",
+                "invoice_value": "58200.0",
+                "reference_value": "58200.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "tax_amount",
+                "status": "match",
+                "invoice_value": "10476.0",
+                "reference_value": "10476.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "grand_total",
+                "status": "match",
+                "invoice_value": "68676.0",
+                "reference_value": "68676.0"
+              }
+            ],
+            "outcome": "match",
+            "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "GBP-2011",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Deep Groove Ball Bearing 6205",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "8482",
+                  "invoice_page": null,
+                  "invoice_amount": 31200.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 60.0,
+                  "reference_amount": 31200.0,
+                  "invoice_unit_price": 520.0,
+                  "reference_quantity": 60.0,
+                  "reference_unit_price": 520.0
+                },
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Tapered Roller Bearing 30205",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "8482",
+                  "invoice_page": null,
+                  "invoice_amount": 27000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 25.0,
+                  "reference_amount": 27000.0,
+                  "invoice_unit_price": 1080.0,
+                  "reference_quantity": 25.0,
+                  "reference_unit_price": 1080.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 2,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 2,
+            "reference_currency": "INR",
+            "reference_line_count": 2
+          },
+          {
+            "fields": [
+              {
+                "delta": "29400.0",
+                "field": "subtotal",
+                "status": "invoice_higher",
+                "invoice_value": "87600.0",
+                "reference_value": "58200.0"
+              },
+              {
+                "delta": "5292.0",
+                "field": "tax_amount",
+                "status": "invoice_higher",
+                "invoice_value": "15768.0",
+                "reference_value": "10476.0"
+              },
+              {
+                "delta": "34692.0",
+                "field": "grand_total",
+                "status": "invoice_higher",
+                "invoice_value": "103368.0",
+                "reference_value": "68676.0"
+              }
+            ],
+            "outcome": "variance",
+            "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "GBP-2012",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [
+                  {
+                    "uom": null,
+                    "amount": 35600.0,
+                    "quantity": 40.0,
+                    "unit_price": 890.0,
+                    "description": "Bearing Housing P205",
+                    "line_number": null,
+                    "page_number": null,
+                    "hsn_sac_code": "8483"
+                  }
+                ],
+                "reference_lines": [
+                  {
+                    "uom": null,
+                    "amount": 27000.0,
+                    "quantity": 25.0,
+                    "unit_price": 1080.0,
+                    "description": "Tapered Roller Bearing 30205",
+                    "line_number": null,
+                    "page_number": 1,
+                    "hsn_sac_code": "8482"
+                  }
+                ]
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Deep Groove Ball Bearing 6205",
+                  "price_delta": "0.0",
+                  "amount_delta": "20800.0",
+                  "hsn_sac_code": "8482",
+                  "invoice_page": null,
+                  "invoice_amount": 52000.0,
+                  "quantity_delta": "40.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 100.0,
+                  "reference_amount": 31200.0,
+                  "invoice_unit_price": 520.0,
+                  "reference_quantity": 60.0,
+                  "reference_unit_price": 520.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 1,
+              "unmatched_count": 2,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 2,
+            "reference_currency": "INR",
+            "reference_line_count": 2
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 2
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [
+        {
+          "href": "/trainer/33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        }
+      ],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Deep Groove Ball Bearing 6205",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "8482",
+          "invoice_page": null,
+          "invoice_amount": 31200.0,
+          "invoice_number": "GBP-2011",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 60.0,
+          "reference_amount": 31200.0,
+          "invoice_unit_price": 520.0,
+          "reference_quantity": 60.0,
+          "reference_unit_price": 520.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Tapered Roller Bearing 30205",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "8482",
+          "invoice_page": null,
+          "invoice_amount": 27000.0,
+          "invoice_number": "GBP-2011",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 25.0,
+          "reference_amount": 27000.0,
+          "invoice_unit_price": 1080.0,
+          "reference_quantity": 25.0,
+          "reference_unit_price": 1080.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Deep Groove Ball Bearing 6205",
+          "price_delta": "0.0",
+          "amount_delta": "20800.0",
+          "hsn_sac_code": "8482",
+          "invoice_page": null,
+          "invoice_amount": 52000.0,
+          "invoice_number": "GBP-2012",
+          "quantity_delta": "40.0",
+          "reference_page": 1,
+          "invoice_quantity": 100.0,
+          "reference_amount": 31200.0,
+          "invoice_unit_price": 520.0,
+          "reference_quantity": 60.0,
+          "reference_unit_price": 520.0
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [
+          {
+            "uom": null,
+            "amount": 35600.0,
+            "quantity": 40.0,
+            "unit_price": 890.0,
+            "description": "Bearing Housing P205",
+            "line_number": null,
+            "page_number": null,
+            "hsn_sac_code": "8483",
+            "invoice_number": "GBP-2012"
+          }
+        ],
+        "reference_lines": [
+          {
+            "uom": null,
+            "amount": 27000.0,
+            "quantity": 25.0,
+            "unit_price": 1080.0,
+            "description": "Tapered Roller Bearing 30205",
+            "line_number": null,
+            "page_number": 1,
+            "hsn_sac_code": "8482"
+          }
+        ]
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 5.8,
+    "error": null
+  },
+  {
+    "turn": 3,
+    "attachment_file": "PO_PO-VPI-1043_SHR.pdf",
+    "question": "Compare with Shree Packaging's August invoice",
+    "attachment_row": {
+      "id": "f87c3e0c-1f2a-4961-8d33-05a29405f391",
+      "session_id": "fe29b6c4-a09c-436c-b6da-7fc33f9b8f0d",
+      "filename": "PO_PO-VPI-1043_SHR.pdf",
+      "doc_type": "PURCHASE_ORDER",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PO-VPI-1043",
+      "party_name": "Shree Packaging Industries",
+      "doc_date": "2026-08-06",
+      "currency": "INR",
+      "grand_total": 121894.0,
+      "file_size_bytes": 2949,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 3,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "PURCHASE_ORDER",
+        "doc_number": "PO-VPI-1043",
+        "party_name": "Shree Packaging Industries",
+        "doc_date": "2026-08-06",
+        "currency": "INR",
+        "subtotal": 103300.0,
+        "tax_amount": 18594.0,
+        "grand_total": 121894.0,
+        "payment_terms": "Net 30",
+        "delivery_terms": "Deliver by: 18-Aug-2026",
+        "line_count": 3,
+        "lines": [
+          {
+            "description": "Corrugated Boxes 24x18x18",
+            "quantity": 150.0,
+            "unit_price": 220.0,
+            "amount": 33000.0
+          },
+          {
+            "description": "Wooden Pallets 48x40",
+            "quantity": 50.0,
+            "unit_price": 950.0,
+            "amount": 47500.0
+          },
+          {
+            "description": "Stretch Wrap Film 20 rolls",
+            "quantity": 6.0,
+            "unit_price": 3800.0,
+            "amount": 22800.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "fe29b6c4-a09c-436c-b6da-7fc33f9b8f0d",
+    "answer": "There are **two August invoices** from Shree Packaging Industries, so I compared both with **PO-VPI-1043** (INR):\n\n### Invoice SHR-2005 \u2014 18-Aug-2026\n**Outcome: Match**\n\n| Field | PO | Invoice | Result |\n|---|---:|---:|---|\n| Subtotal | INR 103,300.0 | INR 103,300.0 | Match |\n| CGST | INR 9,297.0 | INR 9,297.0 | Match |\n| SGST | INR 9,297.0 | INR 9,297.0 | Match |\n| Grand total | INR 121,894.0 | INR 121,894.0 | Match |\n\nAll **3 line items** match in quantity, unit price, and amount.\n\n### Invoice SHR-2006 \u2014 29-Aug-2026\n**Outcome: Variance; invoice is higher**\n\n| Field | PO | Invoice | Difference |\n|---|---:|---:|---:|\n| Subtotal | INR 103,300.0 | INR 104,000.0 | Invoice higher by INR 700.0 |\n| Tax amount | INR 18,594.0 | INR 18,720.0 | Invoice higher by INR 126.0 |\n| Grand total | INR 121,894.0 | INR 122,720.0 | Invoice higher by INR 826.0 |\n\nLine-level differences:\n\n- **Corrugated Boxes 24x18x18:** PO quantity 150.0; invoice quantity 300.0.\n- **Stretch Wrap Film 20 rolls:** PO quantity 6.0; invoice quantity 10.0.\n- **Wooden Pallets 48x40:** present on the PO at quantity 50.0, but not present on SHR-2006.\n\n**Conclusion:** SHR-2005 matches the PO exactly. SHR-2006 does not: it omits the wooden pallets and changes the quantities of the other two items, resulting in a grand-total variance of **INR 826.0**.",
+    "raw_payload": {
+      "id": "0c6254ab-38e2-4ebc-a956-e68a98d43625",
+      "session_id": "fe29b6c4-a09c-436c-b6da-7fc33f9b8f0d",
+      "role": "assistant",
+      "content": "There are **two August invoices** from Shree Packaging Industries, so I compared both with **PO-VPI-1043** (INR):\n\n### Invoice SHR-2005 \u2014 18-Aug-2026\n**Outcome: Match**\n\n| Field | PO | Invoice | Result |\n|---|---:|---:|---|\n| Subtotal | INR 103,300.0 | INR 103,300.0 | Match |\n| CGST | INR 9,297.0 | INR 9,297.0 | Match |\n| SGST | INR 9,297.0 | INR 9,297.0 | Match |\n| Grand total | INR 121,894.0 | INR 121,894.0 | Match |\n\nAll **3 line items** match in quantity, unit price, and amount.\n\n### Invoice SHR-2006 \u2014 29-Aug-2026\n**Outcome: Variance; invoice is higher**\n\n| Field | PO | Invoice | Difference |\n|---|---:|---:|---:|\n| Subtotal | INR 103,300.0 | INR 104,000.0 | Invoice higher by INR 700.0 |\n| Tax amount | INR 18,594.0 | INR 18,720.0 | Invoice higher by INR 126.0 |\n| Grand total | INR 121,894.0 | INR 122,720.0 | Invoice higher by INR 826.0 |\n\nLine-level differences:\n\n- **Corrugated Boxes 24x18x18:** PO quantity 150.0; invoice quantity 300.0.\n- **Stretch Wrap Film 20 rolls:** PO quantity 6.0; invoice quantity 10.0.\n- **Wooden Pallets 48x40:** present on the PO at quantity 50.0, but not present on SHR-2006.\n\n**Conclusion:** SHR-2005 matches the PO exactly. SHR-2006 does not: it omits the wooden pallets and changes the quantities of the other two items, resulting in a grand-total variance of **INR 826.0**.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:04:23.480646",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": "INR",
+          "doc_date": "2026-08-06",
+          "doc_type": "PURCHASE_ORDER",
+          "doc_number": "PO-VPI-1043",
+          "party_name": "Shree Packaging Industries",
+          "grand_total": "121894.0"
+        },
+        "amount_owed": {
+          "net": "366508.0",
+          "terms": [
+            {
+              "sign": 1,
+              "amount": "121894.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "SHR-2005"
+            },
+            {
+              "sign": 1,
+              "amount": "122720.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "SHR-2006"
+            },
+            {
+              "sign": 1,
+              "amount": "121894.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "SHR-2004"
+            }
+          ],
+          "agreed": {
+            "delta": "244614.0",
+            "amount": "121894.0",
+            "status": "net_higher",
+            "doc_type": "PURCHASE_ORDER",
+            "doc_number": "PO-VPI-1043"
+          },
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": "0.0",
+                "field": "subtotal",
+                "status": "match",
+                "invoice_value": "103300.0",
+                "reference_value": "103300.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "tax_amount",
+                "status": "match",
+                "invoice_value": "18594.0",
+                "reference_value": "18594.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "grand_total",
+                "status": "match",
+                "invoice_value": "121894.0",
+                "reference_value": "121894.0"
+              }
+            ],
+            "outcome": "match",
+            "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "SHR-2005",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Corrugated Boxes 24x18x18",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "4819",
+                  "invoice_page": null,
+                  "invoice_amount": 33000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 150.0,
+                  "reference_amount": 33000.0,
+                  "invoice_unit_price": 220.0,
+                  "reference_quantity": 150.0,
+                  "reference_unit_price": 220.0
+                },
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Wooden Pallets 48x40",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "4415",
+                  "invoice_page": null,
+                  "invoice_amount": 47500.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 50.0,
+                  "reference_amount": 47500.0,
+                  "invoice_unit_price": 950.0,
+                  "reference_quantity": 50.0,
+                  "reference_unit_price": 950.0
+                },
+                {
+                  "uom": "rolls",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Stretch Wrap Film 20 rolls",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "3920",
+                  "invoice_page": null,
+                  "invoice_amount": 22800.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 6.0,
+                  "reference_amount": 22800.0,
+                  "invoice_unit_price": 3800.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": 3800.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 3,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 3,
+            "reference_currency": "INR",
+            "reference_line_count": 3
+          },
+          {
+            "fields": [
+              {
+                "delta": "700.0",
+                "field": "subtotal",
+                "status": "invoice_higher",
+                "invoice_value": "104000.0",
+                "reference_value": "103300.0"
+              },
+              {
+                "delta": "126.0",
+                "field": "tax_amount",
+                "status": "invoice_higher",
+                "invoice_value": "18720.0",
+                "reference_value": "18594.0"
+              },
+              {
+                "delta": "826.0",
+                "field": "grand_total",
+                "status": "invoice_higher",
+                "invoice_value": "122720.0",
+                "reference_value": "121894.0"
+              }
+            ],
+            "outcome": "variance",
+            "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "SHR-2006",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": [
+                  {
+                    "uom": null,
+                    "amount": 47500.0,
+                    "quantity": 50.0,
+                    "unit_price": 950.0,
+                    "description": "Wooden Pallets 48x40",
+                    "line_number": null,
+                    "page_number": 1,
+                    "hsn_sac_code": "4415"
+                  }
+                ]
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Corrugated Boxes 24x18x18",
+                  "price_delta": "0.0",
+                  "amount_delta": "33000.0",
+                  "hsn_sac_code": "4819",
+                  "invoice_page": null,
+                  "invoice_amount": 66000.0,
+                  "quantity_delta": "150.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 300.0,
+                  "reference_amount": 33000.0,
+                  "invoice_unit_price": 220.0,
+                  "reference_quantity": 150.0,
+                  "reference_unit_price": 220.0
+                },
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Stretch Wrap Film 20 rolls",
+                  "price_delta": "0.0",
+                  "amount_delta": "15200.0",
+                  "hsn_sac_code": "3920",
+                  "invoice_page": null,
+                  "invoice_amount": 38000.0,
+                  "quantity_delta": "4.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 10.0,
+                  "reference_amount": 22800.0,
+                  "invoice_unit_price": 3800.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": 3800.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 2,
+              "unmatched_count": 1,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": -1,
+            "invoice_line_count": 2,
+            "reference_currency": "INR",
+            "reference_line_count": 3
+          },
+          {
+            "fields": [
+              {
+                "delta": "0.0",
+                "field": "subtotal",
+                "status": "match",
+                "invoice_value": "103300.0",
+                "reference_value": "103300.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "tax_amount",
+                "status": "match",
+                "invoice_value": "18594.0",
+                "reference_value": "18594.0"
+              },
+              {
+                "delta": "0.0",
+                "field": "grand_total",
+                "status": "match",
+                "invoice_value": "121894.0",
+                "reference_value": "121894.0"
+              }
+            ],
+            "outcome": "match",
+            "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "SHR-2004",
+            "invoice_status": "PAID",
+            "line_comparison": {
+              "mode": "both",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Corrugated Boxes 24x18x18",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "4819",
+                  "invoice_page": null,
+                  "invoice_amount": 33000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 150.0,
+                  "reference_amount": 33000.0,
+                  "invoice_unit_price": 220.0,
+                  "reference_quantity": 150.0,
+                  "reference_unit_price": 220.0
+                },
+                {
+                  "uom": null,
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Wooden Pallets 48x40",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "4415",
+                  "invoice_page": null,
+                  "invoice_amount": 47500.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 50.0,
+                  "reference_amount": 47500.0,
+                  "invoice_unit_price": 950.0,
+                  "reference_quantity": 50.0,
+                  "reference_unit_price": 950.0
+                },
+                {
+                  "uom": "rolls",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Stretch Wrap Film 20 rolls",
+                  "price_delta": "0.0",
+                  "amount_delta": "0.0",
+                  "hsn_sac_code": "3920",
+                  "invoice_page": null,
+                  "invoice_amount": 22800.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 6.0,
+                  "reference_amount": 22800.0,
+                  "invoice_unit_price": 3800.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": 3800.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 3,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 3,
+            "reference_currency": "INR",
+            "reference_line_count": 3
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 3
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [
+        {
+          "href": "/trainer/11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        }
+      ],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Corrugated Boxes 24x18x18",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "4819",
+          "invoice_page": null,
+          "invoice_amount": 33000.0,
+          "invoice_number": "SHR-2005",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 150.0,
+          "reference_amount": 33000.0,
+          "invoice_unit_price": 220.0,
+          "reference_quantity": 150.0,
+          "reference_unit_price": 220.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Wooden Pallets 48x40",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "4415",
+          "invoice_page": null,
+          "invoice_amount": 47500.0,
+          "invoice_number": "SHR-2005",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 50.0,
+          "reference_amount": 47500.0,
+          "invoice_unit_price": 950.0,
+          "reference_quantity": 50.0,
+          "reference_unit_price": 950.0
+        },
+        {
+          "uom": "rolls",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Stretch Wrap Film 20 rolls",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "3920",
+          "invoice_page": null,
+          "invoice_amount": 22800.0,
+          "invoice_number": "SHR-2005",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 6.0,
+          "reference_amount": 22800.0,
+          "invoice_unit_price": 3800.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": 3800.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Corrugated Boxes 24x18x18",
+          "price_delta": "0.0",
+          "amount_delta": "33000.0",
+          "hsn_sac_code": "4819",
+          "invoice_page": null,
+          "invoice_amount": 66000.0,
+          "invoice_number": "SHR-2006",
+          "quantity_delta": "150.0",
+          "reference_page": 1,
+          "invoice_quantity": 300.0,
+          "reference_amount": 33000.0,
+          "invoice_unit_price": 220.0,
+          "reference_quantity": 150.0,
+          "reference_unit_price": 220.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Stretch Wrap Film 20 rolls",
+          "price_delta": "0.0",
+          "amount_delta": "15200.0",
+          "hsn_sac_code": "3920",
+          "invoice_page": null,
+          "invoice_amount": 38000.0,
+          "invoice_number": "SHR-2006",
+          "quantity_delta": "4.0",
+          "reference_page": 1,
+          "invoice_quantity": 10.0,
+          "reference_amount": 22800.0,
+          "invoice_unit_price": 3800.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": 3800.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Corrugated Boxes 24x18x18",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "4819",
+          "invoice_page": null,
+          "invoice_amount": 33000.0,
+          "invoice_number": "SHR-2004",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 150.0,
+          "reference_amount": 33000.0,
+          "invoice_unit_price": 220.0,
+          "reference_quantity": 150.0,
+          "reference_unit_price": 220.0
+        },
+        {
+          "uom": null,
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Wooden Pallets 48x40",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "4415",
+          "invoice_page": null,
+          "invoice_amount": 47500.0,
+          "invoice_number": "SHR-2004",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 50.0,
+          "reference_amount": 47500.0,
+          "invoice_unit_price": 950.0,
+          "reference_quantity": 50.0,
+          "reference_unit_price": 950.0
+        },
+        {
+          "uom": "rolls",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Stretch Wrap Film 20 rolls",
+          "price_delta": "0.0",
+          "amount_delta": "0.0",
+          "hsn_sac_code": "3920",
+          "invoice_page": null,
+          "invoice_amount": 22800.0,
+          "invoice_number": "SHR-2004",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 6.0,
+          "reference_amount": 22800.0,
+          "invoice_unit_price": 3800.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": 3800.0
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [],
+        "reference_lines": [
+          {
+            "uom": null,
+            "amount": 47500.0,
+            "quantity": 50.0,
+            "unit_price": 950.0,
+            "description": "Wooden Pallets 48x40",
+            "line_number": null,
+            "page_number": 1,
+            "hsn_sac_code": "4415"
+          }
+        ]
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 7.4,
+    "error": null
+  },
+  {
+    "turn": 4,
+    "attachment_file": "DC_DC-RSC-0812_RAJ.pdf",
+    "question": "Was everything on this challan invoiced?",
+    "attachment_row": {
+      "id": "e016464b-1c3d-4ec4-b2e1-d0ca983ea0a1",
+      "session_id": "cf2fd699-4b14-4335-8b41-6bf770d34cb2",
+      "filename": "DC_DC-RSC-0812_RAJ.pdf",
+      "doc_type": "DELIVERY_NOTE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": null,
+      "party_name": "Rajesh Steel Corporation",
+      "doc_date": "2026-08-20",
+      "currency": null,
+      "grand_total": null,
+      "file_size_bytes": 2742,
+      "candidate_invoice_ids": [
+        "d5869da2-b3bc-4d41-9356-2c6a02352616",
+        "530bd65a-be04-4953-988b-2932f52a6f89"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 2,
+      "match_tier": 2,
+      "match_summary": "probable match: RAJ-2008 (same party and date window)",
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "DELIVERY_NOTE",
+        "doc_number": null,
+        "party_name": "Rajesh Steel Corporation",
+        "doc_date": "2026-08-20",
+        "currency": null,
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": null,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 2,
+        "lines": [
+          {
+            "description": "HR Steel Coil 2mm",
+            "quantity": 6.0,
+            "unit_price": null,
+            "amount": null
+          },
+          {
+            "description": "Steel Angle Bar 2x2x1/4, 20ft",
+            "quantity": 30.0,
+            "unit_price": null,
+            "amount": null
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "cf2fd699-4b14-4335-8b41-6bf770d34cb2",
+    "answer": "Yes\u2014both challan line items were invoiced by quantity:\n\n- **HR Steel Coil 2mm:** 6 delivered; 6 on **RAJ-2008** and 6 on **RAJ-2009**\n- **Steel Angle Bar 2x2x1/4, 20ft:** 30 delivered; 30 on **RAJ-2008** and 30 on **RAJ-2009**\n\nThe comparison used the delivery challan against both invoices and found **2 matched lines on each**, with no unmatched lines.\n\nHowever, **RAJ-2009 is flagged `AUDIT_REQUIRED` as a possible duplicate of RAJ-2008**\u2014both have the same date, quantities, and total, but different invoice numbers. The challan itself says the tax invoice is to follow \u201cas per invoice RAJ-2008,\u201d so the records show the goods invoiced twice unless RAJ-2009 is confirmed as a re-issue.",
+    "raw_payload": {
+      "id": "2a42fc4c-157b-46c9-b4f3-1340ec2d3998",
+      "session_id": "cf2fd699-4b14-4335-8b41-6bf770d34cb2",
+      "role": "assistant",
+      "content": "Yes\u2014both challan line items were invoiced by quantity:\n\n- **HR Steel Coil 2mm:** 6 delivered; 6 on **RAJ-2008** and 6 on **RAJ-2009**\n- **Steel Angle Bar 2x2x1/4, 20ft:** 30 delivered; 30 on **RAJ-2008** and 30 on **RAJ-2009**\n\nThe comparison used the delivery challan against both invoices and found **2 matched lines on each**, with no unmatched lines.\n\nHowever, **RAJ-2009 is flagged `AUDIT_REQUIRED` as a possible duplicate of RAJ-2008**\u2014both have the same date, quantities, and total, but different invoice numbers. The challan itself says the tax invoice is to follow \u201cas per invoice RAJ-2008,\u201d so the records show the goods invoiced twice unless RAJ-2009 is confirmed as a re-issue.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:04:54.202385",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": null,
+          "doc_date": "2026-08-20",
+          "doc_type": "OTHER",
+          "doc_number": null,
+          "party_name": "Rajesh Steel Corporation",
+          "grand_total": null
+        },
+        "amount_owed": {
+          "net": "874380.0",
+          "terms": [
+            {
+              "sign": 1,
+              "amount": "437190.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "RAJ-2008"
+            },
+            {
+              "sign": 1,
+              "amount": "437190.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "RAJ-2009"
+            }
+          ],
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": null,
+                "field": "subtotal",
+                "status": "missing",
+                "invoice_value": "370500.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "tax_amount",
+                "status": "missing",
+                "invoice_value": "66690.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "grand_total",
+                "status": "missing",
+                "invoice_value": "437190.0",
+                "reference_value": null
+              }
+            ],
+            "outcome": "incomplete",
+            "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "RAJ-2008",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "quantity",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "HR Steel Coil 2mm",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7208",
+                  "invoice_page": null,
+                  "invoice_amount": 291000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 6.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 48500.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Steel Angle Bar 2x2x1/4, 20ft",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7216",
+                  "invoice_page": null,
+                  "invoice_amount": 79500.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 30.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 2650.0,
+                  "reference_quantity": 30.0,
+                  "reference_unit_price": null
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 2,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 2,
+            "reference_currency": null,
+            "reference_line_count": 2
+          },
+          {
+            "fields": [
+              {
+                "delta": null,
+                "field": "subtotal",
+                "status": "missing",
+                "invoice_value": "370500.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "tax_amount",
+                "status": "missing",
+                "invoice_value": "66690.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "grand_total",
+                "status": "missing",
+                "invoice_value": "437190.0",
+                "reference_value": null
+              }
+            ],
+            "outcome": "incomplete",
+            "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "RAJ-2009",
+            "invoice_status": "AUDIT_REQUIRED",
+            "line_comparison": {
+              "mode": "quantity",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "HR Steel Coil 2mm",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7208",
+                  "invoice_page": null,
+                  "invoice_amount": 291000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 6.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 48500.0,
+                  "reference_quantity": 6.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Steel Angle Bar 2x2x1/4, 20ft",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7216",
+                  "invoice_page": null,
+                  "invoice_amount": 79500.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 30.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 2650.0,
+                  "reference_quantity": 30.0,
+                  "reference_unit_price": null
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 2,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 2,
+            "reference_currency": null,
+            "reference_line_count": 2
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 2
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [
+        {
+          "href": "/trainer/d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        },
+        {
+          "href": "/invoices/review/530bd65a-be04-4953-988b-2932f52a6f89",
+          "label": "Review the flagged figures on this invoice",
+          "precondition": "status is AUDIT_REQUIRED"
+        },
+        {
+          "href": "/trainer/530bd65a-be04-4953-988b-2932f52a6f89",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        }
+      ],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "HR Steel Coil 2mm",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7208",
+          "invoice_page": null,
+          "invoice_amount": 291000.0,
+          "invoice_number": "RAJ-2008",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 6.0,
+          "reference_amount": null,
+          "invoice_unit_price": 48500.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Steel Angle Bar 2x2x1/4, 20ft",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7216",
+          "invoice_page": null,
+          "invoice_amount": 79500.0,
+          "invoice_number": "RAJ-2008",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 30.0,
+          "reference_amount": null,
+          "invoice_unit_price": 2650.0,
+          "reference_quantity": 30.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "HR Steel Coil 2mm",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7208",
+          "invoice_page": null,
+          "invoice_amount": 291000.0,
+          "invoice_number": "RAJ-2009",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 6.0,
+          "reference_amount": null,
+          "invoice_unit_price": 48500.0,
+          "reference_quantity": 6.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Steel Angle Bar 2x2x1/4, 20ft",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7216",
+          "invoice_page": null,
+          "invoice_amount": 79500.0,
+          "invoice_number": "RAJ-2009",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 30.0,
+          "reference_amount": null,
+          "invoice_unit_price": 2650.0,
+          "reference_quantity": 30.0,
+          "reference_unit_price": null
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [],
+        "reference_lines": []
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 12.2,
+    "error": null
+  },
+  {
+    "turn": 5,
+    "attachment_file": "DC_DC-NMT-2291_NAT.pdf",
+    "question": "Check delivery against invoice",
+    "attachment_row": {
+      "id": "091cd819-cb17-4f56-8cc3-62c86c102e3f",
+      "session_id": "111ee97b-587d-43a5-8746-f7e84fc00c1b",
+      "filename": "DC_DC-NMT-2291_NAT.pdf",
+      "doc_type": "DELIVERY_NOTE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "DC-NMT-2291",
+      "party_name": "National MRO Traders",
+      "doc_date": "2026-08-19",
+      "currency": null,
+      "grand_total": null,
+      "file_size_bytes": 2811,
+      "candidate_invoice_ids": [
+        "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+        "22490a93-94a8-4511-90ba-52d495e0cc05"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 3,
+      "match_tier": 2,
+      "match_summary": "probable match: NAT-2006 (same party and date window)",
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "DELIVERY_NOTE",
+        "doc_number": "DC-NMT-2291",
+        "party_name": "National MRO Traders",
+        "doc_date": "2026-08-19",
+        "currency": null,
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": null,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 3,
+        "lines": [
+          {
+            "description": "Industrial Lubricant 20L",
+            "quantity": 5.0,
+            "unit_price": null,
+            "amount": null
+          },
+          {
+            "description": "Replacement V-Belts",
+            "quantity": 12.0,
+            "unit_price": null,
+            "amount": null
+          },
+          {
+            "description": "Safety Gloves case of 60",
+            "quantity": 8.0,
+            "unit_price": null,
+            "amount": null
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "111ee97b-587d-43a5-8746-f7e84fc00c1b",
+    "answer": "I compared the documents but couldn't write up the result. Try asking again.",
+    "raw_payload": {
+      "id": "78ee48d8-cb2e-40f3-8ea1-3e9112e32d81",
+      "session_id": "111ee97b-587d-43a5-8746-f7e84fc00c1b",
+      "role": "assistant",
+      "content": "I compared the documents but couldn't write up the result. Try asking again.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:05:24.186298",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": null,
+          "doc_date": "2026-08-19",
+          "doc_type": "OTHER",
+          "doc_number": "DC-NMT-2291",
+          "party_name": "National MRO Traders",
+          "grand_total": null
+        },
+        "amount_owed": {
+          "net": "159913.6",
+          "terms": [
+            {
+              "sign": 1,
+              "amount": "79956.8",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "NAT-2006"
+            },
+            {
+              "sign": 1,
+              "amount": "79956.8",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "NAT-2007"
+            }
+          ],
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": null,
+                "field": "subtotal",
+                "status": "missing",
+                "invoice_value": "67760.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "tax_amount",
+                "status": "missing",
+                "invoice_value": "12196.8",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "grand_total",
+                "status": "missing",
+                "invoice_value": "79956.8",
+                "reference_value": null
+              }
+            ],
+            "outcome": "incomplete",
+            "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "NAT-2006",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "quantity",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Industrial Lubricant 20L",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "2710",
+                  "invoice_page": null,
+                  "invoice_amount": 28000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 5.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 5600.0,
+                  "reference_quantity": 5.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Replacement V-Belts",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "4010",
+                  "invoice_page": null,
+                  "invoice_amount": 20160.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 12.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 1680.0,
+                  "reference_quantity": 12.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Safety Gloves case of 60",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "4015",
+                  "invoice_page": null,
+                  "invoice_amount": 19600.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 8.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 2450.0,
+                  "reference_quantity": 8.0,
+                  "reference_unit_price": null
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 3,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 3,
+            "reference_currency": null,
+            "reference_line_count": 3
+          },
+          {
+            "fields": [
+              {
+                "delta": null,
+                "field": "subtotal",
+                "status": "missing",
+                "invoice_value": "67760.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "tax_amount",
+                "status": "missing",
+                "invoice_value": "12196.8",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "grand_total",
+                "status": "missing",
+                "invoice_value": "79956.8",
+                "reference_value": null
+              }
+            ],
+            "outcome": "incomplete",
+            "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "NAT-2007",
+            "invoice_status": "AUDIT_REQUIRED",
+            "line_comparison": {
+              "mode": "quantity",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": "Nos",
+                  "status": "uom_mismatch",
+                  "match_tier": "L2",
+                  "description": "Industrial Lubricant 20L",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "2710",
+                  "invoice_page": null,
+                  "invoice_amount": 28000.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 5.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 5600.0,
+                  "reference_quantity": 5.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Replacement V-Belts",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "4010",
+                  "invoice_page": null,
+                  "invoice_amount": 20160.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 12.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 1680.0,
+                  "reference_quantity": 12.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "uom_mismatch",
+                  "match_tier": "L2",
+                  "description": "Safety Gloves case of 60",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "4015",
+                  "invoice_page": null,
+                  "invoice_amount": 19600.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 8.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 2450.0,
+                  "reference_quantity": 8.0,
+                  "reference_unit_price": null
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 3,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 3,
+            "reference_currency": null,
+            "reference_line_count": 3
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 2
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [
+        {
+          "href": "/trainer/86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        },
+        {
+          "href": "/invoices/review/22490a93-94a8-4511-90ba-52d495e0cc05",
+          "label": "Review the flagged figures on this invoice",
+          "precondition": "status is AUDIT_REQUIRED"
+        },
+        {
+          "href": "/trainer/22490a93-94a8-4511-90ba-52d495e0cc05",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        }
+      ],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Industrial Lubricant 20L",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "2710",
+          "invoice_page": null,
+          "invoice_amount": 28000.0,
+          "invoice_number": "NAT-2006",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 5.0,
+          "reference_amount": null,
+          "invoice_unit_price": 5600.0,
+          "reference_quantity": 5.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Replacement V-Belts",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "4010",
+          "invoice_page": null,
+          "invoice_amount": 20160.0,
+          "invoice_number": "NAT-2006",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 12.0,
+          "reference_amount": null,
+          "invoice_unit_price": 1680.0,
+          "reference_quantity": 12.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Safety Gloves case of 60",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "4015",
+          "invoice_page": null,
+          "invoice_amount": 19600.0,
+          "invoice_number": "NAT-2006",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 8.0,
+          "reference_amount": null,
+          "invoice_unit_price": 2450.0,
+          "reference_quantity": 8.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "uom_mismatch",
+          "match_tier": "L2",
+          "description": "Industrial Lubricant 20L",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "2710",
+          "invoice_page": null,
+          "invoice_amount": 28000.0,
+          "invoice_number": "NAT-2007",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 5.0,
+          "reference_amount": null,
+          "invoice_unit_price": 5600.0,
+          "reference_quantity": 5.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Replacement V-Belts",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "4010",
+          "invoice_page": null,
+          "invoice_amount": 20160.0,
+          "invoice_number": "NAT-2007",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 12.0,
+          "reference_amount": null,
+          "invoice_unit_price": 1680.0,
+          "reference_quantity": 12.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "uom_mismatch",
+          "match_tier": "L2",
+          "description": "Safety Gloves case of 60",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "4015",
+          "invoice_page": null,
+          "invoice_amount": 19600.0,
+          "invoice_number": "NAT-2007",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 8.0,
+          "reference_amount": null,
+          "invoice_unit_price": 2450.0,
+          "reference_quantity": 8.0,
+          "reference_unit_price": null
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [],
+        "reference_lines": []
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 11.6,
+    "error": null
+  },
+  {
+    "turn": 6,
+    "attachment_file": "DC_DC-BHF-0455_BHA.pdf",
+    "question": "Any short delivery here?",
+    "attachment_row": {
+      "id": "d673729e-c259-4c14-8203-988fc2c5c290",
+      "session_id": "1cd4cba1-cdef-47fb-b18c-41ee993a231a",
+      "filename": "DC_DC-BHF-0455_BHA.pdf",
+      "doc_type": "DELIVERY_NOTE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "DC-BHF-0455",
+      "party_name": "Bharat Hardware & Fasteners",
+      "doc_date": "2026-08-17",
+      "currency": null,
+      "grand_total": null,
+      "file_size_bytes": 2807,
+      "candidate_invoice_ids": [
+        "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+        "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c"
+      ],
+      "confirmed_invoice_ids": [],
+      "line_count": 3,
+      "match_tier": 2,
+      "match_summary": "probable match: BHA-2003 (same party and date window)",
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "DELIVERY_NOTE",
+        "doc_number": "DC-BHF-0455",
+        "party_name": "Bharat Hardware & Fasteners",
+        "doc_date": "2026-08-17",
+        "currency": null,
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": null,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 3,
+        "lines": [
+          {
+            "description": "Hex Bolts M10x40, box 100",
+            "quantity": 25.0,
+            "unit_price": null,
+            "amount": null
+          },
+          {
+            "description": "SS Washers box 500",
+            "quantity": 15.0,
+            "unit_price": null,
+            "amount": null
+          },
+          {
+            "description": "Torque Wrench 1/2in",
+            "quantity": 4.0,
+            "unit_price": null,
+            "amount": null
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "1cd4cba1-cdef-47fb-b18c-41ee993a231a",
+    "answer": "No short delivery is indicated on delivery challan **DC-BHF-0455**:\n\n- Hex Bolts M10x40: **25 ordered, 25 delivered**\n- SS Washers: **15 ordered, 15 delivered**\n- Torque Wrench 1/2in: **4 ordered, 4 delivered**\n\nThe computed comparison also matched all **3 of 3** lines with zero quantity delta.",
+    "raw_payload": {
+      "id": "113a1d82-c6cd-46ec-879f-0277e7a5ceb1",
+      "session_id": "1cd4cba1-cdef-47fb-b18c-41ee993a231a",
+      "role": "assistant",
+      "content": "No short delivery is indicated on delivery challan **DC-BHF-0455**:\n\n- Hex Bolts M10x40: **25 ordered, 25 delivered**\n- SS Washers: **15 ordered, 15 delivered**\n- Torque Wrench 1/2in: **4 ordered, 4 delivered**\n\nThe computed comparison also matched all **3 of 3** lines with zero quantity delta.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:05:58.049681",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": null,
+          "doc_date": "2026-08-17",
+          "doc_type": "OTHER",
+          "doc_number": "DC-BHF-0455",
+          "party_name": "Bharat Hardware & Fasteners",
+          "grand_total": null
+        },
+        "amount_owed": {
+          "net": "206382.0",
+          "terms": [
+            {
+              "sign": 1,
+              "amount": "103191.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "BHA-2003"
+            },
+            {
+              "sign": 1,
+              "amount": "103191.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "BHA-2002"
+            }
+          ],
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": null,
+                "field": "subtotal",
+                "status": "missing",
+                "invoice_value": "87450.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "tax_amount",
+                "status": "missing",
+                "invoice_value": "15741.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "grand_total",
+                "status": "missing",
+                "invoice_value": "103191.0",
+                "reference_value": null
+              }
+            ],
+            "outcome": "incomplete",
+            "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "BHA-2003",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "quantity",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Hex Bolts M10x40, box 100",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7318",
+                  "invoice_page": null,
+                  "invoice_amount": 36250.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 25.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 1450.0,
+                  "reference_quantity": 25.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "SS Washers box 500",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7318",
+                  "invoice_page": null,
+                  "invoice_amount": 16800.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 15.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 1120.0,
+                  "reference_quantity": 15.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Torque Wrench 1/2in",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "8204",
+                  "invoice_page": null,
+                  "invoice_amount": 34400.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 4.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 8600.0,
+                  "reference_quantity": 4.0,
+                  "reference_unit_price": null
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 3,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 3,
+            "reference_currency": null,
+            "reference_line_count": 3
+          },
+          {
+            "fields": [
+              {
+                "delta": null,
+                "field": "subtotal",
+                "status": "missing",
+                "invoice_value": "87450.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "tax_amount",
+                "status": "missing",
+                "invoice_value": "15741.0",
+                "reference_value": null
+              },
+              {
+                "delta": null,
+                "field": "grand_total",
+                "status": "missing",
+                "invoice_value": "103191.0",
+                "reference_value": null
+              }
+            ],
+            "outcome": "incomplete",
+            "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "BHA-2002",
+            "invoice_status": "PAID",
+            "line_comparison": {
+              "mode": "quantity",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Hex Bolts M10x40, box 100",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7318",
+                  "invoice_page": null,
+                  "invoice_amount": 36250.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 25.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 1450.0,
+                  "reference_quantity": 25.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "SS Washers box 500",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "7318",
+                  "invoice_page": null,
+                  "invoice_amount": 16800.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 15.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 1120.0,
+                  "reference_quantity": 15.0,
+                  "reference_unit_price": null
+                },
+                {
+                  "uom": "Nos",
+                  "status": "quantity_delta",
+                  "match_tier": "L2",
+                  "description": "Torque Wrench 1/2in",
+                  "price_delta": null,
+                  "amount_delta": null,
+                  "hsn_sac_code": "8204",
+                  "invoice_page": null,
+                  "invoice_amount": 34400.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 4.0,
+                  "reference_amount": null,
+                  "invoice_unit_price": 8600.0,
+                  "reference_quantity": 4.0,
+                  "reference_unit_price": null
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 3,
+              "unmatched_count": 0,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 0,
+            "invoice_line_count": 3,
+            "reference_currency": null,
+            "reference_line_count": 3
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 2
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [
+        {
+          "href": "/trainer/d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        },
+        {
+          "href": "/trainer/b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        }
+      ],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Hex Bolts M10x40, box 100",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7318",
+          "invoice_page": null,
+          "invoice_amount": 36250.0,
+          "invoice_number": "BHA-2003",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 25.0,
+          "reference_amount": null,
+          "invoice_unit_price": 1450.0,
+          "reference_quantity": 25.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "SS Washers box 500",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7318",
+          "invoice_page": null,
+          "invoice_amount": 16800.0,
+          "invoice_number": "BHA-2003",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 15.0,
+          "reference_amount": null,
+          "invoice_unit_price": 1120.0,
+          "reference_quantity": 15.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Torque Wrench 1/2in",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "8204",
+          "invoice_page": null,
+          "invoice_amount": 34400.0,
+          "invoice_number": "BHA-2003",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 4.0,
+          "reference_amount": null,
+          "invoice_unit_price": 8600.0,
+          "reference_quantity": 4.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Hex Bolts M10x40, box 100",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7318",
+          "invoice_page": null,
+          "invoice_amount": 36250.0,
+          "invoice_number": "BHA-2002",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 25.0,
+          "reference_amount": null,
+          "invoice_unit_price": 1450.0,
+          "reference_quantity": 25.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "SS Washers box 500",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "7318",
+          "invoice_page": null,
+          "invoice_amount": 16800.0,
+          "invoice_number": "BHA-2002",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 15.0,
+          "reference_amount": null,
+          "invoice_unit_price": 1120.0,
+          "reference_quantity": 15.0,
+          "reference_unit_price": null
+        },
+        {
+          "uom": "Nos",
+          "status": "quantity_delta",
+          "match_tier": "L2",
+          "description": "Torque Wrench 1/2in",
+          "price_delta": null,
+          "amount_delta": null,
+          "hsn_sac_code": "8204",
+          "invoice_page": null,
+          "invoice_amount": 34400.0,
+          "invoice_number": "BHA-2002",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 4.0,
+          "reference_amount": null,
+          "invoice_unit_price": 8600.0,
+          "reference_quantity": 4.0,
+          "reference_unit_price": null
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [],
+        "reference_lines": []
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 14.9,
+    "error": null
+  },
+  {
+    "turn": 7,
+    "attachment_file": "PA_PA-VPI-0071_OM.pdf",
+    "question": "Which invoice does this payment settle?",
+    "attachment_row": {
+      "id": "a201841b-e050-40d7-afd7-a1a766f70ad4",
+      "session_id": "c90772e6-4895-4e2e-a01a-ab9e2f025657",
+      "filename": "PA_PA-VPI-0071_OM.pdf",
+      "doc_type": "REMITTANCE_ADVICE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PA-VPI-0071",
+      "party_name": "Vishwa Precision Industries Pvt Ltd",
+      "doc_date": "2026-08-05",
+      "currency": "INR",
+      "grand_total": 41654.0,
+      "file_size_bytes": 2688,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 0,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "REMITTANCE_ADVICE",
+        "doc_number": "PA-VPI-0071",
+        "party_name": "Vishwa Precision Industries Pvt Ltd",
+        "doc_date": "2026-08-05",
+        "currency": "INR",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": 41654.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 0,
+        "lines": [],
+        "referenced_document_count": 1
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "c90772e6-4895-4e2e-a01a-ab9e2f025657",
+    "answer": "I checked 1 reference(s) on that document against your invoices. 1 agree. 10 open invoice(s) of yours are NOT listed on their document.\n\n- OM -2000: on file at 41,654.00 (status PAID) \u2014 agrees with the document.\n- VPI-OUT-2014: open in your records (483,850.00) but not on their document.\n- VPI-OUT-2019: open in your records (484,390.00) but not on their document.\n- VPI-OUT-2022: open in your records (323,910.00) but not on their document.\n- VPI-OUT-2013: open in your records (483,210.00) but not on their document.\n- VPI-OUT-2016: open in your records (514,775.00) but not on their document.\n- VPI-OUT-2018: open in your records (484,390.00) but not on their document.\n- VPI-OUT-2020: open in your records (484,390.00) but not on their document.\n- VPI-OUT-2017: open in your records (514,775.00) but not on their document.\n- VPI-OUT-2023: open in your records (223,256.00) but not on their document.\n- VPI-OUT-2021: open in your records (253,700.00) but not on their document.",
+    "raw_payload": {
+      "id": "5cdeb2f2-8884-4c23-ae7a-89f48c25647d",
+      "session_id": "c90772e6-4895-4e2e-a01a-ab9e2f025657",
+      "role": "assistant",
+      "content": "I checked 1 reference(s) on that document against your invoices. 1 agree. 10 open invoice(s) of yours are NOT listed on their document.\n\n- OM -2000: on file at 41,654.00 (status PAID) \u2014 agrees with the document.\n- VPI-OUT-2014: open in your records (483,850.00) but not on their document.\n- VPI-OUT-2019: open in your records (484,390.00) but not on their document.\n- VPI-OUT-2022: open in your records (323,910.00) but not on their document.\n- VPI-OUT-2013: open in your records (483,210.00) but not on their document.\n- VPI-OUT-2016: open in your records (514,775.00) but not on their document.\n- VPI-OUT-2018: open in your records (484,390.00) but not on their document.\n- VPI-OUT-2020: open in your records (484,390.00) but not on their document.\n- VPI-OUT-2017: open in your records (514,775.00) but not on their document.\n- VPI-OUT-2023: open in your records (223,256.00) but not on their document.\n- VPI-OUT-2021: open in your records (253,700.00) but not on their document.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:06:36.781789",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": false,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": {
+        "mode": "list_reconcile",
+        "deductions": [],
+        "party_name": "Vishwa Precision Industries Pvt Ltd",
+        "references": [
+          {
+            "delta": null,
+            "outcome": "found_matching",
+            "doc_number": "OM -2000",
+            "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+            "stated_amount": 41654.0,
+            "stated_status": null,
+            "invoice_amount": 41654.0,
+            "invoice_status": "PAID"
+          }
+        ],
+        "unreferenced_invoices": [
+          {
+            "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+            "grand_total": 483850.0,
+            "invoice_number": "VPI-OUT-2014"
+          },
+          {
+            "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2019"
+          },
+          {
+            "invoice_id": "dc403a31-0e92-4b7b-a5ee-46b1047dbb85",
+            "grand_total": 323910.0,
+            "invoice_number": "VPI-OUT-2022"
+          },
+          {
+            "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+            "grand_total": 483210.0,
+            "invoice_number": "VPI-OUT-2013"
+          },
+          {
+            "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+            "grand_total": 514775.0,
+            "invoice_number": "VPI-OUT-2016"
+          },
+          {
+            "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2018"
+          },
+          {
+            "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2020"
+          },
+          {
+            "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+            "grand_total": 514775.0,
+            "invoice_number": "VPI-OUT-2017"
+          },
+          {
+            "invoice_id": "a2d86662-fc1d-452c-9783-02463bdfe930",
+            "grand_total": 223256.0,
+            "invoice_number": "VPI-OUT-2023"
+          },
+          {
+            "invoice_id": "9a79e1c3-6778-4f60-907c-7afc503f5711",
+            "grand_total": 253700.0,
+            "invoice_number": "VPI-OUT-2021"
+          }
+        ]
+      },
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": false,
+    "latency_s": 11.1,
+    "error": null
+  },
+  {
+    "turn": 8,
+    "attachment_file": "PA_PA-VPI-0072_BHA.pdf",
+    "question": "Is Bharat Hardware fully paid?",
+    "attachment_row": {
+      "id": "ee4104df-516d-4671-9345-ac2d829b85bc",
+      "session_id": "f9b8ea43-a781-4dcd-9bf0-8d2cea14d3ff",
+      "filename": "PA_PA-VPI-0072_BHA.pdf",
+      "doc_type": "REMITTANCE_ADVICE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PA-VPI-0072",
+      "party_name": "Vishwa Precision Industries Pvt Ltd",
+      "doc_date": "2026-08-06",
+      "currency": "INR",
+      "grand_total": 103191.0,
+      "file_size_bytes": 2701,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 0,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "REMITTANCE_ADVICE",
+        "doc_number": "PA-VPI-0072",
+        "party_name": "Vishwa Precision Industries Pvt Ltd",
+        "doc_date": "2026-08-06",
+        "currency": "INR",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": 103191.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 0,
+        "lines": [],
+        "referenced_document_count": 1
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "f9b8ea43-a781-4dcd-9bf0-8d2cea14d3ff",
+    "answer": "Yes. **Bharat Hardware & Fasteners invoice BHA-2002 is fully paid.**\n\n- Invoice total: **INR 103,191.00**\n- Remittance advice PA-VPI-0072: **INR 103,191.00**\n- Invoice status: **PAID**\n\nThe remittance amount agrees with the invoice total.",
+    "raw_payload": {
+      "id": "8d20c34c-43ce-4563-a8a3-5dbb6a3573ca",
+      "session_id": "f9b8ea43-a781-4dcd-9bf0-8d2cea14d3ff",
+      "role": "assistant",
+      "content": "Yes. **Bharat Hardware & Fasteners invoice BHA-2002 is fully paid.**\n\n- Invoice total: **INR 103,191.00**\n- Remittance advice PA-VPI-0072: **INR 103,191.00**\n- Invoice status: **PAID**\n\nThe remittance amount agrees with the invoice total.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:08:08.528742",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": false,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": {
+        "mode": "list_reconcile",
+        "deductions": [],
+        "party_name": "Vishwa Precision Industries Pvt Ltd",
+        "references": [
+          {
+            "delta": null,
+            "outcome": "found_matching",
+            "doc_number": "BHA-2002",
+            "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+            "stated_amount": 103191.0,
+            "stated_status": null,
+            "invoice_amount": 103191.0,
+            "invoice_status": "PAID"
+          }
+        ],
+        "unreferenced_invoices": [
+          {
+            "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+            "grand_total": 483850.0,
+            "invoice_number": "VPI-OUT-2014"
+          },
+          {
+            "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2019"
+          },
+          {
+            "invoice_id": "dc403a31-0e92-4b7b-a5ee-46b1047dbb85",
+            "grand_total": 323910.0,
+            "invoice_number": "VPI-OUT-2022"
+          },
+          {
+            "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+            "grand_total": 483210.0,
+            "invoice_number": "VPI-OUT-2013"
+          },
+          {
+            "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+            "grand_total": 514775.0,
+            "invoice_number": "VPI-OUT-2016"
+          },
+          {
+            "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2018"
+          },
+          {
+            "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2020"
+          },
+          {
+            "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+            "grand_total": 514775.0,
+            "invoice_number": "VPI-OUT-2017"
+          },
+          {
+            "invoice_id": "a2d86662-fc1d-452c-9783-02463bdfe930",
+            "grand_total": 223256.0,
+            "invoice_number": "VPI-OUT-2023"
+          },
+          {
+            "invoice_id": "9a79e1c3-6778-4f60-907c-7afc503f5711",
+            "grand_total": 253700.0,
+            "invoice_number": "VPI-OUT-2021"
+          }
+        ]
+      },
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": false,
+    "latency_s": 9.1,
+    "error": null
+  },
+  {
+    "turn": 9,
+    "attachment_file": "PA_PA-VPI-0073_SHR.pdf",
+    "question": "What do we still owe Shree Packaging?",
+    "attachment_row": {
+      "id": "7aba353f-3110-4193-a348-15417a60ed0b",
+      "session_id": "fcb4f6e3-86ed-4ca9-8577-fb192fb58c05",
+      "filename": "PA_PA-VPI-0073_SHR.pdf",
+      "doc_type": "REMITTANCE_ADVICE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "PA-VPI-0073",
+      "party_name": "Vishwa Precision Industries Pvt Ltd",
+      "doc_date": "2026-08-07",
+      "currency": "INR",
+      "grand_total": 121894.0,
+      "file_size_bytes": 2682,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 0,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "REMITTANCE_ADVICE",
+        "doc_number": "PA-VPI-0073",
+        "party_name": "Vishwa Precision Industries Pvt Ltd",
+        "doc_date": "2026-08-07",
+        "currency": "INR",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": 121894.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 0,
+        "lines": [],
+        "referenced_document_count": 1
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "fcb4f6e3-86ed-4ca9-8577-fb192fb58c05",
+    "answer": "The remittance settled **SHR-2004 for INR 121,894.00**; your records mark it **PAID**.\n\nThe following **10 invoices remain open** in your records and were not listed on the remittance advice:\n\n- **VPI-OUT-2014:** INR 483,850.00\n- **VPI-OUT-2019:** INR 484,390.00\n- **VPI-OUT-2022:** INR 323,910.00\n- **VPI-OUT-2013:** INR 483,210.00\n- **VPI-OUT-2016:** INR 514,775.00\n- **VPI-OUT-2018:** INR 484,390.00\n- **VPI-OUT-2020:** INR 484,390.00\n- **VPI-OUT-2017:** INR 514,775.00\n- **VPI-OUT-2023:** INR 223,256.00\n- **VPI-OUT-2021:** INR 253,700.00\n\nA combined outstanding total was not returned by the reconciliation, so I have not calculated one.",
+    "raw_payload": {
+      "id": "701c8bf9-22f5-411c-800c-7fca0daf0405",
+      "session_id": "fcb4f6e3-86ed-4ca9-8577-fb192fb58c05",
+      "role": "assistant",
+      "content": "The remittance settled **SHR-2004 for INR 121,894.00**; your records mark it **PAID**.\n\nThe following **10 invoices remain open** in your records and were not listed on the remittance advice:\n\n- **VPI-OUT-2014:** INR 483,850.00\n- **VPI-OUT-2019:** INR 484,390.00\n- **VPI-OUT-2022:** INR 323,910.00\n- **VPI-OUT-2013:** INR 483,210.00\n- **VPI-OUT-2016:** INR 514,775.00\n- **VPI-OUT-2018:** INR 484,390.00\n- **VPI-OUT-2020:** INR 484,390.00\n- **VPI-OUT-2017:** INR 514,775.00\n- **VPI-OUT-2023:** INR 223,256.00\n- **VPI-OUT-2021:** INR 253,700.00\n\nA combined outstanding total was not returned by the reconciliation, so I have not calculated one.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:08:56.832496",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": false,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": {
+        "mode": "list_reconcile",
+        "deductions": [],
+        "party_name": "Vishwa Precision Industries Pvt Ltd",
+        "references": [
+          {
+            "delta": null,
+            "outcome": "found_matching",
+            "doc_number": "SHR-2004",
+            "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+            "stated_amount": 121894.0,
+            "stated_status": null,
+            "invoice_amount": 121894.0,
+            "invoice_status": "PAID"
+          }
+        ],
+        "unreferenced_invoices": [
+          {
+            "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+            "grand_total": 483850.0,
+            "invoice_number": "VPI-OUT-2014"
+          },
+          {
+            "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2019"
+          },
+          {
+            "invoice_id": "dc403a31-0e92-4b7b-a5ee-46b1047dbb85",
+            "grand_total": 323910.0,
+            "invoice_number": "VPI-OUT-2022"
+          },
+          {
+            "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+            "grand_total": 483210.0,
+            "invoice_number": "VPI-OUT-2013"
+          },
+          {
+            "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+            "grand_total": 514775.0,
+            "invoice_number": "VPI-OUT-2016"
+          },
+          {
+            "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2018"
+          },
+          {
+            "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+            "grand_total": 484390.0,
+            "invoice_number": "VPI-OUT-2020"
+          },
+          {
+            "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+            "grand_total": 514775.0,
+            "invoice_number": "VPI-OUT-2017"
+          },
+          {
+            "invoice_id": "a2d86662-fc1d-452c-9783-02463bdfe930",
+            "grand_total": 223256.0,
+            "invoice_number": "VPI-OUT-2023"
+          },
+          {
+            "invoice_id": "9a79e1c3-6778-4f60-907c-7afc503f5711",
+            "grand_total": 253700.0,
+            "invoice_number": "VPI-OUT-2021"
+          }
+        ]
+      },
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": false,
+    "latency_s": 13.7,
+    "error": null
+  },
+  {
+    "turn": 10,
+    "attachment_file": "BankStatement_HDFC_4471_Aug2026.pdf",
+    "question": "Match this statement to our books",
+    "attachment_row": {
+      "id": "c62bc887-eeee-4cea-84ec-01a52b1f45b4",
+      "session_id": "27c7e7b1-5499-46ea-b300-f5e3a571345a",
+      "filename": "BankStatement_HDFC_4471_Aug2026.pdf",
+      "doc_type": "BANK_STATEMENT",
+      "extraction_status": "EXTRACTED",
+      "doc_number": null,
+      "party_name": "HDFC BANK LIMITED",
+      "doc_date": "2026-08-31",
+      "currency": "INR",
+      "grand_total": 355336.0,
+      "file_size_bytes": 3602,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 12,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "BANK_STATEMENT",
+        "doc_number": null,
+        "party_name": "HDFC BANK LIMITED",
+        "doc_date": "2026-08-31",
+        "currency": "INR",
+        "subtotal": null,
+        "tax_amount": null,
+        "grand_total": 355336.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 12,
+        "lines": [
+          {
+            "description": "OPENING BALANCE",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 1250000.0
+          },
+          {
+            "description": "NEFT DR HDFC0000123 GST PAYMENT JUL-26 CIN 26081234567",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 184320.0
+          },
+          {
+            "description": "NEFT DR OM STATIONERY MART INV OM -2000 UTR HDFCN26080512345",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 41654.0
+          },
+          {
+            "description": "NEFT DR BHARAT HARDWARE & FASTENERS INV BHA-2002 UTR HDFCN26080612346",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 103191.0
+          },
+          {
+            "description": "NEFT DR SHREE PACKAGING INDUSTRIES INV SHR-2004 UTR HDFCN26080712347",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 121894.0
+          },
+          {
+            "description": "NEFT CR KAVERI AUTO COMPONENTS PVT LTD VPI-OUT-2012",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 483210.0
+          },
+          {
+            "description": "NEFT CR SUNRISE ENGINEERING WORKS VPI-OUT-2015",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 514775.0
+          },
+          {
+            "description": "ACH DR MSEDCL ELECTRICITY BILL AUG-26",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 96410.0
+          },
+          {
+            "description": "NEFT DR SALARY AUG-26 BATCH 1 (42 EMPLOYEES)",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 1486000.0
+          },
+          {
+            "description": "IMPS DR TECHSOL SERVICES ANNUAL AMC 2026-27",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 58000.0
+          },
+          {
+            "description": "NEFT CR DECCAN MACHINERY LTD ADVANCE AGAINST VPI-OUT-2018",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 200000.0
+          },
+          {
+            "description": "BANK CHARGES NEFT/RTGS AUG-26 INCL GST",
+            "quantity": null,
+            "unit_price": null,
+            "amount": 1180.0
+          }
+        ],
+        "referenced_document_count": 0
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "27c7e7b1-5499-46ea-b300-f5e3a571345a",
+    "answer": "I could not read a list of invoice references off that document, so there is nothing for me to reconcile against your records. If it is a scan, a clearer copy usually helps.",
+    "raw_payload": {
+      "id": "0d134833-fc7d-4b1f-a5c4-4c5d31b797bf",
+      "session_id": "27c7e7b1-5499-46ea-b300-f5e3a571345a",
+      "role": "assistant",
+      "content": "I could not read a list of invoice references off that document, so there is nothing for me to reconcile against your records. If it is a scan, a clearer copy usually helps.",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:09:40.198322",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": false,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": false,
+    "latency_s": 11.4,
+    "error": null
+  },
+  {
+    "turn": 11,
+    "attachment_file": "credit_note_BHF-CN-2010",
+    "question": "Bharat sent this - what do we actually owe them?",
+    "attachment_row": {
+      "id": "24fea591-4f05-4105-9c58-b90ef811f196",
+      "session_id": "2cd04078-f159-4944-915d-8d6ce2842972",
+      "filename": "inbound_creditnote_BharatHardware_BHF-CN-2010.pdf",
+      "doc_type": "CREDIT_NOTE",
+      "extraction_status": "EXTRACTED",
+      "doc_number": "BHF-CN-2010",
+      "party_name": "Bharat Hardware & Fasteners",
+      "doc_date": "2026-08-17",
+      "currency": "INR",
+      "grand_total": -42775.0,
+      "file_size_bytes": 2648,
+      "candidate_invoice_ids": [],
+      "confirmed_invoice_ids": [],
+      "line_count": 1,
+      "match_tier": null,
+      "match_summary": null,
+      "attachment_count": 1,
+      "attachment_limit": 5,
+      "extraction_preview": {
+        "doc_type": "CREDIT_NOTE",
+        "doc_number": "BHF-CN-2010",
+        "party_name": "Bharat Hardware & Fasteners",
+        "doc_date": "2026-08-17",
+        "currency": "INR",
+        "subtotal": -36250.0,
+        "tax_amount": -6525.0,
+        "grand_total": -42775.0,
+        "payment_terms": null,
+        "delivery_terms": null,
+        "line_count": 1,
+        "lines": [
+          {
+            "description": "Hex Bolts M10x40, box 100",
+            "quantity": 25.0,
+            "unit_price": 1450.0,
+            "amount": -36250.0
+          }
+        ],
+        "referenced_document_count": 1
+      },
+      "low_confidence_fields": [],
+      "extraction_job_id": null
+    },
+    "session_id": "2cd04078-f159-4944-915d-8d6ce2842972",
+    "answer": "The computed amount owed to **Bharat Hardware & Fasteners is INR 163,607**.\n\nIncluded documents:\n\n- **BHF-CN-2010**: INR 42,775 credit, reducing the balance\n- **BHA-2003**: INR 103,191 invoice \u2014 status **COMPLETED**\n- **BHA-2002**: INR 103,191 invoice \u2014 status **PAID**\n\nThe net includes BHA-2002 despite its recorded **PAID** status. Both invoices were compared against the credit note and showed variances; the credit note was treated as an adjustment (DELTA).",
+    "raw_payload": {
+      "id": "89be0d5c-2217-4e49-ac7c-6b43bdadef4a",
+      "session_id": "2cd04078-f159-4944-915d-8d6ce2842972",
+      "role": "assistant",
+      "content": "The computed amount owed to **Bharat Hardware & Fasteners is INR 163,607**.\n\nIncluded documents:\n\n- **BHF-CN-2010**: INR 42,775 credit, reducing the balance\n- **BHA-2003**: INR 103,191 invoice \u2014 status **COMPLETED**\n- **BHA-2002**: INR 103,191 invoice \u2014 status **PAID**\n\nThe net includes BHA-2002 despite its recorded **PAID** status. Both invoices were compared against the credit note and showed variances; the credit note was treated as an adjustment (DELTA).",
+      "generated_sql": "",
+      "citations": [],
+      "created_at": "2026-09-20T13:10:22.356625",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": {
+        "reference": {
+          "currency": "INR",
+          "doc_date": "2026-08-17",
+          "doc_type": "OTHER",
+          "doc_number": "BHF-CN-2010",
+          "party_name": "Bharat Hardware & Fasteners",
+          "grand_total": "-42775.0"
+        },
+        "amount_owed": {
+          "net": "163607.0",
+          "terms": [
+            {
+              "sign": -1,
+              "amount": "42775.0",
+              "source": "attachment",
+              "currency": "INR",
+              "doc_type": "CREDIT_NOTE",
+              "doc_number": "BHF-CN-2010"
+            },
+            {
+              "sign": 1,
+              "amount": "103191.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "BHA-2003"
+            },
+            {
+              "sign": 1,
+              "amount": "103191.0",
+              "source": "invoice",
+              "currency": "INR",
+              "doc_type": "INVOICE",
+              "doc_number": "BHA-2002"
+            }
+          ],
+          "complete": true,
+          "currency": "INR",
+          "ignored_terms": []
+        },
+        "comparisons": [
+          {
+            "fields": [
+              {
+                "delta": "123700.0",
+                "field": "subtotal",
+                "status": "invoice_higher",
+                "invoice_value": "87450.0",
+                "reference_value": "-36250.0"
+              },
+              {
+                "delta": "22266.0",
+                "field": "tax_amount",
+                "status": "invoice_higher",
+                "invoice_value": "15741.0",
+                "reference_value": "-6525.0"
+              },
+              {
+                "delta": "145966.0",
+                "field": "grand_total",
+                "status": "invoice_higher",
+                "invoice_value": "103191.0",
+                "reference_value": "-42775.0"
+              }
+            ],
+            "outcome": "variance",
+            "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "BHA-2003",
+            "invoice_status": "COMPLETED",
+            "line_comparison": {
+              "mode": "money",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [
+                  {
+                    "uom": null,
+                    "amount": 16800.0,
+                    "quantity": 15.0,
+                    "unit_price": 1120.0,
+                    "description": "SS Washers box 500",
+                    "line_number": null,
+                    "page_number": null,
+                    "hsn_sac_code": "7318"
+                  },
+                  {
+                    "uom": null,
+                    "amount": 34400.0,
+                    "quantity": 4.0,
+                    "unit_price": 8600.0,
+                    "description": "Torque Wrench 1/2in",
+                    "line_number": null,
+                    "page_number": null,
+                    "hsn_sac_code": "8204"
+                  }
+                ],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "price_delta",
+                  "match_tier": "L2",
+                  "description": "Hex Bolts M10x40, box 100",
+                  "price_delta": "0.0",
+                  "amount_delta": "72500.0",
+                  "hsn_sac_code": "7318",
+                  "invoice_page": null,
+                  "invoice_amount": 36250.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 25.0,
+                  "reference_amount": -36250.0,
+                  "invoice_unit_price": 1450.0,
+                  "reference_quantity": 25.0,
+                  "reference_unit_price": 1450.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 1,
+              "unmatched_count": 2,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 2,
+            "invoice_line_count": 3,
+            "reference_currency": "INR",
+            "reference_line_count": 1
+          },
+          {
+            "fields": [
+              {
+                "delta": "123700.0",
+                "field": "subtotal",
+                "status": "invoice_higher",
+                "invoice_value": "87450.0",
+                "reference_value": "-36250.0"
+              },
+              {
+                "delta": "22266.0",
+                "field": "tax_amount",
+                "status": "invoice_higher",
+                "invoice_value": "15741.0",
+                "reference_value": "-6525.0"
+              },
+              {
+                "delta": "145966.0",
+                "field": "grand_total",
+                "status": "invoice_higher",
+                "invoice_value": "103191.0",
+                "reference_value": "-42775.0"
+              }
+            ],
+            "outcome": "variance",
+            "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+            "blocked_reason": null,
+            "flow_direction": "INBOUND",
+            "invoice_number": "BHA-2002",
+            "invoice_status": "PAID",
+            "line_comparison": {
+              "mode": "money",
+              "policy": {
+                "date_tolerance_days": 0,
+                "price_tolerance_percent": 0.0,
+                "quantity_tolerance_percent": 0.0
+              },
+              "unmatched": {
+                "invoice_lines": [
+                  {
+                    "uom": null,
+                    "amount": 16800.0,
+                    "quantity": 15.0,
+                    "unit_price": 1120.0,
+                    "description": "SS Washers box 500",
+                    "line_number": null,
+                    "page_number": null,
+                    "hsn_sac_code": "7318"
+                  },
+                  {
+                    "uom": null,
+                    "amount": 34400.0,
+                    "quantity": 4.0,
+                    "unit_price": 8600.0,
+                    "description": "Torque Wrench 1/2in",
+                    "line_number": null,
+                    "page_number": null,
+                    "hsn_sac_code": "8204"
+                  }
+                ],
+                "reference_lines": []
+              },
+              "line_items": [
+                {
+                  "uom": null,
+                  "status": "price_delta",
+                  "match_tier": "L2",
+                  "description": "Hex Bolts M10x40, box 100",
+                  "price_delta": "0.0",
+                  "amount_delta": "72500.0",
+                  "hsn_sac_code": "7318",
+                  "invoice_page": null,
+                  "invoice_amount": 36250.0,
+                  "quantity_delta": "0.0",
+                  "reference_page": 1,
+                  "invoice_quantity": 25.0,
+                  "reference_amount": -36250.0,
+                  "invoice_unit_price": 1450.0,
+                  "reference_quantity": 25.0,
+                  "reference_unit_price": 1450.0
+                }
+              ],
+              "assumptions": [
+                "The document does not state how it corrects the original, so this comparison treats it as an adjustment (DELTA) rather than a replacement.",
+                "Tolerances applied: quantity 0.0%, price 0.0%."
+              ],
+              "matched_count": 1,
+              "unmatched_count": 2,
+              "correction_method": "DELTA"
+            },
+            "invoice_currency": "INR",
+            "line_count_delta": 2,
+            "invoice_line_count": 3,
+            "reference_currency": "INR",
+            "reference_line_count": 1
+          }
+        ],
+        "blocked_count": 0,
+        "compared_count": 2
+      },
+      "attachment_clarification": null,
+      "suggested_actions": [
+        {
+          "href": "/trainer/d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        },
+        {
+          "href": "/trainer/b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "label": "Open this invoice in the Trainer to correct extraction",
+          "precondition": "none (read-only destination)"
+        }
+      ],
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": [
+        {
+          "uom": null,
+          "status": "price_delta",
+          "match_tier": "L2",
+          "description": "Hex Bolts M10x40, box 100",
+          "price_delta": "0.0",
+          "amount_delta": "72500.0",
+          "hsn_sac_code": "7318",
+          "invoice_page": null,
+          "invoice_amount": 36250.0,
+          "invoice_number": "BHA-2003",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 25.0,
+          "reference_amount": -36250.0,
+          "invoice_unit_price": 1450.0,
+          "reference_quantity": 25.0,
+          "reference_unit_price": 1450.0
+        },
+        {
+          "uom": null,
+          "status": "price_delta",
+          "match_tier": "L2",
+          "description": "Hex Bolts M10x40, box 100",
+          "price_delta": "0.0",
+          "amount_delta": "72500.0",
+          "hsn_sac_code": "7318",
+          "invoice_page": null,
+          "invoice_amount": 36250.0,
+          "invoice_number": "BHA-2002",
+          "quantity_delta": "0.0",
+          "reference_page": 1,
+          "invoice_quantity": 25.0,
+          "reference_amount": -36250.0,
+          "invoice_unit_price": 1450.0,
+          "reference_quantity": 25.0,
+          "reference_unit_price": 1450.0
+        }
+      ],
+      "unmatched": {
+        "invoice_lines": [
+          {
+            "uom": null,
+            "amount": 16800.0,
+            "quantity": 15.0,
+            "unit_price": 1120.0,
+            "description": "SS Washers box 500",
+            "line_number": null,
+            "page_number": null,
+            "hsn_sac_code": "7318",
+            "invoice_number": "BHA-2003"
+          },
+          {
+            "uom": null,
+            "amount": 34400.0,
+            "quantity": 4.0,
+            "unit_price": 8600.0,
+            "description": "Torque Wrench 1/2in",
+            "line_number": null,
+            "page_number": null,
+            "hsn_sac_code": "8204",
+            "invoice_number": "BHA-2003"
+          },
+          {
+            "uom": null,
+            "amount": 16800.0,
+            "quantity": 15.0,
+            "unit_price": 1120.0,
+            "description": "SS Washers box 500",
+            "line_number": null,
+            "page_number": null,
+            "hsn_sac_code": "7318",
+            "invoice_number": "BHA-2002"
+          },
+          {
+            "uom": null,
+            "amount": 34400.0,
+            "quantity": 4.0,
+            "unit_price": 8600.0,
+            "description": "Torque Wrench 1/2in",
+            "line_number": null,
+            "page_number": null,
+            "hsn_sac_code": "8204",
+            "invoice_number": "BHA-2002"
+          }
+        ],
+        "reference_lines": []
+      },
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "confirmed": true,
+    "latency_s": 10.6,
+    "error": null
+  }
+]

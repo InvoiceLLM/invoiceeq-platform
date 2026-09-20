@@ -76,7 +76,7 @@ import re
 from datetime import date
 from decimal import Decimal
 from enum import Enum
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Literal, Sequence
 
 from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
@@ -109,6 +109,19 @@ __all__ = [
     "validate_recommendation",
     "sum_figures",
     "numeric_tokens",
+    "verbatim_references",
+    # ── Feature 35 (ATLAS Intelligence) task 35.5 ──────────────────────────
+    "UncitedParagraphError",
+    "Citation",
+    "BriefingParagraph",
+    "BriefingQuestion",
+    "BriefingEventType",
+    "BriefingEvent",
+    "rendered_tokens_of",
+    "assert_paragraph_cited",
+    "assert_briefing_no_undeclared_numbers",
+    "assert_paragraph_no_structure",
+    "validate_briefing_paragraph",
 ]
 
 
@@ -130,6 +143,11 @@ class UnwitnessedFigureError(AtlasContractError):
 
 class InventedNumberError(AtlasContractError):
     """§5.3: a money-shaped number appears in prose that no figure declares."""
+
+
+class UncitedParagraphError(AtlasContractError):
+    """Feature 35 §3.3: a briefing paragraph named no evidence, or named
+    evidence this run never produced."""
 
 
 class NotBatchableError(AtlasContractError):
@@ -252,6 +270,60 @@ def numeric_tokens(text: str) -> list[str]:
     and the drift would show up as a line that passes validation and reads wrong.
     """
     return _numeric_tokens(text)
+
+
+def verbatim_references(*strings: Any) -> list[str]:
+    """Declare the numbers inside identifiers copied verbatim out of a record.
+
+    **BE Gap 714.** `assert_no_undeclared_numbers()` reads the digits of a
+    *composed* string and asks which figure declares them. That is the right
+    question for a figure and the wrong one for an identifier: a vendor named
+    "Vendor 100200 Pvt Ltd", a customer imported with its account code in its
+    name, a Google Drive folder reference, a source file called
+    `invoice_4409.pdf` -- none of those digits are a figure anybody computed, and
+    `_is_money_shaped()` counts any run of four or more digits as money. Before
+    this helper existed, one such party name made **every** line about that party
+    unconstructable: `atlas_lines()` raised `InventedNumberError` and
+    `GET /atlas/lines` 500'd for the whole tenant rather than dropping one line.
+    That is the same wound as BE Gap 692 (a trailing comma tokenising
+    differently from the declared form), taken on the declaration side instead of
+    the tokeniser side.
+
+    The gap's option (a) was "every emitter remembers to declare the name it
+    interpolated". This is option (b), the founder's pick: one helper, so no
+    emitter has to remember and the next emitter cannot repeat it.
+
+    Pass the *exact* strings the prose interpolates -- the party name, the
+    `#<invoice number>`, the source label -- and splice the result into
+    `Why.references`::
+
+        references=[number, *verbatim_references(vendor)]
+
+    **What this does not handle, stated deliberately.** It declares only the
+    tokens that genuinely occur in a string lifted character for character out of
+    a stored record. It is not a way round §5.3: anything the emitter *composes*
+    -- an amount, a rate, a balance -- still has to be a `Figure` with a document
+    or a computation behind it. The one residual hole is coincidence: if a
+    vendor's name contains the same digit run as a figure the line rounds, that
+    rounding stops being caught on that one line. That is accepted, because the
+    alternative -- refusing to name the party -- makes the line unreadable, and
+    because the coincidence requires the rounded form to match the name exactly.
+
+    `None` and empty strings are skipped so call sites can pass an optional
+    column straight through. Order is preserved and duplicates are dropped, so
+    the declared list reads the way the prose does.
+    """
+    out: list[str] = []
+    for value in strings:
+        if value is None:
+            continue
+        text = value if isinstance(value, str) else str(value)
+        if not text:
+            continue
+        for token in _numeric_tokens(text):
+            if token not in out:
+                out.append(token)
+    return out
 
 
 def _money_tokens(text: str) -> list[str]:
@@ -864,3 +936,231 @@ def validate_recommendation(rec: Recommendation) -> Recommendation:
     assert_figures_are_witnessed(rec)
     assert_verify_does_not_promise_attachment(rec)
     return rec
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Feature 35 (ATLAS Intelligence) task 35.5 — the briefing wire contract
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Spec: `docs/feature_35_atlas_intelligence.md` §3.3, §6 (task 35.5's row).
+#
+# Additive, and deliberately in this file rather than a new one: the briefing is
+# prose a person reads about money, which is the exact thing §5.3's boundaries
+# exist for. Putting its guards next to `assert_no_undeclared_numbers()` means
+# the two share one tokeniser, one definition of "a number", and one set of
+# error types -- an ATLAS Intelligence guard that re-implemented "what counts as
+# a number" would drift from the line-level rule it is supposed to mirror.
+#
+# The model is the *only* untrusted writer in ATLAS. Everything a skill emits was
+# assembled by deterministic code; everything below was written by an LLM, so
+# each of the three checks here is code and none of them is a prompt rule
+# (CONVENTIONS hard rule 3). A paragraph that fails any of them is dropped before
+# it reaches the wire, counted, and logged -- never repaired, because repairing
+# model prose means writing prose about money, which is the thing being
+# prevented.
+
+
+class Citation(BaseModel):
+    """What one sentence rests on: a tool, a kind of record, and that record's id.
+
+    `record_id` is a string for every kind, including the composed ids Feature 35
+    task 35.1 mints for things that are not stored rows (`cash-INR`,
+    `area-audit`). The guard below tests it for membership in the set of ids the
+    run's tools actually emitted, so the id's *shape* never matters -- only that
+    a tool produced it this run.
+    """
+
+    tool: str = Field(min_length=1)
+    record_kind: str = Field(min_length=1)
+    record_id: str = ""
+
+
+class BriefingParagraph(BaseModel):
+    """One paragraph of the briefing, with the evidence it came from."""
+
+    text: str = Field(min_length=1)
+    citations: list[Citation] = Field(default_factory=list)
+
+
+class BriefingQuestion(BaseModel):
+    """The one thing the briefing may ask (§3.1 step 6).
+
+    Validated by exactly the same guards as a paragraph -- it is prose about the
+    same data, and a question that invents a number is no better than a sentence
+    that does.
+    """
+
+    text: str = Field(min_length=1)
+    citations: list[Citation] = Field(default_factory=list)
+    answer_kind: str = "free_text"
+
+
+BriefingEventType = Literal[
+    "welcome", "paragraph", "question", "truncated", "error", "done"
+]
+
+
+class BriefingEvent(BaseModel):
+    """One SSE frame: `event:` is `type`, `data:` is `data` (§3.3).
+
+    `data` is a plain dict rather than a union of six payload models. The six
+    shapes are §3.3's and FE Feature 24 reads them by name; modelling each one
+    here would put the wire format in two places (the model and the spec table)
+    and the FE consumes the spec. What this class owns is the frame itself --
+    that every event has a type from the closed set, and that its data is JSON.
+    """
+
+    type: BriefingEventType
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+#: Row fields that are ids or timestamps rather than things a person reads.
+#: Their digits are excluded from the rendered-token set: a UUID is full of digit
+#: runs, and letting them declare numbers would make the guard below satisfiable
+#: by noise -- the mistake BE Gap 704 records the line-level rule falling for.
+_NON_FIGURE_KEYS = frozenset(
+    {"record_id", "tenant_id", "as_of", "id", "invoice_id", "document_id",
+     "recommendation_id", "target_id", "line_ids", "chaseable_invoice_ids",
+     "deferrable_invoice_ids", "already_expected_invoice_ids", "invoice_ids",
+     "performed_by", "performed_at", "created_at", "generated_sql"}
+)
+
+
+def rendered_tokens_of(row: Any) -> set[str]:
+    """Every number a tool row actually put in front of the model.
+
+    Walks the row recursively, because the numbers that matter most are nested:
+    a line's `figures` are a list of `{rendered, currency, source}` dicts and a
+    reconciliation's groups are lists of rows. A flat pass over the top level
+    would collect the counts and miss every amount, which would drop exactly the
+    paragraphs the briefing exists to write.
+
+    Numeric scalars are included alongside strings (`payable_count = 3` is a
+    number the tool rendered, even though it arrives as an `int`), and the
+    id/timestamp fields above are excluded.
+    """
+    out: set[str] = set()
+
+    def walk(value: Any, key: str | None) -> None:
+        if key is not None and key in _NON_FIGURE_KEYS:
+            return
+        if isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, str(k))
+        elif isinstance(value, (list, tuple, set)):
+            for v in value:
+                walk(v, key)
+        elif isinstance(value, bool) or value is None:
+            return
+        elif isinstance(value, str):
+            out.update(_numeric_tokens(value))
+        elif isinstance(value, (int, float, Decimal)):
+            out.update(_numeric_tokens(str(value)))
+
+    walk(row, None)
+    return out
+
+
+def assert_paragraph_cited(paragraph: Any, emitted_ids: Iterable[str]) -> None:
+    """§3.3: nothing reaches the wire uncited, and nothing cites what did not happen.
+
+    Three rules, all of them set membership rather than judgement:
+
+    1. **Citations are non-empty.** A paragraph with no evidence is an opinion.
+    2. **Every cited id was emitted by a tool this run.** The model cannot cite
+       an invoice it remembers from training, or an id it composed from a
+       pattern it noticed -- `run.emitted_ids` is built in `run_tool()` from the
+       rows that were actually returned.
+    3. **Orientation alone is not evidence.** Orientation rows describe what
+       ATLAS does; they carry no id (task 35.1), so a paragraph resting only on
+       them fails rule 2 already. The explicit check is kept so the rule holds
+       even if orientation ever starts carrying one -- comprehension is not a
+       claim about this tenant's money.
+    """
+    citations = list(getattr(paragraph, "citations", None) or [])
+    text = getattr(paragraph, "text", "")
+    if not citations:
+        raise UncitedParagraphError(
+            f"briefing paragraph {text!r} cites nothing -- every paragraph names the "
+            "tool results it came from"
+        )
+
+    known = {str(i) for i in emitted_ids}
+    for citation in citations:
+        record_id = str(getattr(citation, "record_id", "") or "")
+        if record_id not in known:
+            raise UncitedParagraphError(
+                f"briefing paragraph {text!r} cites record {record_id!r} from "
+                f"{getattr(citation, 'tool', '')!r}, which no tool emitted this run"
+            )
+
+    if all(
+        str(getattr(c, "tool", "")) == "orientation"
+        or str(getattr(c, "record_kind", "")) == "orientation"
+        for c in citations
+    ):
+        raise UncitedParagraphError(
+            f"briefing paragraph {text!r} rests only on orientation, which is "
+            "background rather than evidence"
+        )
+
+
+def assert_briefing_no_undeclared_numbers(
+    paragraph: Any, rendered_figures: Iterable[str]
+) -> None:
+    """Feature 35 §1: a number the tools did not render may not be stated.
+
+    Stricter than the line-level `assert_no_undeclared_numbers()`, on purpose.
+    That one only tests money-shaped tokens, because a *skill* that writes "12
+    days late" composed that 12 from a date it holds in code. This one tests
+    **every** numeric token, because the writer here is a language model and the
+    founder's rule for it is absolute: no arithmetic, and no number a tool did
+    not produce. A count the model read off a row is in `rendered_figures`; a
+    count it worked out by adding two rows is not, and that is the case this
+    catches.
+    """
+    declared = {str(t) for t in rendered_figures}
+    text = str(getattr(paragraph, "text", "") or "")
+    for token in _numeric_tokens(text):
+        if token not in declared:
+            raise InventedNumberError(
+                f"briefing paragraph {text!r} states {token!r}, which no tool rendered "
+                "this run -- ATLAS Intelligence phrases figures, it does not compute them"
+            )
+
+
+def assert_paragraph_no_structure(paragraph: Any) -> None:
+    """BE Gap 704's rule, applied to model prose.
+
+    A thin sibling of `assert_no_structure_in_prose()` rather than a call into
+    it: that function's argument is a `Recommendation` and it walks
+    `rec.prose()`, and widening its signature to take either would make the
+    line-level guard's contract fuzzier to serve a caller it does not know about.
+    The marker list is shared, which is the part that must not drift.
+    """
+    text = str(getattr(paragraph, "text", "") or "")
+    for mark in _STRUCTURE_MARKS:
+        if mark in text:
+            raise StructureInProseError(
+                f"briefing paragraph {text!r} renders {mark!r} -- that is a data "  # hardcode-ok: developer-facing exception text; the interpolated values are model prose and a fixed marker, not money
+                "structure, not a sentence"
+            )
+
+
+def validate_briefing_paragraph(
+    paragraph: Any, emitted_ids: Iterable[str], rendered_figures: Iterable[str]
+) -> Any:
+    """Run every briefing boundary. **The single entry point the loop calls.**
+
+    Same shape as `validate_recommendation()`, and used for the question too: a
+    question is prose about the same rows under the same two rules.
+
+    Order matters for the error a reader sees. The citation check runs first
+    because an uncited paragraph is the more fundamental failure -- telling an
+    operator "it stated a number nothing rendered" about a paragraph that also
+    rested on nothing describes the smaller of its two problems.
+    """
+    assert_paragraph_cited(paragraph, emitted_ids)
+    assert_paragraph_no_structure(paragraph)
+    assert_briefing_no_undeclared_numbers(paragraph, rendered_figures)
+    return paragraph

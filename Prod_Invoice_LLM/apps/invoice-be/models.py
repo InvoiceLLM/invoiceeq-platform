@@ -2254,3 +2254,96 @@ class AtlasMissedReport(SQLModel, table=True):
     #: The memory rule this produced, so the two can be read together.
     rule_id: UUID | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AtlasBriefing(SQLModel, table=True):
+    """Feature 35 (ATLAS Intelligence) task 35.6 — one briefing, kept for the day.
+
+    Spec: `docs/feature_35_atlas_intelligence.md` §3.1 steps 2/7/8, §4.
+
+    **Why a cache exists in a feature whose first rule is "no new compute".**
+    Everything ATLAS Intelligence reads was already computed by Feature 34 on the
+    open-the-app path (D38). What is *not* free is the model: one briefing is
+    roughly 30k input tokens across six rounds on Terra (§3.6). D38's
+    recompute-every-open is right for lines assembled by deterministic code and
+    wrong for a paragraph written by an LLM -- re-running it on every tab focus
+    would spend real money to produce prose that says the same thing.
+
+    **Keyed `(tenant_id, user_id, briefing_date)`, and the user is part of the
+    key on purpose.** The briefing is written against the caller's grants and
+    tool list; an Auditor's and an Admin's are different documents about the same
+    day. Sharing one row per tenant would show one of them the other's evidence,
+    which is `visible_to()`'s rule broken through a cache.
+
+    **`stale` rather than a delete** (§3.1 step 8, §8 ruling 4). A dismiss, an
+    act, a memory add or an interview answer sets `stale = true` and nothing
+    else: the screen is *not* refreshed underneath the person working on it, and
+    the next `GET /atlas/briefing` is what regenerates. A delete would make "has
+    this user been briefed today" unanswerable, and the row is also the cost
+    record -- §3.6 says the real per-open figure is to be measured from
+    `cost_usd`, which requires the superseded runs to still be there.
+
+    **What is stored is what reached the wire, not what the model said.** The
+    guards in `services/atlas_contract.py` run before storage, so `paragraphs`
+    holds only paragraphs that passed and `dropped` counts the ones that did not.
+    A replay is therefore identical to the original stream, and a dropped
+    paragraph can never be resurrected by a cache hit.
+    """
+
+    __tablename__ = "atlas_briefings"
+    __table_args__ = (
+        # One briefing per person per day. The upsert in
+        # `services/atlas_briefing_cache.store()` depends on this being enforced
+        # by the database and not by a read-then-write: two tabs opened at once
+        # is the ordinary case, not the exotic one.
+        sa.UniqueConstraint(
+            "tenant_id",
+            "user_id",
+            "briefing_date",
+            name="uq_atlas_briefing_tenant_user_date",
+        ),
+        # The only read: "this caller's briefing for today".
+        sa.Index(
+            "idx_atlas_briefing_tenant_user_date",
+            "tenant_id",
+            "user_id",
+            "briefing_date",
+        ),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    tenant_id: UUID = Field(foreign_key="tenant.id", index=True)
+    #: `TenantContext.user_id` -- a string, exactly as `AtlasDismissal.user_id`
+    #: spells it, and for the same reason: not every authenticated caller has a
+    #: `users` row.
+    user_id: str = Field(max_length=255)
+    #: The tenant's day, from `SkillContext.today`. A date and not a timestamp:
+    #: the briefing is "what needs you today", and "today" is the unit.
+    briefing_date: date
+    #: The deployment that wrote it, recorded per run rather than assumed from
+    #: config -- the registry role can be repointed and the stored cost has to
+    #: stay attributable to the model that incurred it.
+    model: str = Field(default="", max_length=128)
+    #: The surviving `BriefingParagraph`s, `model_dump()`ed. Replayed verbatim.
+    paragraphs: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    #: The one `BriefingQuestion`, or `None`. Nullable because most briefings
+    #: ask nothing, and an empty object would be indistinguishable from a
+    #: question with no text.
+    question: dict | None = Field(default=None, sa_column=Column(JSON_VARIANT))
+    #: `BriefingRun.tool_calls` -- `{tool, args, ms, rows, refused}` per dispatch.
+    #: This is what §8 ruling 2's caps get measured from; without it the numbers
+    #: 6/12/20 stay guesses forever.
+    tool_calls: list = Field(default=[], sa_column=Column(JSON_VARIANT))
+    tokens_in: int = Field(default=0)
+    tokens_out: int = Field(default=0)
+    #: §3.6: "to be measured, not asserted". Stored per run from the first run.
+    cost_usd: float = Field(default=0.0)
+    #: Which cap fired, or empty. Stored as the reason rather than a bool so a
+    #: measurement can tell a rounds cap from a wall-clock one.
+    truncated: str = Field(default="", max_length=32)
+    #: Paragraphs and questions the guards removed. Reported on `done` and kept
+    #: here, because a drop rate climbing is the signal that the prompt and the
+    #: guards have drifted apart.
+    dropped: int = Field(default=0)
+    stale: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)

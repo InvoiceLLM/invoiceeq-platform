@@ -1794,3 +1794,101 @@ because the risk is specific and near-term: the VPI README reads as a **test scr
 running it against the live system will record failures for capabilities that were deliberately never
 built. Whether the scenario doc is retired as history or rewritten against Feature 34 is a founder
 call; it is not a code change either way.
+
+---
+
+## 19. Amendment — BE Gap 714 (2026-09-20): an identifier is not a figure
+
+Additive amendment to §5.3 and to §14.6's public surface. Nothing above is rewritten
+(hard rule 4).
+
+### 19.1 The defect class
+
+Not "two tests in `test_atlas_tools.py` flake". The class is:
+
+> **A string copied verbatim out of a record — a party name, a document number, an
+> ingestion source reference, a source file name — is interpolated into a line's prose,
+> and the emitter declares only the figures it *computed*. `assert_no_undeclared_numbers()`
+> then reads the digits inside that identifier as an undeclared figure, because
+> `_is_money_shaped()` counts any run of four or more digits as money.**
+
+The consequence is not a bad line, it is no lines at all: the raise happens at
+construction inside `validate_recommendation()`, and `routers/atlas.py::_validated()`
+deliberately fails the request rather than the line, so `GET /atlas/lines` returns 500
+for the whole tenant. A vendor imported with its account code in its name
+("Vendor 100200 Pvt Ltd") is enough. This is BE Gap 692's wound taken on the
+*declaration* side instead of the tokeniser side.
+
+### 19.2 The call sites — ten, not the two the gap entry named
+
+The gap entry named `_approval_lines()` and the forecast lever labels, because those were
+the two the random test fixture happened to hit. A grep for the pattern rather than the
+symptom found ten:
+
+| File | Emitter | The verbatim string |
+|---|---|---|
+| `atlas_skills.py` | `_approval_lines()` | `vendor` (`Invoice.vendor_name`) |
+| `atlas_skills.py` | `_low_confidence_fields()` | `vendor`, and `names` (the extractor's own field keys) |
+| `atlas_skills.py` | `_failed_ingestion_lines()` | `label` (carries `TenantAutopilotConfig.source_ref`), `names` (source file names) |
+| `atlas_skills.py` | `_quiet_source_lines()` | `label` |
+| `atlas_forecast.py` | `forecast_recommendations()` | every `Lever.label` — "Chase &lt;customer&gt; early" |
+| `atlas_recon.py` | `vendor_statement_they_show_we_do_not` | `vendor` |
+| `atlas_recon.py` | `vendor_statement_we_show_they_do_not` | `vendor` |
+| `atlas_recon.py` | `_amount_difference_line()` | `result.vendor_name` |
+| `atlas_doubt.py` | `doubt_lines()` | `vendor`, in the headline and inside `Doubt.working` → `why.text` |
+
+Three emitters were checked and are clean: `cash_position_and_runway`,
+`invoices_stuck_in_processing` and `services/atlas_collapse.py::_headline()` compose from
+counts and a capability label only, never from a stored string. `Figure.computation` is
+*not* prose (`Recommendation.prose()` excludes it), so the vendor names inside the lever
+computations were never at risk.
+
+### 19.3 The fix — option (b), the founder's pick
+
+`services/atlas_contract.py::verbatim_references(*strings) -> list[str]`, exported, beside
+`numeric_tokens()`. It returns the numeric tokens of identifiers copied from a record, in
+order and deduplicated, skipping `None`/empty so an optional column can be passed straight
+through. Call sites splice it into `Why.references`:
+
+```python
+references=[number, *verbatim_references(vendor)]
+```
+
+Option (a) — every emitter remembering to declare the name it interpolated — was the
+smaller change and was rejected: it leaves the next emitter to repeat the defect, and the
+gap entry says so in as many words. Every call site carries a `BE Gap 714` comment naming
+which string is the verbatim one and why.
+
+### 19.4 The boundary — what this does not do
+
+It declares only tokens that genuinely occur in a string lifted character for character out
+of a stored record. Anything the emitter **composes** — an amount, a rate, a balance — is
+still held to §5.3 and still needs a `Figure` with a document or a computation behind it.
+One residual hole, accepted rather than hidden: if a party's name contains the same digit
+run as a figure the line rounds, that rounding stops being caught *on that one line*. The
+alternative is refusing to name the party, which makes the line unreadable, and the
+coincidence requires the rounded form to match the name exactly. This is stated as a test —
+`test_the_number_rule_still_catches_a_rounded_figure_beside_such_a_name` — so the helper
+cannot quietly become a way of switching the control off by naming a vendor.
+
+### 19.5 Verification (real Postgres, `127.0.0.1:5433/invoice_db`)
+
+- `tests/test_atlas_skills.py` + `tests/test_atlas_forecast.py` → **25 passed in 16.38s**,
+  including seven new tests: a three-way parametrised party-name fixture
+  ("Vendor 100200 Pvt Ltd", "846807 Logistics", "Chase Customer 4409eb") whose invoice
+  number is numeric and collides with the name, asserting `atlas_lines()` produces lines,
+  the name reaches the headline, and every line re-passes `validate_recommendation()`; the
+  same three shapes on `forecast_recommendations()`'s lever labels; and the boundary test
+  above.
+- **Falsification** (per §18.8's pattern): `verbatim_references()` stubbed to `return []`
+  ⇒ **5 failed, 2 passed** — the guard is load-bearing, and the two that still pass are the
+  boundary test and the one case whose digits the invoice number already declared.
+- `tests/test_atlas_tools.py` **20 consecutive runs, 21 passed every time** (previously a
+  coin flip on the random `uuid4().hex[:6]` vendor suffix — the two intermittently red
+  tests are `test_every_adapter_row_carries_the_four_identity_fields` and
+  `test_the_quiet_tools_also_carry_the_identity_fields`).
+- All `tests/test_atlas_*.py` + `tests/test_no_hardcoding.py` → **243 passed in 18.63s**
+  (was 230 passed, 2 failed before the fix).
+
+Feature 35's track-2 fixtures keep their letters-only party names: they were a fixture
+workaround, but removing them now would change two variables at once.

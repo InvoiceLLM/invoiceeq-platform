@@ -1,0 +1,3 @@
+atlas_briefings row for the briefing_auditor.sse.txt capture (deleted after capture per README cleanup log):
+id=3987aa3d-3978-426a-bc77-15beecb4b755  user_id=user_test_default  model=gpt-5.6-terra
+tokens_in=8046  tokens_out=793  cost_usd=0.025608  dropped=0  truncated=(empty)  stale=f

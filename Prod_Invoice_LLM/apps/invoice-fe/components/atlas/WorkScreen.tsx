@@ -47,6 +47,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import ActionLog from "@/components/atlas/ActionLog";
 import AtlasLine from "@/components/atlas/AtlasLine";
+import Briefing from "@/components/atlas/Briefing";
 import ColdStart from "@/components/atlas/ColdStart";
 import MemoryPanel from "@/components/atlas/MemoryPanel";
 import ReconPanel from "@/components/atlas/ReconPanel";
@@ -60,6 +61,30 @@ import {
   type AtlasLinesResponse,
   type AtlasRecommendation,
 } from "@/lib/atlas";
+import { invoiceNumberIn } from "@/lib/atlasBriefing";
+
+/**
+ * FE Gap 706 — what the briefing's citations are LABELLED with.
+ *
+ * One entry per line whose headline names an invoice: the recommendation id the
+ * briefing cites → that invoice number, read out of the headline this screen was
+ * already sent. Built here rather than in the panel because this component owns
+ * the `/atlas/lines` payload, and the label and the line a citation click
+ * scrolls to are then the same record by construction.
+ *
+ * A line whose headline names no invoice simply has no entry, and the panel
+ * falls back to a generic word — never to the id.
+ */
+export function briefingLineLabels(
+  lines: readonly AtlasRecommendation[]
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const line of lines ?? []) {
+    const number = invoiceNumberIn(line.what?.headline ?? "");
+    if (number) out.set(line.id, number);
+  }
+  return out;
+}
 
 /** D3's exact sentence, per spec §3. */
 export const NO_TASKS_ASSIGNED = "No tasks assigned. Ask your admin for access.";
@@ -94,6 +119,16 @@ export default function WorkScreen() {
    */
   const [performableKinds, setPerformableKinds] =
     useState<ReadonlySet<string>>(PERFORMABLE_ACTION_KINDS);
+  /**
+   * FE Feature 24 (the briefing), spec §3 step 7 · D38.
+   *
+   * Set once a dismiss or an act has succeeded. The briefing panel then says
+   * "briefing will refresh on your next visit" and keeps its text — the backend
+   * has already marked the stored briefing stale, so the next open is where the
+   * new one is written. Nothing here re-opens the stream.
+   */
+  const [briefingNeedsRefresh, setBriefingNeedsRefresh] = useState(false);
+  const onNeedsRefresh = useCallback(() => setBriefingNeedsRefresh(true), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -148,6 +183,9 @@ export default function WorkScreen() {
       try {
         await dismissAtlasLine(line.id);
         await load();
+        // FE 24 §3 step 7: the briefing described a line that is no longer
+        // there. Said, not acted on.
+        onNeedsRefresh();
       } catch (err: any) {
         // Said out loud. A dismiss that silently failed would leave the user
         // believing the line is gone until the next open brings it back, which
@@ -160,7 +198,7 @@ export default function WorkScreen() {
         setDismissingId(null);
       }
     },
-    [load]
+    [load, onNeedsRefresh]
   );
 
   /**
@@ -183,6 +221,8 @@ export default function WorkScreen() {
         // text: the numbers in it are the backend's, like every other figure.
         setOutcome(result.summary);
         await load();
+        // FE 24 §3 step 7, same as the dismiss above.
+        onNeedsRefresh();
       } catch (err: any) {
         setError(
           err?.response?.data?.detail ??
@@ -192,7 +232,7 @@ export default function WorkScreen() {
         setActingId(null);
       }
     },
-    [load]
+    [load, onNeedsRefresh]
   );
 
   const showRecon =
@@ -287,6 +327,36 @@ export default function WorkScreen() {
         <p data-testid="work-screen-outcome" className="text-[13px] text-emerald-300">
           {outcome}
         </p>
+      )}
+
+      {/* THE BRIEFING (FE Feature 24 · BE Feature 35). Ruled 2026-09-20: at the
+          TOP, directly after the error and outcome lines and before the
+          collapsed areas and the line list, for every role.
+
+          MOUNTED ONLY ONCE `payload` IS SET (FE 24 §3 step 1). The
+          deterministic lines are on screen before a single model token is
+          asked for, and `knownIds` — the ids this screen can actually show the
+          reader — cannot be assembled before the payload exists anyway. That
+          ordering is asserted on the fetch sequence, not on the layout.
+
+          THIS COMPONENT STILL DOES NOT POLL (D36, D38). The panel opens one
+          stream per mount and closes it on `done`; a dismiss or an act sets
+          the refresh note and nothing else. */}
+      {payload && (
+        <Briefing
+          knownIds={
+            new Set(
+              payload.lines.flatMap((line) =>
+                // Both ids a citation can name for a line: the recommendation
+                // itself and the record it is about.
+                [line.id, line.what.entity_id].filter(Boolean)
+              )
+            )
+          }
+          lineLabels={briefingLineLabels(payload.lines)}
+          needsRefresh={briefingNeedsRefresh}
+          onAnswered={onNeedsRefresh}
+        />
       )}
 
       {/* COLLAPSED AREAS (BE §2.2, D20 · task 34.7g). Admin only, and the

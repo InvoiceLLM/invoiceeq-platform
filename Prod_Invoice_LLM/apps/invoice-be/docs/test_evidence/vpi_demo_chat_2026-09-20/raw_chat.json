@@ -1,0 +1,1867 @@
+[
+  {
+    "num": 1,
+    "question": "What is our total inbound spend?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Total inbound spend is INR 1,891,327.60 across 14 invoices. Note: two invoices in this set (NAT-2007 and RAJ-2009) show possible-duplicate audit warnings.\n\n### Query Results\n\ncurrency | total_spend | invoices\n--- | --- | ---\nINR | 1891327.60 | 14",
+    "generated_sql": "SELECT currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoices FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' GROUP BY currency ORDER BY currency",
+    "raw_payload": {
+      "id": "180c3b5e-c1ff-4687-b3e1-f179d33ab36e",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Total inbound spend is INR 1,891,327.60 across 14 invoices. Note: two invoices in this set (NAT-2007 and RAJ-2009) show possible-duplicate audit warnings.\n\n### Query Results\n\ncurrency | total_spend | invoices\n--- | --- | ---\nINR | 1891327.60 | 14",
+      "generated_sql": "SELECT currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoices FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' GROUP BY currency ORDER BY currency",
+      "citations": [],
+      "created_at": "2026-09-20T13:01:03.601866",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 20.4,
+    "error": null
+  },
+  {
+    "num": 2,
+    "question": "Which vendor did we spend the most with?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Rajesh Steel Corporation \u2014 INR 874380.00 (2 invoices).\n\n### Query Results\n\nvendor_name | currency | total_spend | invoice_count\n--- | --- | --- | ---\nRajesh Steel Corporation | INR | 874380.00 | 2\nShree Packaging Industries | INR | 366508.00 | 3\nBharat Hardware & Fasteners | INR | 206382.00 | 2\nGanesh Bearings Pvt Ltd | INR | 172044.00 | 2\nNational MRO Traders | INR | 159913.60 | 2\nOm Stationery Mart | INR | 112100.00 | 3",
+    "generated_sql": "SELECT vendor_name, currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' GROUP BY vendor_name, currency ORDER BY total_spend DESC",
+    "raw_payload": {
+      "id": "a49aee26-6917-432e-8d3b-5be3ae6f4f61",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Rajesh Steel Corporation \u2014 INR 874380.00 (2 invoices).\n\n### Query Results\n\nvendor_name | currency | total_spend | invoice_count\n--- | --- | --- | ---\nRajesh Steel Corporation | INR | 874380.00 | 2\nShree Packaging Industries | INR | 366508.00 | 3\nBharat Hardware & Fasteners | INR | 206382.00 | 2\nGanesh Bearings Pvt Ltd | INR | 172044.00 | 2\nNational MRO Traders | INR | 159913.60 | 2\nOm Stationery Mart | INR | 112100.00 | 3",
+      "generated_sql": "SELECT vendor_name, currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' GROUP BY vendor_name, currency ORDER BY total_spend DESC",
+      "citations": [],
+      "created_at": "2026-09-20T13:01:16.524109",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 12.8,
+    "error": null
+  },
+  {
+    "num": 3,
+    "question": "List all vendors",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "The query returned invoices from six vendors: Bharat Hardware & Fasteners, Ganesh Bearings Pvt Ltd, National MRO Traders, Om Stationery Mart, Rajesh Steel Corporation, and Shree Packaging Industries.\n\n### Query Results\n\nvendor_name\n---\nBharat Hardware & Fasteners\nGanesh Bearings Pvt Ltd\nNational MRO Traders\nOm Stationery Mart\nRajesh Steel Corporation\nShree Packaging Industries",
+    "generated_sql": "SELECT DISTINCT vendor_name FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' ORDER BY vendor_name",
+    "raw_payload": {
+      "id": "094147fc-fe7e-48c2-adc5-b8e65a0b79bb",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "The query returned invoices from six vendors: Bharat Hardware & Fasteners, Ganesh Bearings Pvt Ltd, National MRO Traders, Om Stationery Mart, Rajesh Steel Corporation, and Shree Packaging Industries.\n\n### Query Results\n\nvendor_name\n---\nBharat Hardware & Fasteners\nGanesh Bearings Pvt Ltd\nNational MRO Traders\nOm Stationery Mart\nRajesh Steel Corporation\nShree Packaging Industries",
+      "generated_sql": "SELECT DISTINCT vendor_name FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' ORDER BY vendor_name",
+      "citations": [],
+      "created_at": "2026-09-20T13:01:30.893251",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 14.4,
+    "error": null
+  },
+  {
+    "num": 4,
+    "question": "Do we have any duplicate invoices?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Yes \u2014 two invoices are flagged as possible duplicates. NAT-2007 (National MRO Traders, INR 79,956.80, 2026-08-19) is marked as a possible duplicate of NAT-2006 (same date and total but different number), and RAJ-2009 (Rajesh Steel Corporation, INR 437,190.00, 2026-08-20) is marked as a possible duplicate of RAJ-2008 (same date and total but different number); both records have status AUDIT_REQUIRED and the alerts are warnings \u2014 please verify whether these are re-issues.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nNAT-2007 | National MRO Traders |  | INBOUND | 2026-08-19 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') ORDER BY invoice_number",
+    "raw_payload": {
+      "id": "f48dcc42-6832-4378-9156-94ac05a2cbe9",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Yes \u2014 two invoices are flagged as possible duplicates. NAT-2007 (National MRO Traders, INR 79,956.80, 2026-08-19) is marked as a possible duplicate of NAT-2006 (same date and total but different number), and RAJ-2009 (Rajesh Steel Corporation, INR 437,190.00, 2026-08-20) is marked as a possible duplicate of RAJ-2008 (same date and total but different number); both records have status AUDIT_REQUIRED and the alerts are warnings \u2014 please verify whether these are re-issues.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nNAT-2007 | National MRO Traders |  | INBOUND | 2026-08-19 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND LOWER(CAST(sa_alerts AS TEXT)) LIKE LOWER('%duplicate%') ORDER BY invoice_number",
+      "citations": [],
+      "created_at": "2026-09-20T13:01:44.707333",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [
+            "22490a93-94a8-4511-90ba-52d495e0cc05_page_1"
+          ],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [
+            "530bd65a-be04-4953-988b-2932f52a6f89_page_1"
+          ],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 13.7,
+    "error": null
+  },
+  {
+    "num": 5,
+    "question": "Which invoices are overdue?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "I can\u2019t tell which invoices are overdue because the results do not include a current/reference date to compare against; here are the due dates on file for each invoice: BHA-2002: due 2026-08-08; OM -2000: due 2026-08-08; SHR-2004: due 2026-08-08; BHA-2003: due 2026-09-15; NAT-2006: due 2026-09-15; NAT-2007: due 2026-09-15; OM -2001: due 2026-09-15; RAJ-2008: due 2026-09-15; RAJ-2009: due 2026-09-15; SHR-2005: due 2026-09-15; VPI-OUT-2013: due 2026-09-17; VPI-OUT-2014: due 2026-09-17; VPI-OUT-2016: due 2026-09-17; VPI-OUT-2017: due 2026-09-17; VPI-OUT-2018: due 2026-09-17; VPI-OUT-2019: due 2026-09-17; VPI-OUT-2020: due 2026-09-17; GBP-2011: due 2026-09-18.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | due_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\nBHA-2002 | Bharat Hardware & Fasteners |  | INBOUND | 2026-07-09 | 2026-08-08 | 103191.00 | INR | PAID | \nOM -2000 | Om Stationery Mart |  | INBOUND | 2026-07-09 | 2026-08-08 | 41654.00 | INR | PAID | \nSHR-2004 | Shree Packaging Industries |  | INBOUND | 2026-07-09 | 2026-08-08 | 121894.00 | INR | PAID | \nBHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-17 | 2026-09-15 | 103191.00 | INR | COMPLETED | \nNAT-2006 | National MRO Traders |  | INBOUND | 2026-08-19 | 2026-09-15 | 79956.80 | INR | COMPLETED | \nNAT-2007 | National MRO Traders |  | INBOUND | 2026-08-19 | 2026-09-15 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\nOM -2001 | Om Stationery Mart |  | INBOUND | 2026-08-16 | 2026-09-15 | 41654.00 | INR | COMPLETED | \nRAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 2026-09-15 | 437190.00 | INR | COMPLETED | \nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 2026-09-15 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.\nSHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-08-18 | 2026-09-15 | 121894.00 | INR | COMPLETED | \nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-18 | 2026-09-17 | 483210.00 | INR | VERIFIED | \nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-19 | 2026-09-17 | 483850.00 | INR | NEEDS_REVIEW | Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-18 | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-19 | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-17 | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-18 | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-19 | 2026-09-17 | 484390.00 | INR | VERIFIED | \nGBP-2011 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-19 | 2026-09-18 | 68676.00 | INR | COMPLETED | ",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND due_date < CURRENT_DATE AND ((flow_direction = 'OUTBOUND' AND status <> 'PAID') OR flow_direction = 'INBOUND') ORDER BY due_date, invoice_number",
+    "raw_payload": {
+      "id": "6c1e512f-43ee-4e7b-8cc4-2ae2994fb06c",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "I can\u2019t tell which invoices are overdue because the results do not include a current/reference date to compare against; here are the due dates on file for each invoice: BHA-2002: due 2026-08-08; OM -2000: due 2026-08-08; SHR-2004: due 2026-08-08; BHA-2003: due 2026-09-15; NAT-2006: due 2026-09-15; NAT-2007: due 2026-09-15; OM -2001: due 2026-09-15; RAJ-2008: due 2026-09-15; RAJ-2009: due 2026-09-15; SHR-2005: due 2026-09-15; VPI-OUT-2013: due 2026-09-17; VPI-OUT-2014: due 2026-09-17; VPI-OUT-2016: due 2026-09-17; VPI-OUT-2017: due 2026-09-17; VPI-OUT-2018: due 2026-09-17; VPI-OUT-2019: due 2026-09-17; VPI-OUT-2020: due 2026-09-17; GBP-2011: due 2026-09-18.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | due_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | --- | ---\nBHA-2002 | Bharat Hardware & Fasteners |  | INBOUND | 2026-07-09 | 2026-08-08 | 103191.00 | INR | PAID | \nOM -2000 | Om Stationery Mart |  | INBOUND | 2026-07-09 | 2026-08-08 | 41654.00 | INR | PAID | \nSHR-2004 | Shree Packaging Industries |  | INBOUND | 2026-07-09 | 2026-08-08 | 121894.00 | INR | PAID | \nBHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-17 | 2026-09-15 | 103191.00 | INR | COMPLETED | \nNAT-2006 | National MRO Traders |  | INBOUND | 2026-08-19 | 2026-09-15 | 79956.80 | INR | COMPLETED | \nNAT-2007 | National MRO Traders |  | INBOUND | 2026-08-19 | 2026-09-15 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\nOM -2001 | Om Stationery Mart |  | INBOUND | 2026-08-16 | 2026-09-15 | 41654.00 | INR | COMPLETED | \nRAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 2026-09-15 | 437190.00 | INR | COMPLETED | \nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 2026-09-15 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.\nSHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-08-18 | 2026-09-15 | 121894.00 | INR | COMPLETED | \nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-18 | 2026-09-17 | 483210.00 | INR | VERIFIED | \nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-19 | 2026-09-17 | 483850.00 | INR | NEEDS_REVIEW | Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-18 | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-19 | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-17 | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-18 | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-19 | 2026-09-17 | 484390.00 | INR | VERIFIED | \nGBP-2011 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-19 | 2026-09-18 | 68676.00 | INR | COMPLETED | ",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND due_date < CURRENT_DATE AND ((flow_direction = 'OUTBOUND' AND status <> 'PAID') OR flow_direction = 'INBOUND') ORDER BY due_date, invoice_number",
+      "citations": [],
+      "created_at": "2026-09-20T13:02:24.653645",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "invoice_number": "VPI-OUT-2014"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "invoice_number": "VPI-OUT-2019"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "invoice_number": "VPI-OUT-2013"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+          "invoice_number": "VPI-OUT-2016"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "invoice_number": "VPI-OUT-2018"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "invoice_number": "VPI-OUT-2020"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "invoice_number": "VPI-OUT-2017"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 40.0,
+    "error": null
+  },
+  {
+    "num": 6,
+    "question": "How much do we owe Bharat Hardware?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "- Outstanding payable to Bharat Hardware & Fasteners: INR 103,191.00 \u2014 Invoice BHA-2003 (due 2026-09-15, status: COMPLETED).  \n- Invoice BHA-2002 for INR 103,191.00 is marked PAID on file, so it is not outstanding.\n\n**Citations:**\n[Source: Bharat Hardware & Fasteners (Page 1)](file:///api/v1/invoices/b96f4a85-74ed-4aff-b8ff-27cddceb0d6c/pdf), [Source: Bharat Hardware & Fasteners (Page 1)](file:///api/v1/invoices/d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68/pdf), [Source: Kaveri Auto Components Pvt Ltd (Page 1)](file:///api/v1/invoices/13d719a7-c53f-4204-95fc-79f5b73959ba/pdf), [Source: Kaveri Auto Components Pvt Ltd (Page 1)](file:///api/v1/invoices/e6cfda29-d288-4423-9c9e-01cbcab12271/pdf), [Source: Kaveri Auto Components Pvt Ltd (Page 1)](file:///api/v1/invoices/0795e41d-86ec-4c83-8088-a7276f04fc94/pdf)",
+    "generated_sql": "SELECT currency, SUM(grand_total) AS total_owed FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND vendor_name = 'Bharat Hardware' GROUP BY currency",
+    "raw_payload": {
+      "id": "20ed2bb7-7404-4037-9426-2a1602244ddc",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "- Outstanding payable to Bharat Hardware & Fasteners: INR 103,191.00 \u2014 Invoice BHA-2003 (due 2026-09-15, status: COMPLETED).  \n- Invoice BHA-2002 for INR 103,191.00 is marked PAID on file, so it is not outstanding.\n\n**Citations:**\n[Source: Bharat Hardware & Fasteners (Page 1)](file:///api/v1/invoices/b96f4a85-74ed-4aff-b8ff-27cddceb0d6c/pdf), [Source: Bharat Hardware & Fasteners (Page 1)](file:///api/v1/invoices/d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68/pdf), [Source: Kaveri Auto Components Pvt Ltd (Page 1)](file:///api/v1/invoices/13d719a7-c53f-4204-95fc-79f5b73959ba/pdf), [Source: Kaveri Auto Components Pvt Ltd (Page 1)](file:///api/v1/invoices/e6cfda29-d288-4423-9c9e-01cbcab12271/pdf), [Source: Kaveri Auto Components Pvt Ltd (Page 1)](file:///api/v1/invoices/0795e41d-86ec-4c83-8088-a7276f04fc94/pdf)",
+      "generated_sql": "SELECT currency, SUM(grand_total) AS total_owed FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND vendor_name = 'Bharat Hardware' GROUP BY currency",
+      "citations": [
+        {
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "vendor_name": "Bharat Hardware & Fasteners",
+          "page": 1
+        },
+        {
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "vendor_name": "Bharat Hardware & Fasteners",
+          "page": 1
+        },
+        {
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "vendor_name": "Kaveri Auto Components Pvt Ltd",
+          "page": 1
+        },
+        {
+          "invoice_id": "e6cfda29-d288-4423-9c9e-01cbcab12271",
+          "vendor_name": "Kaveri Auto Components Pvt Ltd",
+          "page": 1
+        },
+        {
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "vendor_name": "Kaveri Auto Components Pvt Ltd",
+          "page": 1
+        }
+      ],
+      "created_at": "2026-09-20T13:02:49.670794",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 25.0,
+    "error": null
+  },
+  {
+    "num": 7,
+    "question": "Total GST on inbound invoices in August",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Total GST on inbound invoices for August (calendar month) is INR 247818.60 across 11 inbound invoices. Two invoices in the set (NAT-2007 and RAJ-2009) have \"possible duplicate\" audit warnings\u2014please review those before approval.\n\n### Query Results\n\ncurrency | total_gst | invoice_count\n--- | --- | ---\nINR | 247818.60 | 11",
+    "generated_sql": "SELECT currency, SUM(tax_amount) AS total_gst, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND invoice_date >= DATE '2026-08-01' AND invoice_date < DATE '2026-09-01' GROUP BY currency ORDER BY currency",
+    "raw_payload": {
+      "id": "b85ce7be-c579-4486-8829-78ed5f2a3c09",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Total GST on inbound invoices for August (calendar month) is INR 247818.60 across 11 inbound invoices. Two invoices in the set (NAT-2007 and RAJ-2009) have \"possible duplicate\" audit warnings\u2014please review those before approval.\n\n### Query Results\n\ncurrency | total_gst | invoice_count\n--- | --- | ---\nINR | 247818.60 | 11",
+      "generated_sql": "SELECT currency, SUM(tax_amount) AS total_gst, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND invoice_date >= DATE '2026-08-01' AND invoice_date < DATE '2026-09-01' GROUP BY currency ORDER BY currency",
+      "citations": [],
+      "created_at": "2026-09-20T13:03:03.539507",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 13.8,
+    "error": null
+  },
+  {
+    "num": 8,
+    "question": "What did we buy from National MRO Traders?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Industrial Lubricant 20L: 5 units \u00d7 INR 5600.00 = INR 28000.00\nReplacement V-Belts: 12 units \u00d7 INR 1680.00 = INR 20160.00\nSafety Gloves case of 60: 8 units \u00d7 INR 2450.00 = INR 19600.00\nTotal: INR 67760.00\n\nThese items appear on National MRO Traders invoices NAT-2006 and NAT-2007; invoice subtotal INR 67760.00, tax INR 12196.8 (CGST INR 6098.4 + SGST INR 6098.4), grand total INR 79956.8.\n\n### Query Results\n\ninvoice_number | vendor_name | currency | invoice_date | items | sa_alerts\n--- | --- | --- | --- | --- | ---\nNAT-2006 | National MRO Traders | INR | 2026-08-19 | [{\"uom\": null, \"amount\": 28000.0, \"quantity\": 5.0, \"tax_amount\": null, \"unit_price\": 5600.0, \"description\": \"Industrial Lubricant 20L\", \"tax_percent\": null, \"hsn_sac_code\": \"2710\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 20160.0, \"quantity\": 12.0, \"tax_amount\": null, \"unit_price\": 1680.0, \"description\": \"Replacement V-Belts\", \"tax_percent\": null, \"hsn_sac_code\": \"4010\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 19600.0, \"quantity\": 8.0, \"tax_amount\": null, \"unit_price\": 2450.0, \"description\": \"Safety Gloves case of 60\", \"tax_percent\": null, \"hsn_sac_code\": \"4015\", \"discount_amount\": null, \"discount_percent\": null}] | \nNAT-2007 | National MRO Traders | INR | 2026-08-19 | [{\"uom\": \"20L\", \"amount\": 28000.0, \"quantity\": 5.0, \"tax_amount\": null, \"unit_price\": 5600.0, \"description\": \"Industrial Lubricant 20L\", \"tax_percent\": null, \"hsn_sac_code\": \"2710\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 20160.0, \"quantity\": 12.0, \"tax_amount\": null, \"unit_price\": 1680.0, \"description\": \"Replacement V-Belts\", \"tax_percent\": null, \"hsn_sac_code\": \"4010\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": \"case of 60\", \"amount\": 19600.0, \"quantity\": 8.0, \"tax_amount\": null, \"unit_price\": 2450.0, \"description\": \"Safety Gloves case of 60\", \"tax_percent\": null, \"hsn_sac_code\": \"4015\", \"discount_amount\": null, \"discount_percent\": null}] | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.",
+    "generated_sql": "SELECT invoice_number, vendor_name, currency, invoice_date, items, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND vendor_name = 'National MRO Traders'",
+    "raw_payload": {
+      "id": "9f367ef8-c6e2-47ba-bf67-e983e090b11b",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Industrial Lubricant 20L: 5 units \u00d7 INR 5600.00 = INR 28000.00\nReplacement V-Belts: 12 units \u00d7 INR 1680.00 = INR 20160.00\nSafety Gloves case of 60: 8 units \u00d7 INR 2450.00 = INR 19600.00\nTotal: INR 67760.00\n\nThese items appear on National MRO Traders invoices NAT-2006 and NAT-2007; invoice subtotal INR 67760.00, tax INR 12196.8 (CGST INR 6098.4 + SGST INR 6098.4), grand total INR 79956.8.\n\n### Query Results\n\ninvoice_number | vendor_name | currency | invoice_date | items | sa_alerts\n--- | --- | --- | --- | --- | ---\nNAT-2006 | National MRO Traders | INR | 2026-08-19 | [{\"uom\": null, \"amount\": 28000.0, \"quantity\": 5.0, \"tax_amount\": null, \"unit_price\": 5600.0, \"description\": \"Industrial Lubricant 20L\", \"tax_percent\": null, \"hsn_sac_code\": \"2710\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 20160.0, \"quantity\": 12.0, \"tax_amount\": null, \"unit_price\": 1680.0, \"description\": \"Replacement V-Belts\", \"tax_percent\": null, \"hsn_sac_code\": \"4010\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 19600.0, \"quantity\": 8.0, \"tax_amount\": null, \"unit_price\": 2450.0, \"description\": \"Safety Gloves case of 60\", \"tax_percent\": null, \"hsn_sac_code\": \"4015\", \"discount_amount\": null, \"discount_percent\": null}] | \nNAT-2007 | National MRO Traders | INR | 2026-08-19 | [{\"uom\": \"20L\", \"amount\": 28000.0, \"quantity\": 5.0, \"tax_amount\": null, \"unit_price\": 5600.0, \"description\": \"Industrial Lubricant 20L\", \"tax_percent\": null, \"hsn_sac_code\": \"2710\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 20160.0, \"quantity\": 12.0, \"tax_amount\": null, \"unit_price\": 1680.0, \"description\": \"Replacement V-Belts\", \"tax_percent\": null, \"hsn_sac_code\": \"4010\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": \"case of 60\", \"amount\": 19600.0, \"quantity\": 8.0, \"tax_amount\": null, \"unit_price\": 2450.0, \"description\": \"Safety Gloves case of 60\", \"tax_percent\": null, \"hsn_sac_code\": \"4015\", \"discount_amount\": null, \"discount_percent\": null}] | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.",
+      "generated_sql": "SELECT invoice_number, vendor_name, currency, invoice_date, items, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND vendor_name = 'National MRO Traders'",
+      "citations": [],
+      "created_at": "2026-09-20T13:03:33.352424",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [
+            "86f1559a-ab03-4c07-b1f3-7453db53aeb9_page_1"
+          ],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [
+            "22490a93-94a8-4511-90ba-52d495e0cc05_page_1"
+          ],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 29.9,
+    "error": null
+  },
+  {
+    "num": 9,
+    "question": "Show outbound invoices to Deccan Machinery",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Outbound invoices to Deccan Machinery (customer_name = Deccan Machinery Ltd):\n\n- VPI-OUT-2018 \u2014 invoice_date: 2026-08-17; due_date: 2026-09-17; grand_total: INR 484,390.00; status: VERIFIED; vendor: Vishwa Precision Industries Pvt Ltd. (source: VPI-OUT-2018)  \n- VPI-OUT-2019 \u2014 invoice_date: 2026-08-18; due_date: 2026-09-17; grand_total: INR 484,390.00; status: VERIFIED; vendor: Vishwa Precision Industries Pvt Ltd. (source: VPI-OUT-2019)  \n- VPI-OUT-2020 \u2014 invoice_date: 2026-08-19; due_date: 2026-09-17; grand_total: INR 484,390.00; status: VERIFIED; vendor: Vishwa Precision Industries Pvt Ltd. (source: VPI-OUT-2020)\n\n**Citations:**\n[Source: Deccan Machinery Ltd (Page 1)](file:///api/v1/invoices/ec8acc1d-c0c0-493c-a3c2-78292fadab5e/pdf), [Source: Deccan Machinery Ltd (Page 1)](file:///api/v1/invoices/94192419-1da8-4cfb-a374-9d60ff559256/pdf), [Source: Deccan Machinery Ltd (Page 1)](file:///api/v1/invoices/65097bd1-9b0c-4178-a998-3ca06a8fd831/pdf)",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'OUTBOUND' AND customer_name = 'Deccan Machinery'",
+    "raw_payload": {
+      "id": "763aab09-2a2c-4b26-ade9-52794bb7f22e",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Outbound invoices to Deccan Machinery (customer_name = Deccan Machinery Ltd):\n\n- VPI-OUT-2018 \u2014 invoice_date: 2026-08-17; due_date: 2026-09-17; grand_total: INR 484,390.00; status: VERIFIED; vendor: Vishwa Precision Industries Pvt Ltd. (source: VPI-OUT-2018)  \n- VPI-OUT-2019 \u2014 invoice_date: 2026-08-18; due_date: 2026-09-17; grand_total: INR 484,390.00; status: VERIFIED; vendor: Vishwa Precision Industries Pvt Ltd. (source: VPI-OUT-2019)  \n- VPI-OUT-2020 \u2014 invoice_date: 2026-08-19; due_date: 2026-09-17; grand_total: INR 484,390.00; status: VERIFIED; vendor: Vishwa Precision Industries Pvt Ltd. (source: VPI-OUT-2020)\n\n**Citations:**\n[Source: Deccan Machinery Ltd (Page 1)](file:///api/v1/invoices/ec8acc1d-c0c0-493c-a3c2-78292fadab5e/pdf), [Source: Deccan Machinery Ltd (Page 1)](file:///api/v1/invoices/94192419-1da8-4cfb-a374-9d60ff559256/pdf), [Source: Deccan Machinery Ltd (Page 1)](file:///api/v1/invoices/65097bd1-9b0c-4178-a998-3ca06a8fd831/pdf)",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, due_date, grand_total, currency, status, po_number FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'OUTBOUND' AND customer_name = 'Deccan Machinery'",
+      "citations": [
+        {
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "vendor_name": "Deccan Machinery Ltd",
+          "page": 1
+        },
+        {
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "vendor_name": "Deccan Machinery Ltd",
+          "page": 1
+        },
+        {
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "vendor_name": "Deccan Machinery Ltd",
+          "page": 1
+        }
+      ],
+      "created_at": "2026-09-20T13:03:56.041912",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 22.7,
+    "error": null
+  },
+  {
+    "num": 10,
+    "question": "Which outbound invoice has a total that doesn't add up?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Invoice VPI-OUT-2014 (Vishwa Precision Industries Pvt Ltd) has a mismatch: subtotal INR 409,500.00 + tax INR 73,710.00 does not equal the grand total INR 483,850.00 \u2014 the invoice has an sa_alert \"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\".\n\n### Query Results\n\ninvoice_number | vendor_name | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | ---\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 600.00 | 320.00 | 192000.00\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 150.00 | 1450.00 | 217500.00\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 100.00 | 2600.00 | 260000.00\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | INR | Drive Sprocket Set | 35.00 | 4300.00 | 150500.00\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 30.00 | 4850.00 | 145500.00\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 60.00 | 2150.00 | 129000.00\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 600.00 | 320.00 | 192000.00\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 150.00 | 1450.00 | 217500.00\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 70.00 | 4850.00 | 339500.00\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 45.00 | 2150.00 | 96750.00\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 100.00 | 2600.00 | 260000.00\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | INR | Drive Sprocket Set | 35.00 | 4300.00 | 150500.00\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 100.00 | 2600.00 | 260000.00\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | INR | Drive Sprocket Set | 35.00 | 4300.00 | 150500.00\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 70.00 | 4850.00 | 339500.00\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 45.00 | 2150.00 | 96750.00\nVPI-OUT-2015 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 70.00 | 4850.00 | 339500.00\nVPI-OUT-2015 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 45.00 | 2150.00 | 96750.00\nVPI-OUT-2023 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 50.00 | 2600.00 | 130000.00\nVPI-OUT-2023 | Vishwa Precision Industries Pvt Ltd | INR | Idler Roller Bracket | 80.00 | 740.00 | 59200.00\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 400.00 | 320.00 | 128000.00\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 60.00 | 1450.00 | 87000.00\nVPI-OUT-2012 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 600.00 | 320.00 | 192000.00\nVPI-OUT-2012 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 150.00 | 1450.00 | 217500.00",
+    "generated_sql": "SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item->>'description' AS line_description, (item->>'quantity')::numeric AS line_qty, (item->>'unit_price')::numeric AS line_unit_price, (item->>'amount')::numeric AS line_amount FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'OUTBOUND' AND item->>'description' IS NOT NULL",
+    "raw_payload": {
+      "id": "3df5665e-0989-452f-bc39-8e3237935f72",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Invoice VPI-OUT-2014 (Vishwa Precision Industries Pvt Ltd) has a mismatch: subtotal INR 409,500.00 + tax INR 73,710.00 does not equal the grand total INR 483,850.00 \u2014 the invoice has an sa_alert \"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\".\n\n### Query Results\n\ninvoice_number | vendor_name | currency | line_description | line_qty | line_unit_price | line_amount\n--- | --- | --- | --- | --- | --- | ---\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 600.00 | 320.00 | 192000.00\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 150.00 | 1450.00 | 217500.00\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 100.00 | 2600.00 | 260000.00\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | INR | Drive Sprocket Set | 35.00 | 4300.00 | 150500.00\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 30.00 | 4850.00 | 145500.00\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 60.00 | 2150.00 | 129000.00\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 600.00 | 320.00 | 192000.00\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 150.00 | 1450.00 | 217500.00\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 70.00 | 4850.00 | 339500.00\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 45.00 | 2150.00 | 96750.00\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 100.00 | 2600.00 | 260000.00\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | INR | Drive Sprocket Set | 35.00 | 4300.00 | 150500.00\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 100.00 | 2600.00 | 260000.00\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | INR | Drive Sprocket Set | 35.00 | 4300.00 | 150500.00\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 70.00 | 4850.00 | 339500.00\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 45.00 | 2150.00 | 96750.00\nVPI-OUT-2015 | Vishwa Precision Industries Pvt Ltd | INR | Machined Housing Unit H-3 | 70.00 | 4850.00 | 339500.00\nVPI-OUT-2015 | Vishwa Precision Industries Pvt Ltd | INR | Gearbox Mounting Plate | 45.00 | 2150.00 | 96750.00\nVPI-OUT-2023 | Vishwa Precision Industries Pvt Ltd | INR | Conveyor Roller Assembly | 50.00 | 2600.00 | 130000.00\nVPI-OUT-2023 | Vishwa Precision Industries Pvt Ltd | INR | Idler Roller Bracket | 80.00 | 740.00 | 59200.00\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 400.00 | 320.00 | 128000.00\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 60.00 | 1450.00 | 87000.00\nVPI-OUT-2012 | Vishwa Precision Industries Pvt Ltd | INR | Custom Stamped Bracket A-14 | 600.00 | 320.00 | 192000.00\nVPI-OUT-2012 | Vishwa Precision Industries Pvt Ltd | INR | Precision Shaft Coupling B-9 | 150.00 | 1450.00 | 217500.00",
+      "generated_sql": "SELECT invoice.invoice_number, invoice.vendor_name, invoice.currency, item->>'description' AS line_description, (item->>'quantity')::numeric AS line_qty, (item->>'unit_price')::numeric AS line_unit_price, (item->>'amount')::numeric AS line_amount FROM invoice LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(items) = 'array' THEN items ELSE '[]'::jsonb END) AS item ON true WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'OUTBOUND' AND item->>'description' IS NOT NULL",
+      "citations": [],
+      "created_at": "2026-09-20T13:04:11.361537",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e6cfda29-d288-4423-9c9e-01cbcab12271",
+          "invoice_number": "VPI-OUT-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "invoice_number": "VPI-OUT-2014"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "551a74e1-0ede-4230-88c0-42497f698246",
+          "invoice_number": "VPI-OUT-2015"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "invoice_number": "VPI-OUT-2020"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "invoice_number": "VPI-OUT-2017"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "9a79e1c3-6778-4f60-907c-7afc503f5711",
+          "invoice_number": "VPI-OUT-2021"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "invoice_number": "VPI-OUT-2019"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+          "invoice_number": "VPI-OUT-2016"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "a2d86662-fc1d-452c-9783-02463bdfe930",
+          "invoice_number": "VPI-OUT-2023"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "invoice_number": "VPI-OUT-2013"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "invoice_number": "VPI-OUT-2018"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "dc403a31-0e92-4b7b-a5ee-46b1047dbb85",
+          "invoice_number": "VPI-OUT-2022"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 15.3,
+    "error": null
+  },
+  {
+    "num": 11,
+    "question": "Total receivables outstanding",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Total receivables outstanding: INR 3449780.00 across 7 invoices. One invoice (VPI-OUT-2014) has an sa_alert: \"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\".\n\n### Query Results\n\ncurrency | total_receivables_outstanding | invoice_count\n--- | --- | ---\nINR | 3449780.00 | 7",
+    "generated_sql": "SELECT currency, SUM(grand_total) AS total_receivables_outstanding, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'OUTBOUND' AND due_date < CURRENT_DATE AND status <> 'PAID' GROUP BY currency ORDER BY currency",
+    "raw_payload": {
+      "id": "47057770-b70d-432b-a704-0550f8c03d60",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Total receivables outstanding: INR 3449780.00 across 7 invoices. One invoice (VPI-OUT-2014) has an sa_alert: \"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\".\n\n### Query Results\n\ncurrency | total_receivables_outstanding | invoice_count\n--- | --- | ---\nINR | 3449780.00 | 7",
+      "generated_sql": "SELECT currency, SUM(grand_total) AS total_receivables_outstanding, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'OUTBOUND' AND due_date < CURRENT_DATE AND status <> 'PAID' GROUP BY currency ORDER BY currency",
+      "citations": [],
+      "created_at": "2026-09-20T13:04:25.822003",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "invoice_number": "VPI-OUT-2014"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "invoice_number": "VPI-OUT-2019"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "invoice_number": "VPI-OUT-2013"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+          "invoice_number": "VPI-OUT-2016"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "invoice_number": "VPI-OUT-2018"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "invoice_number": "VPI-OUT-2020"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "invoice_number": "VPI-OUT-2017"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 14.5,
+    "error": null
+  },
+  {
+    "num": 12,
+    "question": "What is the invoice number of the Ganesh Bearings invoice and when is it due?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "- Invoice number: GBP-2011  \n- Due date: 18\u2011Sep\u20112026 (due_date: 2026-09-18)\n\n[Source: Ganesh Bearings Pvt Ltd (Page 1)](file:///api/v1/invoices/5288549a-9cb7-4ac6-94b9-b734463029df/pdf)\n\n**Citations:**\n[Source: Ganesh Bearings Pvt Ltd (Page 1)](file:///api/v1/invoices/5288549a-9cb7-4ac6-94b9-b734463029df/pdf), [Source: Bharat Hardware & Fasteners (Page 1)](file:///api/v1/invoices/d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68/pdf), [Source: Rajesh Steel Corporation (Page 1)](file:///api/v1/invoices/530bd65a-be04-4953-988b-2932f52a6f89/pdf), [Source: Rajesh Steel Corporation (Page 1)](file:///api/v1/invoices/d5869da2-b3bc-4d41-9356-2c6a02352616/pdf), [Source: Sunrise Engineering Works (Page 1)](file:///api/v1/invoices/e21e8a13-798f-4b9f-bd63-27d879a129c5/pdf)",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, due_date, currency FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND ((flow_direction = 'INBOUND' AND vendor_name = 'Ganesh Bearings') OR (flow_direction = 'OUTBOUND' AND customer_name = 'Ganesh Bearings'))",
+    "raw_payload": {
+      "id": "5bcb9018-ad87-44fc-b1d5-adf50fc469ae",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "- Invoice number: GBP-2011  \n- Due date: 18\u2011Sep\u20112026 (due_date: 2026-09-18)\n\n[Source: Ganesh Bearings Pvt Ltd (Page 1)](file:///api/v1/invoices/5288549a-9cb7-4ac6-94b9-b734463029df/pdf)\n\n**Citations:**\n[Source: Ganesh Bearings Pvt Ltd (Page 1)](file:///api/v1/invoices/5288549a-9cb7-4ac6-94b9-b734463029df/pdf), [Source: Bharat Hardware & Fasteners (Page 1)](file:///api/v1/invoices/d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68/pdf), [Source: Rajesh Steel Corporation (Page 1)](file:///api/v1/invoices/530bd65a-be04-4953-988b-2932f52a6f89/pdf), [Source: Rajesh Steel Corporation (Page 1)](file:///api/v1/invoices/d5869da2-b3bc-4d41-9356-2c6a02352616/pdf), [Source: Sunrise Engineering Works (Page 1)](file:///api/v1/invoices/e21e8a13-798f-4b9f-bd63-27d879a129c5/pdf)",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, due_date, currency FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND ((flow_direction = 'INBOUND' AND vendor_name = 'Ganesh Bearings') OR (flow_direction = 'OUTBOUND' AND customer_name = 'Ganesh Bearings'))",
+      "citations": [
+        {
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "vendor_name": "Ganesh Bearings Pvt Ltd",
+          "page": 1
+        },
+        {
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "vendor_name": "Bharat Hardware & Fasteners",
+          "page": 1
+        },
+        {
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "vendor_name": "Rajesh Steel Corporation",
+          "page": 1
+        },
+        {
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "vendor_name": "Rajesh Steel Corporation",
+          "page": 1
+        },
+        {
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "vendor_name": "Sunrise Engineering Works",
+          "page": 1
+        }
+      ],
+      "created_at": "2026-09-20T13:04:46.939967",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 21.1,
+    "error": null
+  },
+  {
+    "num": 13,
+    "question": "Give me inbound spend per month for July and August",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "July 2026 inbound spend: INR 266739.00 across 3 invoices.  \nAugust 2026 inbound spend: INR 1624588.60 across 11 invoices (combined July+August: INR 1,891,327.60).\n\n### Query Results\n\nmonth | currency | total_spend | invoice_count\n--- | --- | --- | ---\n2026-07-01 | INR | 266739.00 | 3\n2026-08-01 | INR | 1624588.60 | 11",
+    "generated_sql": "SELECT DATE_TRUNC('month', invoice_date)::date AS month, currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND invoice_date >= DATE '2026-07-01' AND invoice_date < DATE '2026-09-01' GROUP BY DATE_TRUNC('month', invoice_date)::date, currency ORDER BY month, currency",
+    "raw_payload": {
+      "id": "9fd132be-7821-4770-abec-da24ad4e3608",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "July 2026 inbound spend: INR 266739.00 across 3 invoices.  \nAugust 2026 inbound spend: INR 1624588.60 across 11 invoices (combined July+August: INR 1,891,327.60).\n\n### Query Results\n\nmonth | currency | total_spend | invoice_count\n--- | --- | --- | ---\n2026-07-01 | INR | 266739.00 | 3\n2026-08-01 | INR | 1624588.60 | 11",
+      "generated_sql": "SELECT DATE_TRUNC('month', invoice_date)::date AS month, currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoice_count FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND invoice_date >= DATE '2026-07-01' AND invoice_date < DATE '2026-09-01' GROUP BY DATE_TRUNC('month', invoice_date)::date, currency ORDER BY month, currency",
+      "citations": [],
+      "created_at": "2026-09-20T13:05:05.811166",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 18.9,
+    "error": null
+  },
+  {
+    "num": 14,
+    "question": "Convert Rajesh Steel's invoice to USD",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "Cannot convert the invoice to USD because the schema contains no exchange-rate or conversion-rate column, and no rate was provided.\n\n_Note: this reply is based on the previous answer in this conversation \u2014 no new database query was run for it, so treat the details as unverified._",
+    "generated_sql": null,
+    "raw_payload": {
+      "id": "347d9390-483f-4b0e-a6ea-7970bd12fce0",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "Cannot convert the invoice to USD because the schema contains no exchange-rate or conversion-rate column, and no rate was provided.\n\n_Note: this reply is based on the previous answer in this conversation \u2014 no new database query was run for it, so treat the details as unverified._",
+      "generated_sql": null,
+      "citations": [],
+      "created_at": "2026-09-20T13:05:25.850984",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 20.0,
+    "error": null
+  },
+  {
+    "num": 15,
+    "question": "Which invoices have HSN 8483?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "HSN 8483 appears on these invoices: VPI-OUT-2012, VPI-OUT-2013, VPI-OUT-2014, VPI-OUT-2015, VPI-OUT-2016, VPI-OUT-2017, VPI-OUT-2018, VPI-OUT-2019, VPI-OUT-2020, VPI-OUT-2021, VPI-OUT-2022, and GBP-2012.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | currency | items\n--- | --- | --- | --- | --- | --- | ---\nVPI-OUT-2012 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-07-14 | INR | [{\"uom\": null, \"amount\": 192000.0, \"quantity\": 600.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 217500.0, \"quantity\": 150.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2015 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-07-14 | INR | [{\"uom\": null, \"amount\": 339500.0, \"quantity\": 70.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 96750.0, \"quantity\": 45.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-17 | INR | [{\"uom\": null, \"amount\": 260000.0, \"quantity\": 100.0, \"unit_price\": 2600.0, \"description\": \"Conveyor Roller Assembly\", \"hsn_sac_code\": \"8428\"}, {\"uom\": null, \"amount\": 150500.0, \"quantity\": 35.0, \"unit_price\": 4300.0, \"description\": \"Drive Sprocket Set\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-18 | INR | [{\"uom\": null, \"amount\": 192000.0, \"quantity\": 600.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 217500.0, \"quantity\": 150.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-18 | INR | [{\"uom\": null, \"amount\": 339500.0, \"quantity\": 70.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 96750.0, \"quantity\": 45.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-18 | INR | [{\"uom\": null, \"amount\": 260000.0, \"quantity\": 100.0, \"unit_price\": 2600.0, \"description\": \"Conveyor Roller Assembly\", \"hsn_sac_code\": \"8428\"}, {\"uom\": null, \"amount\": 150500.0, \"quantity\": 35.0, \"unit_price\": 4300.0, \"description\": \"Drive Sprocket Set\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-19 | INR | [{\"uom\": null, \"amount\": 192000.0, \"quantity\": 600.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 217500.0, \"quantity\": 150.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-19 | INR | [{\"uom\": null, \"amount\": 339500.0, \"quantity\": 70.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 96750.0, \"quantity\": 45.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-19 | INR | [{\"uom\": null, \"amount\": 260000.0, \"quantity\": 100.0, \"unit_price\": 2600.0, \"description\": \"Conveyor Roller Assembly\", \"hsn_sac_code\": \"8428\"}, {\"uom\": null, \"amount\": 150500.0, \"quantity\": 35.0, \"unit_price\": 4300.0, \"description\": \"Drive Sprocket Set\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-27 | INR | [{\"uom\": null, \"amount\": 128000.0, \"quantity\": 400.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 87000.0, \"quantity\": 60.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nGBP-2012 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-28 | INR | [{\"uom\": null, \"amount\": 52000.0, \"quantity\": 100.0, \"tax_amount\": null, \"unit_price\": 520.0, \"description\": \"Deep Groove Ball Bearing 6205\", \"tax_percent\": null, \"hsn_sac_code\": \"8482\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 35600.0, \"quantity\": 40.0, \"tax_amount\": null, \"unit_price\": 890.0, \"description\": \"Bearing Housing P205\", \"tax_percent\": null, \"hsn_sac_code\": \"8483\", \"discount_amount\": null, \"discount_percent\": null}]\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-28 | INR | [{\"uom\": null, \"amount\": 145500.0, \"quantity\": 30.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 129000.0, \"quantity\": 60.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, currency, items FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND LOWER(CAST(items AS TEXT)) LIKE LOWER('%8483%') ORDER BY invoice_date, invoice_number",
+    "raw_payload": {
+      "id": "ab29d80b-dd0b-4d4c-b9e9-1d81276959bc",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "HSN 8483 appears on these invoices: VPI-OUT-2012, VPI-OUT-2013, VPI-OUT-2014, VPI-OUT-2015, VPI-OUT-2016, VPI-OUT-2017, VPI-OUT-2018, VPI-OUT-2019, VPI-OUT-2020, VPI-OUT-2021, VPI-OUT-2022, and GBP-2012.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | currency | items\n--- | --- | --- | --- | --- | --- | ---\nVPI-OUT-2012 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-07-14 | INR | [{\"uom\": null, \"amount\": 192000.0, \"quantity\": 600.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 217500.0, \"quantity\": 150.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2015 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-07-14 | INR | [{\"uom\": null, \"amount\": 339500.0, \"quantity\": 70.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 96750.0, \"quantity\": 45.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-17 | INR | [{\"uom\": null, \"amount\": 260000.0, \"quantity\": 100.0, \"unit_price\": 2600.0, \"description\": \"Conveyor Roller Assembly\", \"hsn_sac_code\": \"8428\"}, {\"uom\": null, \"amount\": 150500.0, \"quantity\": 35.0, \"unit_price\": 4300.0, \"description\": \"Drive Sprocket Set\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-18 | INR | [{\"uom\": null, \"amount\": 192000.0, \"quantity\": 600.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 217500.0, \"quantity\": 150.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-18 | INR | [{\"uom\": null, \"amount\": 339500.0, \"quantity\": 70.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 96750.0, \"quantity\": 45.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-18 | INR | [{\"uom\": null, \"amount\": 260000.0, \"quantity\": 100.0, \"unit_price\": 2600.0, \"description\": \"Conveyor Roller Assembly\", \"hsn_sac_code\": \"8428\"}, {\"uom\": null, \"amount\": 150500.0, \"quantity\": 35.0, \"unit_price\": 4300.0, \"description\": \"Drive Sprocket Set\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-19 | INR | [{\"uom\": null, \"amount\": 192000.0, \"quantity\": 600.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 217500.0, \"quantity\": 150.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-19 | INR | [{\"uom\": null, \"amount\": 339500.0, \"quantity\": 70.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 96750.0, \"quantity\": 45.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-19 | INR | [{\"uom\": null, \"amount\": 260000.0, \"quantity\": 100.0, \"unit_price\": 2600.0, \"description\": \"Conveyor Roller Assembly\", \"hsn_sac_code\": \"8428\"}, {\"uom\": null, \"amount\": 150500.0, \"quantity\": 35.0, \"unit_price\": 4300.0, \"description\": \"Drive Sprocket Set\", \"hsn_sac_code\": \"8483\"}]\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-27 | INR | [{\"uom\": null, \"amount\": 128000.0, \"quantity\": 400.0, \"unit_price\": 320.0, \"description\": \"Custom Stamped Bracket A-14\", \"hsn_sac_code\": \"8708\"}, {\"uom\": null, \"amount\": 87000.0, \"quantity\": 60.0, \"unit_price\": 1450.0, \"description\": \"Precision Shaft Coupling B-9\", \"hsn_sac_code\": \"8483\"}]\nGBP-2012 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-28 | INR | [{\"uom\": null, \"amount\": 52000.0, \"quantity\": 100.0, \"tax_amount\": null, \"unit_price\": 520.0, \"description\": \"Deep Groove Ball Bearing 6205\", \"tax_percent\": null, \"hsn_sac_code\": \"8482\", \"discount_amount\": null, \"discount_percent\": null}, {\"uom\": null, \"amount\": 35600.0, \"quantity\": 40.0, \"tax_amount\": null, \"unit_price\": 890.0, \"description\": \"Bearing Housing P205\", \"tax_percent\": null, \"hsn_sac_code\": \"8483\", \"discount_amount\": null, \"discount_percent\": null}]\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-28 | INR | [{\"uom\": null, \"amount\": 145500.0, \"quantity\": 30.0, \"unit_price\": 4850.0, \"description\": \"Machined Housing Unit H-3\", \"hsn_sac_code\": \"8483\"}, {\"uom\": null, \"amount\": 129000.0, \"quantity\": 60.0, \"unit_price\": 2150.0, \"description\": \"Gearbox Mounting Plate\", \"hsn_sac_code\": \"8483\"}]",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, currency, items FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND LOWER(CAST(items AS TEXT)) LIKE LOWER('%8483%') ORDER BY invoice_date, invoice_number",
+      "citations": [],
+      "created_at": "2026-09-20T13:05:53.362111",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "invoice_number": "VPI-OUT-2014"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "invoice_number": "VPI-OUT-2019"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "dc403a31-0e92-4b7b-a5ee-46b1047dbb85",
+          "invoice_number": "VPI-OUT-2022"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "invoice_number": "VPI-OUT-2013"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+          "invoice_number": "VPI-OUT-2016"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "invoice_number": "VPI-OUT-2018"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "invoice_number": "VPI-OUT-2020"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "invoice_number": "VPI-OUT-2017"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "551a74e1-0ede-4230-88c0-42497f698246",
+          "invoice_number": "VPI-OUT-2015"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "9a79e1c3-6778-4f60-907c-7afc503f5711",
+          "invoice_number": "VPI-OUT-2021"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e6cfda29-d288-4423-9c9e-01cbcab12271",
+          "invoice_number": "VPI-OUT-2012"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 27.5,
+    "error": null
+  },
+  {
+    "num": 16,
+    "question": "Which invoices need my attention?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "These invoices have system flags that need your attention:\n\n- NAT-2007 \u2014 National MRO Traders: status AUDIT_REQUIRED. sa_alert: \"Possible duplicate: National MRO Traders invoice NAT-2006 ... has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\"  \n- RAJ-2009 \u2014 Rajesh Steel Corporation: status AUDIT_REQUIRED. sa_alert: \"Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 ... has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.\"  \n- VPI-OUT-2014 \u2014 Vishwa Precision Industries Pvt Ltd (outbound): status NEEDS_REVIEW. sa_alert: \"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00).\"\n\n**Citations:**\n[Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/7af3ad6a-a643-4884-bd91-088af0e09bf1/pdf), [Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/f84c8490-bd5b-4550-a992-d120d854ff8b/pdf), [Source: Shree Packaging Industries (Page 1)](file:///api/v1/invoices/29a03885-2441-4502-9f29-d4cc05efd1de/pdf), [Source: Sunrise Engineering Works (Page 1)](file:///api/v1/invoices/e21e8a13-798f-4b9f-bd63-27d879a129c5/pdf), [Source: Shree Packaging Industries (Page 1)](file:///api/v1/invoices/fbe08368-f644-47af-905b-ec4085211eec/pdf)",
+    "generated_sql": null,
+    "raw_payload": {
+      "id": "8a1c5516-12e6-4f12-9274-bbe3767d2876",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "These invoices have system flags that need your attention:\n\n- NAT-2007 \u2014 National MRO Traders: status AUDIT_REQUIRED. sa_alert: \"Possible duplicate: National MRO Traders invoice NAT-2006 ... has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\"  \n- RAJ-2009 \u2014 Rajesh Steel Corporation: status AUDIT_REQUIRED. sa_alert: \"Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 ... has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.\"  \n- VPI-OUT-2014 \u2014 Vishwa Precision Industries Pvt Ltd (outbound): status NEEDS_REVIEW. sa_alert: \"Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00).\"\n\n**Citations:**\n[Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/7af3ad6a-a643-4884-bd91-088af0e09bf1/pdf), [Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/f84c8490-bd5b-4550-a992-d120d854ff8b/pdf), [Source: Shree Packaging Industries (Page 1)](file:///api/v1/invoices/29a03885-2441-4502-9f29-d4cc05efd1de/pdf), [Source: Sunrise Engineering Works (Page 1)](file:///api/v1/invoices/e21e8a13-798f-4b9f-bd63-27d879a129c5/pdf), [Source: Shree Packaging Industries (Page 1)](file:///api/v1/invoices/fbe08368-f644-47af-905b-ec4085211eec/pdf)",
+      "generated_sql": null,
+      "citations": [
+        {
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "vendor_name": "Om Stationery Mart",
+          "page": 1
+        },
+        {
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "vendor_name": "Om Stationery Mart",
+          "page": 1
+        },
+        {
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "vendor_name": "Shree Packaging Industries",
+          "page": 1
+        },
+        {
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "vendor_name": "Sunrise Engineering Works",
+          "page": 1
+        },
+        {
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "vendor_name": "Shree Packaging Industries",
+          "page": 1
+        }
+      ],
+      "created_at": "2026-09-20T13:06:16.554397",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 23.2,
+    "error": null
+  },
+  {
+    "num": 17,
+    "question": "Did we pay Om Stationery twice?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "- Om Stationery Mart \u2014 OM -2000 (dated 09\u2011Jul\u20112026): status = PAID, total = INR 41,654.00.  \n- Om Stationery Mart \u2014 OM -2001 (dated 16\u2011Aug\u20112026): status = COMPLETED (not PAID), total = INR 41,654.00.\n\nOnly OM -2000 is marked PAID in the records; OM -2001 is not \u2014 so there is evidence of one payment, not two. (Record note: OM -2000\u2019s paid_at field is null despite status = PAID.)\n\n**Citations:**\n[Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/f84c8490-bd5b-4550-a992-d120d854ff8b/pdf), [Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/7af3ad6a-a643-4884-bd91-088af0e09bf1/pdf)",
+    "generated_sql": "SELECT invoice_number, vendor_name, flow_direction, invoice_date, due_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND vendor_name = 'Om Stationery'",
+    "raw_payload": {
+      "id": "551be1b7-b615-4701-85aa-539f5350abb7",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "- Om Stationery Mart \u2014 OM -2000 (dated 09\u2011Jul\u20112026): status = PAID, total = INR 41,654.00.  \n- Om Stationery Mart \u2014 OM -2001 (dated 16\u2011Aug\u20112026): status = COMPLETED (not PAID), total = INR 41,654.00.\n\nOnly OM -2000 is marked PAID in the records; OM -2001 is not \u2014 so there is evidence of one payment, not two. (Record note: OM -2000\u2019s paid_at field is null despite status = PAID.)\n\n**Citations:**\n[Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/f84c8490-bd5b-4550-a992-d120d854ff8b/pdf), [Source: Om Stationery Mart (Page 1)](file:///api/v1/invoices/7af3ad6a-a643-4884-bd91-088af0e09bf1/pdf)",
+      "generated_sql": "SELECT invoice_number, vendor_name, flow_direction, invoice_date, due_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND vendor_name = 'Om Stationery'",
+      "citations": [
+        {
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "vendor_name": "Om Stationery Mart",
+          "page": 1
+        },
+        {
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "vendor_name": "Om Stationery Mart",
+          "page": 1
+        }
+      ],
+      "created_at": "2026-09-20T13:06:51.172937",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": null,
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 34.6,
+    "error": null
+  },
+  {
+    "num": 18,
+    "question": "What's our spend this fiscal year?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "The query results show total spend INR 1891327.60 across 14 invoices for the fiscal period used by this query. If you mean a specific fiscal year definition (e.g., Apr\u2013Mar), tell me which one and I\u2019ll re-run the filter.\n\n### Query Results\n\ncurrency | total_spend | invoices\n--- | --- | ---\nINR | 1891327.60 | 14",
+    "generated_sql": "SELECT currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoices FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND invoice_date >= DATE '2026-01-01' AND invoice_date < DATE '2027-01-01' GROUP BY currency ORDER BY currency",
+    "raw_payload": {
+      "id": "e0365ce4-8e14-4e46-adb1-d46c54121751",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "The query results show total spend INR 1891327.60 across 14 invoices for the fiscal period used by this query. If you mean a specific fiscal year definition (e.g., Apr\u2013Mar), tell me which one and I\u2019ll re-run the filter.\n\n### Query Results\n\ncurrency | total_spend | invoices\n--- | --- | ---\nINR | 1891327.60 | 14",
+      "generated_sql": "SELECT currency, SUM(grand_total) AS total_spend, COUNT(*) AS invoices FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND flow_direction = 'INBOUND' AND invoice_date >= DATE '2026-01-01' AND invoice_date < DATE '2027-01-01' GROUP BY currency ORDER BY currency",
+      "citations": [],
+      "created_at": "2026-09-20T13:07:25.345619",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 34.2,
+    "error": null
+  },
+  {
+    "num": 19,
+    "question": "How much is outstanding?",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "If \u201coutstanding\u201d means INBOUND invoices not marked PAID, the outstanding total is INR 1,369,708.60 (103191.00 + 79956.80 + 79956.80 + 41654.00 + 437190.00 + 437190.00 + 121894.00 + 68676.00). Note: NAT-2007 and RAJ-2009 are flagged as possible duplicates of NAT-2006 and RAJ-2008 respectively, which could reduce the payable total if they are re-issues.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | due_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nBHA-2002 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-08 | 103191.00 | INR | PAID | \nOM -2000 | Om Stationery Mart |  | INBOUND | 2026-08-08 | 41654.00 | INR | PAID | \nSHR-2004 | Shree Packaging Industries |  | INBOUND | 2026-08-08 | 121894.00 | INR | PAID | \nBHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-09-15 | 103191.00 | INR | COMPLETED | \nNAT-2006 | National MRO Traders |  | INBOUND | 2026-09-15 | 79956.80 | INR | COMPLETED | \nNAT-2007 | National MRO Traders |  | INBOUND | 2026-09-15 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\nOM -2001 | Om Stationery Mart |  | INBOUND | 2026-09-15 | 41654.00 | INR | COMPLETED | \nRAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-09-15 | 437190.00 | INR | COMPLETED | \nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-09-15 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.\nSHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-09-15 | 121894.00 | INR | COMPLETED | \nGBP-2011 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-09-18 | 68676.00 | INR | COMPLETED | \nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-09-17 | 483210.00 | INR | VERIFIED | \nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-09-17 | 483850.00 | INR | NEEDS_REVIEW | Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | ",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, due_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND due_date < CURRENT_DATE AND ((flow_direction = 'OUTBOUND' AND status <> 'PAID') OR flow_direction = 'INBOUND') ORDER BY currency, flow_direction, due_date, invoice_number",
+    "raw_payload": {
+      "id": "5a843a24-6910-4b61-a7db-7922bc5412ef",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "If \u201coutstanding\u201d means INBOUND invoices not marked PAID, the outstanding total is INR 1,369,708.60 (103191.00 + 79956.80 + 79956.80 + 41654.00 + 437190.00 + 437190.00 + 121894.00 + 68676.00). Note: NAT-2007 and RAJ-2009 are flagged as possible duplicates of NAT-2006 and RAJ-2008 respectively, which could reduce the payable total if they are re-issues.\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | due_date | grand_total | currency | status | sa_alerts\n--- | --- | --- | --- | --- | --- | --- | --- | ---\nBHA-2002 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-08 | 103191.00 | INR | PAID | \nOM -2000 | Om Stationery Mart |  | INBOUND | 2026-08-08 | 41654.00 | INR | PAID | \nSHR-2004 | Shree Packaging Industries |  | INBOUND | 2026-08-08 | 121894.00 | INR | PAID | \nBHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-09-15 | 103191.00 | INR | COMPLETED | \nNAT-2006 | National MRO Traders |  | INBOUND | 2026-09-15 | 79956.80 | INR | COMPLETED | \nNAT-2007 | National MRO Traders |  | INBOUND | 2026-09-15 | 79956.80 | INR | AUDIT_REQUIRED | Possible duplicate: National MRO Traders invoice NAT-2006 (ID: 86f1559a-ab03-4c07-b1f3-7453db53aeb9) has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue.\nOM -2001 | Om Stationery Mart |  | INBOUND | 2026-09-15 | 41654.00 | INR | COMPLETED | \nRAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-09-15 | 437190.00 | INR | COMPLETED | \nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-09-15 | 437190.00 | INR | AUDIT_REQUIRED | Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 (ID: d5869da2-b3bc-4d41-9356-2c6a02352616) has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue.\nSHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-09-15 | 121894.00 | INR | COMPLETED | \nGBP-2011 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-09-18 | 68676.00 | INR | COMPLETED | \nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-09-17 | 483210.00 | INR | VERIFIED | \nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-09-17 | 483850.00 | INR | NEEDS_REVIEW | Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-09-17 | 514775.00 | INR | VERIFIED | \nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | \nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-09-17 | 484390.00 | INR | VERIFIED | ",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, due_date, grand_total, currency, status, sa_alerts FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND due_date < CURRENT_DATE AND ((flow_direction = 'OUTBOUND' AND status <> 'PAID') OR flow_direction = 'INBOUND') ORDER BY currency, flow_direction, due_date, invoice_number",
+      "citations": [],
+      "created_at": "2026-09-20T13:07:53.122762",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "invoice_number": "VPI-OUT-2014"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "f84c8490-bd5b-4550-a992-d120d854ff8b",
+          "invoice_number": "OM -2000"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "invoice_number": "VPI-OUT-2019"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "invoice_number": "VPI-OUT-2013"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+          "invoice_number": "VPI-OUT-2016"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "invoice_number": "VPI-OUT-2018"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "invoice_number": "VPI-OUT-2020"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "invoice_number": "VPI-OUT-2017"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "b96f4a85-74ed-4aff-b8ff-27cddceb0d6c",
+          "invoice_number": "BHA-2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "fbe08368-f644-47af-905b-ec4085211eec",
+          "invoice_number": "SHR-2004"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 27.8,
+    "error": null
+  },
+  {
+    "num": 20,
+    "question": "Show me the CGST/SGST split for August",
+    "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+    "answer": "CGST = INR 421,674.30 (3177.0 + 7870.5 + 36945.0 + 9297.0 + 36945.0 + 36855.0 + 39262.5 + 6098.4 + 36855.0 + 5238.0 + 6098.4 + 36945.0 + 39262.5 + 33345.0 + 33345.0 + 2196.0 + 19350.0 + 24705.0 + 7884.0).\n\nSGST = INR 421,674.30 (same per\u2011invoice SGST amounts: 3177.0 + 7870.5 + 36945.0 + 9297.0 + 36945.0 + 36855.0 + 39262.5 + 6098.4 + 36855.0 + 5238.0 + 6098.4 + 36945.0 + 39262.5 + 33345.0 + 33345.0 + 2196.0 + 19350.0 + 24705.0 + 7884.0). Two invoices (SHR-2006: INR 18,720.00 and VPI-OUT-2023: INR 34,056.00) do not include a CGST/SGST split; their combined tax is INR 52,776.00 (18,720.00 + 34,056.00). Total tax across all 21 rows is INR 896,124.60 (from computed figures).\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | tax_amount | grand_total | currency\n--- | --- | --- | --- | --- | --- | --- | ---\nOM -2001 | Om Stationery Mart |  | INBOUND | 2026-08-16 | 6354.00 | 41654.00 | INR\nBHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-17 | 15741.00 | 103191.00 | INR\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-17 | 73890.00 | 484390.00 | INR\nSHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-08-18 | 18594.00 | 121894.00 | INR\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-18 | 73890.00 | 484390.00 | INR\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-18 | 73710.00 | 483210.00 | INR\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-18 | 78525.00 | 514775.00 | INR\nNAT-2006 | National MRO Traders |  | INBOUND | 2026-08-19 | 12196.80 | 79956.80 | INR\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-19 | 73710.00 | 483850.00 | INR\nGBP-2011 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-19 | 10476.00 | 68676.00 | INR\nNAT-2007 | National MRO Traders |  | INBOUND | 2026-08-19 | 12196.80 | 79956.80 | INR\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-19 | 73890.00 | 484390.00 | INR\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-19 | 78525.00 | 514775.00 | INR\nRAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 66690.00 | 437190.00 | INR\nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 66690.00 | 437190.00 | INR\nOM -2002 | Om Stationery Mart |  | INBOUND | 2026-08-26 | 4392.00 | 28792.00 | INR\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-27 | 38700.00 | 253700.00 | INR\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-28 | 49410.00 | 323910.00 | INR\nGBP-2012 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-28 | 15768.00 | 103368.00 | INR\nSHR-2006 | Shree Packaging Industries |  | INBOUND | 2026-08-29 | 18720.00 | 122720.00 | INR\nVPI-OUT-2023 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-30 | 34056.00 | 223256.00 | INR",
+    "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, tax_amount, grand_total, currency FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND invoice_date >= DATE '2026-08-01' AND invoice_date < DATE '2026-09-01'",
+    "raw_payload": {
+      "id": "abb99070-055d-41a3-9f4f-37ffa7de57fb",
+      "session_id": "eeabb6c3-e649-4108-a028-ee94690d3a96",
+      "role": "assistant",
+      "content": "CGST = INR 421,674.30 (3177.0 + 7870.5 + 36945.0 + 9297.0 + 36945.0 + 36855.0 + 39262.5 + 6098.4 + 36855.0 + 5238.0 + 6098.4 + 36945.0 + 39262.5 + 33345.0 + 33345.0 + 2196.0 + 19350.0 + 24705.0 + 7884.0).\n\nSGST = INR 421,674.30 (same per\u2011invoice SGST amounts: 3177.0 + 7870.5 + 36945.0 + 9297.0 + 36945.0 + 36855.0 + 39262.5 + 6098.4 + 36855.0 + 5238.0 + 6098.4 + 36945.0 + 39262.5 + 33345.0 + 33345.0 + 2196.0 + 19350.0 + 24705.0 + 7884.0). Two invoices (SHR-2006: INR 18,720.00 and VPI-OUT-2023: INR 34,056.00) do not include a CGST/SGST split; their combined tax is INR 52,776.00 (18,720.00 + 34,056.00). Total tax across all 21 rows is INR 896,124.60 (from computed figures).\n\n### Query Results\n\ninvoice_number | vendor_name | customer_name | flow_direction | invoice_date | tax_amount | grand_total | currency\n--- | --- | --- | --- | --- | --- | --- | ---\nOM -2001 | Om Stationery Mart |  | INBOUND | 2026-08-16 | 6354.00 | 41654.00 | INR\nBHA-2003 | Bharat Hardware & Fasteners |  | INBOUND | 2026-08-17 | 15741.00 | 103191.00 | INR\nVPI-OUT-2018 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-17 | 73890.00 | 484390.00 | INR\nSHR-2005 | Shree Packaging Industries |  | INBOUND | 2026-08-18 | 18594.00 | 121894.00 | INR\nVPI-OUT-2019 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-18 | 73890.00 | 484390.00 | INR\nVPI-OUT-2013 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-18 | 73710.00 | 483210.00 | INR\nVPI-OUT-2016 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-18 | 78525.00 | 514775.00 | INR\nNAT-2006 | National MRO Traders |  | INBOUND | 2026-08-19 | 12196.80 | 79956.80 | INR\nVPI-OUT-2014 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-19 | 73710.00 | 483850.00 | INR\nGBP-2011 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-19 | 10476.00 | 68676.00 | INR\nNAT-2007 | National MRO Traders |  | INBOUND | 2026-08-19 | 12196.80 | 79956.80 | INR\nVPI-OUT-2020 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-19 | 73890.00 | 484390.00 | INR\nVPI-OUT-2017 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-19 | 78525.00 | 514775.00 | INR\nRAJ-2008 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 66690.00 | 437190.00 | INR\nRAJ-2009 | Rajesh Steel Corporation |  | INBOUND | 2026-08-20 | 66690.00 | 437190.00 | INR\nOM -2002 | Om Stationery Mart |  | INBOUND | 2026-08-26 | 4392.00 | 28792.00 | INR\nVPI-OUT-2021 | Vishwa Precision Industries Pvt Ltd | Kaveri Auto Components Pvt Ltd | OUTBOUND | 2026-08-27 | 38700.00 | 253700.00 | INR\nVPI-OUT-2022 | Vishwa Precision Industries Pvt Ltd | Sunrise Engineering Works | OUTBOUND | 2026-08-28 | 49410.00 | 323910.00 | INR\nGBP-2012 | Ganesh Bearings Pvt Ltd |  | INBOUND | 2026-08-28 | 15768.00 | 103368.00 | INR\nSHR-2006 | Shree Packaging Industries |  | INBOUND | 2026-08-29 | 18720.00 | 122720.00 | INR\nVPI-OUT-2023 | Vishwa Precision Industries Pvt Ltd | Deccan Machinery Ltd | OUTBOUND | 2026-08-30 | 34056.00 | 223256.00 | INR",
+      "generated_sql": "SELECT invoice_number, vendor_name, customer_name, flow_direction, invoice_date, tax_amount, grand_total, currency FROM invoice WHERE tenant_id = '00000000-0000-0000-0000-000000000000' AND invoice_date >= DATE '2026-08-01' AND invoice_date < DATE '2026-09-01'",
+      "citations": [],
+      "created_at": "2026-09-20T13:08:31.667462",
+      "feedback": null,
+      "status": "completed",
+      "job_id": null,
+      "error_message": null,
+      "attachment_confirmation": null,
+      "attachment_comparison": null,
+      "attachment_clarification": null,
+      "suggested_actions": null,
+      "evidence": null,
+      "needs_confirmation": null,
+      "line_items": null,
+      "unmatched": null,
+      "reconciliation": null,
+      "attachment_pair_comparison": null,
+      "provenance": [
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "7af3ad6a-a643-4884-bd91-088af0e09bf1",
+          "invoice_number": "OM -2001"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d0a5d0dd-c32f-4eef-8b24-a1fa5d617f68",
+          "invoice_number": "BHA-2003"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ec8acc1d-c0c0-493c-a3c2-78292fadab5e",
+          "invoice_number": "VPI-OUT-2018"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "29a03885-2441-4502-9f29-d4cc05efd1de",
+          "invoice_number": "SHR-2005"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "94192419-1da8-4cfb-a374-9d60ff559256",
+          "invoice_number": "VPI-OUT-2019"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "0795e41d-86ec-4c83-8088-a7276f04fc94",
+          "invoice_number": "VPI-OUT-2013"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "256232e6-e256-4f4d-8249-10e64c4458ad",
+          "invoice_number": "VPI-OUT-2016"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "86f1559a-ab03-4c07-b1f3-7453db53aeb9",
+          "invoice_number": "NAT-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "13d719a7-c53f-4204-95fc-79f5b73959ba",
+          "invoice_number": "VPI-OUT-2014"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "5288549a-9cb7-4ac6-94b9-b734463029df",
+          "invoice_number": "GBP-2011"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "22490a93-94a8-4511-90ba-52d495e0cc05",
+          "invoice_number": "NAT-2007"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "65097bd1-9b0c-4178-a998-3ca06a8fd831",
+          "invoice_number": "VPI-OUT-2020"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "e21e8a13-798f-4b9f-bd63-27d879a129c5",
+          "invoice_number": "VPI-OUT-2017"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "d5869da2-b3bc-4d41-9356-2c6a02352616",
+          "invoice_number": "RAJ-2008"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "530bd65a-be04-4953-988b-2932f52a6f89",
+          "invoice_number": "RAJ-2009"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "ff4a9fe0-df7a-401d-a9b3-29e128f66663",
+          "invoice_number": "OM -2002"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "9a79e1c3-6778-4f60-907c-7afc503f5711",
+          "invoice_number": "VPI-OUT-2021"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "dc403a31-0e92-4b7b-a5ee-46b1047dbb85",
+          "invoice_number": "VPI-OUT-2022"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "33d6ccd5-57a4-4c16-a4f1-9708a05c205a",
+          "invoice_number": "GBP-2012"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "11c3df22-d0bd-41d9-a219-2c204a4ad39e",
+          "invoice_number": "SHR-2006"
+        },
+        {
+          "source": "invoice_row",
+          "chunk_ids": [],
+          "invoice_id": "a2d86662-fc1d-452c-9783-02463bdfe930",
+          "invoice_number": "VPI-OUT-2023"
+        }
+      ],
+      "abstention": null,
+      "insights": null
+    },
+    "latency_s": 38.7,
+    "error": null
+  }
+]

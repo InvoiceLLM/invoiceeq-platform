@@ -35,6 +35,9 @@ param azureOpenAiJudgeDeploymentName string = ''
 @description('Feature 29 decision 2: deployment that narrates the full-record chat route (gpt-5-mini in dev; Luna keeps the attachment branches). Empty = use azureOpenAiJudgeDeploymentName, then azureOpenAiDeploymentName -- the pre-29.5 behaviour.')
 param azureOpenAiChatSummaryDeploymentName string = ''
 
+@description('BE Feature 35 task 35.0: deployment for the `atlas` registry role (ATLAS Intelligence briefing). Empty = resolve_model("atlas") falls back to the primary deployment. Set to the GPT-5.6 Terra deployment name per environment.')
+param azureOpenAiAtlasDeploymentName string = ''
+
 @description('Image tag for backend API container')
 param backendImage string = 'mcr.microsoft.com/azuredocs/aci-helloworld:latest'
 
@@ -365,6 +368,7 @@ module backendApp './modules/compute/invoice-be.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     image: backendImage
@@ -449,6 +453,7 @@ module billingLifecycleJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     cpu: '0.25'
     memory: '0.5Gi'
   }
@@ -486,6 +491,7 @@ enableEntityResolver: enableEntityResolver
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     azureDocIntelEndpoint: docIntelAccount.properties.endpoint
     acrName: sharedAcrName
     storageAccountName: storageAccountName
@@ -595,6 +601,7 @@ module overdueSweepJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -635,6 +642,7 @@ module sandboxSweepJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -669,6 +677,7 @@ module stuckChatTurnReaperJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -700,6 +709,7 @@ module stuckInvoiceSweepJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -731,6 +741,7 @@ module extractionQualitySweepJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     cpu: scheduledJobCpu
     memory: scheduledJobMemory
   }
@@ -839,6 +850,7 @@ module benchmarkEvalJob './modules/compute/scheduled-job.bicep' = {
     azureOpenAiFastDeploymentName: azureOpenAiFastDeploymentName
     azureOpenAiJudgeDeploymentName: azureOpenAiJudgeDeploymentName
     azureOpenAiChatSummaryDeploymentName: azureOpenAiChatSummaryDeploymentName
+    azureOpenAiAtlasDeploymentName: azureOpenAiAtlasDeploymentName
     enableEntityResolver: enableEntityResolver
     enableSemanticViews: enableSemanticViews
     enableCertifiedExamples: enableCertifiedExamples

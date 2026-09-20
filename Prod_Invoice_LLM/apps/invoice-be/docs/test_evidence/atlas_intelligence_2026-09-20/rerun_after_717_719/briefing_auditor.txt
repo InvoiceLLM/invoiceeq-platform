@@ -1,0 +1,27 @@
+ROLE auditor
+grants {"can_audit": true, "can_train": false, "can_load": false, "is_admin": false}
+
+event: paragraph
+data: {"text": "Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue. RAJ-2009 is waiting for a decision for ₹4,37,190.00, due 15 September.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "audit-approve-530bd65a-be04-4953-988b-2932f52a6f89"}]}
+
+event: paragraph
+data: {"text": "Possible duplicate: National MRO Traders invoice NAT-2006 has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue. NAT-2007 is waiting for a decision for ₹79,956.80, due 15 September.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "audit-approve-22490a93-94a8-4511-90ba-52d495e0cc05"}]}
+
+event: paragraph
+data: {"text": "Over the next 30 days, you are committed to ₹16,24,588.60 across 11 invoice(s) and expecting ₹42,50,646.00 across 10. This assumes every invoice is settled on its due date, and the runway assumes the last 90 days of payments continue.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "audit-cash-INR"}]}
+
+event: paragraph
+data: {"text": "Vishwa Precision Industries Pvt Ltd VPI-OUT-2014 is still waiting on a decision. Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00)", "citations": [{"tool": "invoices", "record_kind": "invoice", "record_id": "13d719a7-c53f-4204-95fc-79f5b73959ba"}]}
+
+event: question
+data: {"text": "Rajesh Steel Corporation RAJ-2009 looks like a copy of RAJ-2008. Is it a genuine second order?", "citations": [{"tool": "invoices", "record_kind": "invoice", "record_id": "530bd65a-be04-4953-988b-2932f52a6f89"}], "answer_kind": "free_text"}
+
+event: done
+data: {"cached": false, "model": "gpt-5.6-terra", "dropped_paragraphs": 0}
+
+-- run --
+model gpt-5.6-terra
+tokens_in 6983 tokens_out 447
+cost_usd 0.019330
+dropped 0 truncated None
+tool_calls [{"tool": "list_lines", "args": {}, "ms": 41, "rows": 3, "refused": null}, {"tool": "invoices", "args": {}, "ms": 7, "rows": 26, "refused": null}]

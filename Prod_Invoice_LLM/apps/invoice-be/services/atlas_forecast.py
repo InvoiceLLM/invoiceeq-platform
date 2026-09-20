@@ -72,6 +72,7 @@ from services.atlas_contract import (
     What,
     Why,
     validate_recommendation,
+    verbatim_references,
 )
 from services.atlas_figures import computed_figure, count_reference, money_prefix, render_amount
 
@@ -285,7 +286,15 @@ def forecast_recommendations(
                     why=Why(
                         text=text,
                         figures=figures,
-                        references=[count_reference(len(levers))],
+                        # BE Gap 714: every lever's `label` names the party
+                        # verbatim ("Chase Chase Customer 846807 early"), and a
+                        # lever label is prose -- `Recommendation.prose()`
+                        # includes it. The party name's digits are an identifier,
+                        # not a figure.
+                        references=[
+                            count_reference(len(levers)),
+                            *verbatim_references(*(lever[3] for lever in levers)),
+                        ],
                         doubt=(
                             "This is built on due dates, not on how these people "
                             "actually pay — I do not know that yet, so the day "

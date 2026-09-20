@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+date: Sun, 20 Sep 2026 14:16:09 GMT
+server: uvicorn
+cache-control: no-cache
+connection: keep-alive
+x-accel-buffering: no
+content-type: text/event-stream; charset=utf-8
+x-request-id: 51e704e3-2304-431e-a964-790cedb76f7a
+x-trace-id: 51e704e3-2304-431e-a964-790cedb76f7a
+transfer-encoding: chunked
+

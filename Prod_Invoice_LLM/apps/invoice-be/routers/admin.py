@@ -28,6 +28,10 @@ from dependencies import (
     TenantContext,
 )
 from models import AuditLog, DroppedInboundEmail, RoleMapper, Tenant, TenantEmailSender, User
+# BE Gap 719: a grant change makes today's ATLAS briefing a briefing written for
+# somebody else's clearance. Feature 35 §8 ruling 4 -- mark it stale, never
+# regenerate here.
+from services.atlas_briefing_cache import invalidate as invalidate_briefing
 from services.inbound_mail_security import sender_domain_of
 
 logger = logging.getLogger(__name__)
@@ -207,6 +211,13 @@ async def set_user_permissions(
     db_session.commit()
     db_session.refresh(user)
 
+    # BE Gap 719: the briefing is written against the grants the reader held
+    # when it ran -- the tool schema, the pre-fetch and the role word all come
+    # from them. A person who has just been given `can_audit` would otherwise
+    # read today's Trainer-shaped briefing until tomorrow. Stale, not
+    # regenerated (§8 ruling 4): the next open rewrites it.
+    invalidate_briefing(db_session, context.tenant_id, user.clerk_user_id or "")
+
     logger.info(
         "Admin %s set permissions for user %s: train=%s audit=%s load=%s send_invoices=%s",
         context.user_id, user.clerk_user_id, user.can_train, user.can_audit, user.can_load, user.can_send_invoices,
@@ -300,6 +311,12 @@ async def remove_tenant_user(
         db_session.delete(user)
 
     db_session.commit()
+
+    # BE Gap 719: a detached user holds nothing now, so today's briefing --
+    # written for the grants they had an hour ago -- must not replay. Keyed on
+    # the tenant they were in, which is the tenant the row was written under and
+    # is no longer on the `users` row after a detach.
+    invalidate_briefing(db_session, context.tenant_id, removed.clerk_user_id or "")
 
     logger.info(
         "Admin %s removed user %s (%s) from tenant %s (detached=%s)",

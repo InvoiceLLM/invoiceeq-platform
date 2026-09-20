@@ -4845,3 +4845,18 @@ td, .table-cell {
   background: #FFFFFF !important;
 }
 
+
+/* =============================================================================
+   FE Feature 24 (the briefing) task 24.4 — the two-second citation highlight.
+
+   Applied by `revealCitation()` in `components/atlas/BriefingParagraph.tsx` to
+   the element a citation points at (an `AtlasLine`, the memory panel, the
+   action log) and removed again on a timer. A class rather than an inline
+   style, so the unit test can assert the toggle without reading colours.
+   ============================================================================= */
+.atlas-briefing-cited {
+  outline: 2px solid rgba(251, 191, 36, 0.8);
+  outline-offset: 2px;
+  border-radius: 0.25rem;
+  transition: outline-color 200ms ease-out;
+}

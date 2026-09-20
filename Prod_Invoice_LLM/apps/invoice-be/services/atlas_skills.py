@@ -75,6 +75,7 @@ from services.atlas_contract import (
     Why,
     numeric_tokens,
     validate_recommendation,
+    verbatim_references,
 )
 from services.atlas_figures import (
     computed_figure,
@@ -91,6 +92,8 @@ __all__ = [
     "atlas_lines",
     "cash_position",
     "CashPosition",
+    # BE Gap 717: the one place "this alert is still open" is decided.
+    "alert_is_open",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +104,33 @@ __all__ = [
 
 #: Inbound invoices in this state are the Auditor's queue (routers/audit.py).
 _AWAITING_AUDIT = ("AUDIT_REQUIRED", "REVIEW_LATER")
+
+#: **While an alert on this invoice is still open** -- BE Gap 717.
+#:
+#: The pipeline writes `sa_alerts` once and never clears them, so a PAID invoice
+#: carries the sentence it was flagged with for the rest of its life. Those
+#: sentences kept reaching the briefing as live findings: a settled invoice's
+#: historical "possible duplicate" read exactly like one nobody had decided yet.
+#:
+#: The statuses below are the ones this repo's own status machines hold a
+#: document in **for a person to look at**: `_AWAITING_AUDIT` (the inbound
+#: auditor queue) plus `NEEDS_REVIEW` (the outbound verification queue, where
+#: VPI-OUT-2014's `tax_mismatch` sits) and `NEEDS_RESUBMISSION`. Deliberately
+#: built from `_AWAITING_AUDIT` rather than retyping its two values, so a change
+#: to the auditor queue reaches this too -- and deliberately *not* `_OPEN_PAYABLE`
+#: or `_OPEN_RECEIVABLE`, which answer a different question (is this money still
+#: moving) and include `COMPLETED`, `VERIFIED`, `SENT`.
+_ALERT_OPEN_STATUSES = _AWAITING_AUDIT + ("NEEDS_REVIEW", "NEEDS_RESUBMISSION")  # hardcode-ok: invoice STATUS tokens, this repo's own status machines (routers/audit.py, services/document_comparison.py), not domain data
+
+
+def alert_is_open(status) -> bool:
+    """Whether an alert recorded on an invoice in `status` is still an open one.
+
+    The single source BE Gap 717's rule is read from -- `services/atlas_tools.py`
+    imports this rather than restating a status list, because two lists of
+    statuses that are supposed to agree are two lists that eventually do not.
+    """
+    return str(status or "").strip().upper() in _ALERT_OPEN_STATUSES
 
 #: **What this tenant owes** -- every inbound invoice that has finished
 #: extraction and has not been finalised. BE Gap 705.
@@ -478,7 +508,12 @@ def _approval_lines(db: Session, ctx: SkillContext) -> list[Recommendation]:
                     why=Why(
                         text=why_text,
                         figures=figures,
-                        references=[number] + alert_references,
+                        # BE Gap 714: `vendor` is the stored `vendor_name`,
+                        # copied verbatim into the headline and into `why_text`.
+                        # A party named "Vendor 100200 Pvt Ltd" put a
+                        # money-shaped run into prose that no figure declares,
+                        # and every line about that vendor then raised.
+                        references=[number, *alert_references, *verbatim_references(vendor)],
                         doubt=doubt,
                     ),
                     action=Action(
@@ -705,7 +740,10 @@ def _low_confidence_fields(
                         f"extractor could not see clearly: {names}. Teaching it here "
                         f"fixes this vendor's layout, not just this invoice."
                     ),
-                    references=[number],
+                    # BE Gap 714: `vendor` and `names` are both copied verbatim
+                    # -- the stored vendor name, and the extractor's own field
+                    # keys, which may carry a line index ("line_item_12_total").
+                    references=[number, *verbatim_references(vendor, names)],
                     doubt=(
                         "I am not confident I read these fields correctly — the "
                         "document did not read cleanly there."
@@ -848,7 +886,13 @@ def _failed_ingestion_lines(
                         f"failed to load, most recently {names} on "
                         f"{_day_month(newest.ingested_at)}. {_fix_for(newest.error_detail)}"
                     ),
-                    references=[count_reference(len(failures))],
+                    # BE Gap 714: `label` carries the source's own `source_ref`
+                    # (a Drive folder id) and `names` are source file names --
+                    # both verbatim record strings, both routinely all digits.
+                    references=[
+                        count_reference(len(failures)),
+                        *verbatim_references(label, names),
+                    ],
                 ),
                 action=Action(
                     kind="retry_ingestion_source",
@@ -911,7 +955,8 @@ def _quiet_source_lines(
                         f"invoices stopped coming, or this source stopped reaching "
                         f"them; running it now tells you which."
                     ),
-                    references=[count_reference(quiet_for)],
+                    # BE Gap 714: `label` carries the source's own `source_ref`.
+                    references=[count_reference(quiet_for), *verbatim_references(label)],
                     doubt=(
                         "A quiet source and a quiet month look identical from here "
                         "— I cannot tell them apart without running it."

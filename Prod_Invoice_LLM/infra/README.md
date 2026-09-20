@@ -37,6 +37,36 @@ never a recreation.
 
 ---
 
+## Model deployments (role-scoped Azure OpenAI deployments)
+
+Stage 4 (`04-ai.bicep`) provisions the Azure OpenAI account and its primary
+deployment (`azureOpenAiDeploymentName`). Every additional role deployment
+(fast/judge/chat_summary/atlas) is a separate, narrow, standalone
+`model-deployment.bicep` run against the existing account — NOT part of
+`deploy-all.ps1`'s 10 stages, so a routine full deploy never risks rolling
+back a role deployment or its capacity:
+
+```powershell
+az deployment group create -g rg-invoice-llm-dev -f model-deployment.bicep `
+  -p openaiAccountName=openai-invoicellm-dev deploymentName=gpt-5.6-luna `
+     modelName=gpt-5.6-luna modelVersion=2026-07-09 capacity=50
+```
+
+Current dev role deployments (`utils/model_registry.py` maps deployment name
+to price/context by prefix match): `gpt-5.6-luna` (primary/fast **and the BE Feature 35 `atlas` role**, $0.20/$1.20
+per 1M), `gpt-5-mini` (judge/chat_summary, legacy pricing), `gpt-4o` (legacy,
+retiring). `gpt-5.6-terra` was recreated 2026-09-20 for the `atlas` role and
+**deleted again the same day**: a four-model trial on the VPI tenant (Luna, gpt-5-mini,
+Terra, GPT-6 Astra) showed Luna covering every briefing item at a tenth of Terra's
+cost, so the founder ruled Luna for ATLAS and dropped Terra and the trial Astra
+deployment (see BE Feature 35 spec §3.4). Each role's deployment
+name is threaded from `params.*.json` through `08-apps.bicep` into
+`invoice-be.bicep` / `queue-worker.bicep` / `scheduled-job.bicep` as an
+`AZURE_OPENAI_<ROLE>_DEPLOYMENT_NAME` env var — see `model-deployment.bicep`'s
+header comment for the current role roster and deletion/recreation history.
+
+---
+
 ## Secrets
 
 Two parameter files:

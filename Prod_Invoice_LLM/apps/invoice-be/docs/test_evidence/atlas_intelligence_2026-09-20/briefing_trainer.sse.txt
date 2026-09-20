@@ -1,0 +1,15 @@
+event: paragraph
+data: {"text": "Possible duplicate: Rajesh Steel Corporation invoice RAJ-2008 has the same date and total (437,190.00) but a different number (RAJ-2009). Check whether this is a re-issue. RAJ-2009 is waiting on a decision for \u20b94,37,190.00 and was due 15 September.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "audit-approve-530bd65a-be04-4953-988b-2932f52a6f89"}]}
+
+event: paragraph
+data: {"text": "Possible duplicate: National MRO Traders invoice NAT-2006 has the same date and total (79,956.80) but a different number (NAT-2007). Check whether this is a re-issue. NAT-2007 is waiting on a decision for \u20b979,956.80 and was due 15 September.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "audit-approve-22490a93-94a8-4511-90ba-52d495e0cc05"}]}
+
+event: paragraph
+data: {"text": "Vishwa Precision Industries Pvt Ltd invoice VPI-OUT-2014 needs review: Subtotal (409500.00) + Tax (73710.00) does not match Grand Total (483850.00). Its due date is 17 September.", "citations": [{"tool": "invoices", "record_kind": "invoice", "record_id": "13d719a7-c53f-4204-95fc-79f5b73959ba"}]}
+
+event: paragraph
+data: {"text": "PaymentTerm was read from document areas the extractor could not see clearly for Ganesh Bearings Pvt Ltd GBP-2012, Rajesh Steel Corporation RAJ-2009 and RAJ-2008, and Om Stationery Mart OM -2002. Correcting these fields teaches the relevant vendor layouts, not just these invoices.", "citations": [{"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-33d6ccd5-57a4-4c16-a4f1-9708a05c205a"}, {"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-530bd65a-be04-4953-988b-2932f52a6f89"}, {"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-d5869da2-b3bc-4d41-9356-2c6a02352616"}, {"tool": "list_lines", "record_kind": "recommendation", "record_id": "train-lowconf-ff4a9fe0-df7a-401d-a9b3-29e128f66663"}]}
+
+event: done
+data: {"cached": false, "model": "gpt-5.6-terra", "dropped_paragraphs": 0}
+

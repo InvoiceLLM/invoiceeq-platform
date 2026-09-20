@@ -33,6 +33,7 @@ from services.atlas_contract import (
 )
 from services.atlas_skills import (
     SkillContext,
+    atlas_lines,
     auditor_lines,
     cash_position,
     trainer_lines,
@@ -435,3 +436,93 @@ def test_the_cash_line_sums_the_whole_open_book_not_the_decision_queue(pg):
     assert "15,59,631.80" in line.why.text     # committed
     assert "41,33,630.00" in line.why.text     # expecting
     assert "awaiting a decision" not in " ".join(f.computation or "" for f in line.why.figures)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BE Gap 714 — a party name that carries its own digits
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# The defect class: a string copied **verbatim out of a record** -- a party name,
+# an invoice number, a source reference, a file name -- is interpolated into a
+# line's prose, and the emitter declares only the figures it computed. The digits
+# inside that identifier are then money-shaped to
+# `assert_no_undeclared_numbers()` and nothing declares them, so the line raises
+# at construction and `GET /atlas/lines` 500s for the whole tenant (see
+# `routers/atlas.py::_validated`, which deliberately fails the request rather
+# than the line). `services.atlas_contract.verbatim_references()` is the fix.
+#
+# These assert a **property**, not a fixture's output: no vendor name is special,
+# so the test names three unrelated shapes of the same hazard.
+
+@postgres_only
+@pytest.mark.parametrize(
+    "vendor_name",
+    [
+        "Vendor 100200 Pvt Ltd",   # an account code carried in the name
+        "846807 Logistics",        # a name that is a number
+        "Chase Customer 4409eb",   # the import suffix the flake was found on
+    ],
+)
+def test_a_party_name_carrying_a_six_digit_run_still_produces_lines(pg, vendor_name):
+    """BE Gap 714. The name's digits are an identifier, not a figure."""
+    session, tenant, written = pg
+    _invoice(
+        session, written, tenant,
+        vendor_name=vendor_name,
+        invoice_number="100200",           # numeric, and it collides with the name
+        grand_total=241300.00,
+        due_date=TODAY + timedelta(days=5),
+        field_confidence={"grand_total": 0.41, "vendor_name": 0.52},
+    )
+
+    grants = GrantSet(can_audit=True, can_train=True, can_load=True, is_admin=True)
+    lines = atlas_lines(session, _ctx(tenant), grants)
+
+    # It produced work rather than raising, and the name reached the screen.
+    assert lines
+    assert any(vendor_name in line.what.headline for line in lines)
+
+    # And every one of them still passes the contract it was built under --
+    # re-validated here the way the router re-validates at the wire.
+    for line in lines:
+        validate_recommendation(line)
+
+
+@postgres_only
+def test_the_number_rule_still_catches_a_rounded_figure_beside_such_a_name(pg):
+    """BE Gap 714's boundary, stated as a test.
+
+    `verbatim_references()` declares the tokens of the copied string and nothing
+    else. A figure the emitter composed is still held to §5.3 -- otherwise the
+    fix would be a way of switching the control off by naming a vendor.
+    """
+    from services.atlas_contract import (
+        Action,
+        Certainty,
+        InventedNumberError,
+        Recommendation,
+        Reversibility,
+        Verify,
+        What,
+        Why,
+        verbatim_references,
+    )
+
+    vendor = "Vendor 100200 Pvt Ltd"
+    rec = Recommendation(
+        id="gap714-boundary",
+        capability=AtlasCapability.AUDIT,
+        skill="test_only",
+        what=What(headline=f"{vendor} #7", entity_kind="invoice", entity_id="x"),
+        why=Why(
+            # 2,41,300 is a figure this line never declared -- the vendor name
+            # declares 100200 and nothing else.
+            text=f"{vendor} is waiting on a decision for 2,41,300.",
+            references=verbatim_references(vendor),
+        ),
+        action=Action(kind="resolve_invoice", label="Approve", target_id="x"),
+        verify=Verify(question="Attach it here — is the total right?"),
+        currency="INR",
+    )
+    with pytest.raises(InventedNumberError):
+        validate_recommendation(rec)

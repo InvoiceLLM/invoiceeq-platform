@@ -64,6 +64,7 @@ from services.atlas_contract import (
     What,
     Why,
     validate_recommendation,
+    verbatim_references,
 )
 from services.atlas_figures import (
     computed_figure,
@@ -477,7 +478,11 @@ def recon_recommendations(
                             f"{matched_count} other line(s) match ours exactly."
                         ),
                         figures=figures,
-                        references=numbers + [matched_count, count_reference(len(rows))],
+                        # BE Gap 714: `vendor` is the statement's own party
+                        # name, copied verbatim into the headline.
+                        references=numbers
+                        + [matched_count, count_reference(len(rows))]
+                        + verbatim_references(vendor),
                         doubt=(
                             "Either these never reached us, or they reached us under "
                             "a different number — I cannot tell which from the "
@@ -539,7 +544,10 @@ def recon_recommendations(
                                 f"not list, added up",
                             )
                         ],
-                        references=numbers + [count_reference(len(rows))],
+                        # BE Gap 714: `vendor` is copied verbatim into the headline.
+                        references=numbers
+                        + [count_reference(len(rows))]
+                        + verbatim_references(vendor),
                         doubt=(
                             "Settled and duplicated look the same from here — the "
                             "bank statement is what separates them."
@@ -622,7 +630,9 @@ def _amount_difference_line(
                     f"{mark}{render_amount(gap, currency)}. {_likely_reason(theirs, ours)}"
                 ),
                 figures=figures,
-                references=[number],
+                # BE Gap 714: `result.vendor_name` is copied verbatim into the
+                # headline.
+                references=[number, *verbatim_references(result.vendor_name)],
                 doubt=(
                     "I can see that the two numbers differ; which side is right is "
                     "what the invoice itself settles."

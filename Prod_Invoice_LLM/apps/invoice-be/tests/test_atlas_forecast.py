@@ -235,3 +235,40 @@ def _balance(tenant):
         narration="opening balance",
         balance=100000.0,
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BE Gap 714 — the lever label names the party
+# ═════════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize(
+    "customer",
+    ["Chase Customer 846807", "100200 Exports", "Sharma & Co 4409"],
+)
+def test_a_lever_may_name_a_party_whose_name_carries_digits(pg, customer):
+    """BE Gap 714.
+
+    `Lever.label` is prose -- `Recommendation.prose()` includes it -- and it is
+    composed as "Chase <the customer's stored name> early". The digits in that
+    name are an identifier copied out of the record, not a figure anybody
+    computed, and before `verbatim_references()` they raised
+    `InventedNumberError` and took the entire forecast line with them.
+    """
+    session, tenant, written = pg
+    _inv(session, written, tenant, flow="INBOUND", status="AUDIT_REQUIRED",
+         total=150000.0, due_in=3, vendor="Vendor A")
+    _inv(session, written, tenant, flow="OUTBOUND", status="SENT",
+         total=80000.0, due_in=10, vendor=customer)
+
+    found = shortfalls(session, _ctx(tenant), balances={"INR": Decimal("100000")})
+    lines = forecast_recommendations(found, tenant_id=tenant.id, today=TODAY)
+
+    assert lines, "the shortfall produced no line at all"
+    line = lines[0]
+    labels = [lever.label for lever in line.forecast.levers]
+    assert any(customer in label for label in labels)
+
+    # Re-validated the way `routers/atlas.py::_validated` does at the wire.
+    from services.atlas_contract import validate_recommendation
+
+    validate_recommendation(line)

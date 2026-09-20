@@ -30,18 +30,35 @@ targetScope = 'resourceGroup'
 //   gpt-5-mini     judge, and the FULL-RECORD chat narrator (decision 2:
 //                  22.2% -> 52.8% on the golden set with full records, vs Luna's
 //                  27.8% -> 37.1%). `AZURE_OPENAI_CHAT_SUMMARY_DEPLOYMENT_NAME`.
+//   gpt-5.6-terra  RECREATED 2026-09-20 (Feature 35 task 35.0) and DELETED AGAIN
+//                  2026-09-20 after the four-model ATLAS trial: Luna won on coverage
+//                  and cost, founder ruled Luna for the `atlas` role. The trial
+//                  `gpt-6-astra` deployment was deleted the same day.
 //   gpt-5.6-terra  DELETED 2026-09-07 (task 29.10 / Gap 489): on the five
 //                  long-document golden cases Luna and Terra both scored 3/3, so
 //                  the 2-point rule kept Luna and the `long_doc` role was removed
 //                  from code and infra rather than left as an inert variable.
+//                  RECREATED 2026-09-20 (BE Feature 35 task 35.0): a new `atlas`
+//                  registry role (ATLAS Intelligence briefing, feature_35 sec 3.4)
+//                  needs Terra's long-context recall. Deployment name
+//                  `gpt-5.6-terra`, model version 2026-07-09, GlobalStandard,
+//                  capacity 50 (50K TPM -- deliberately low; ATLAS is one
+//                  briefing call per tenant per day, not a hot path). Deployed by
+//                  `az cognitiveservices account deployment create` directly
+//                  (this file's typical-use pattern above), then threaded through
+//                  08-apps.bicep as `azureOpenAiAtlasDeploymentName` ->
+//                  `AZURE_OPENAI_ATLAS_DEPLOYMENT_NAME` mirroring the fast/judge/
+//                  chat-summary deployment names.
 //   gpt-4o         legacy, retiring; kept only so historical rows still price.
 //
-// DELETED: gpt-5.6-sol and gpt-6-astra after the matrix (2026-09-06), gpt-5.6-terra
-// after task 29.10 (2026-09-07). Verified 2026-09-07 with `az cognitiveservices
-// account deployment list -n openai-invoicellm-dev -g rg-invoice-llm-dev` ->
-// gpt-5-mini, gpt-4o, gpt-5.6-luna and nothing else. Their `utils/model_registry.py` catalog rows are deliberately
-// KEPT and marked DELETED: historical telemetry and cost rows still have to
-// price, and removing a row would silently reprice them at zero.
+// DELETED then RECREATED: gpt-5.6-terra, deleted after task 29.10 (2026-09-07),
+// recreated 2026-09-20 (task 35.0, see above). Still DELETED: gpt-5.6-sol and
+// gpt-6-astra after the matrix (2026-09-06). Verified 2026-09-20 with
+// `az cognitiveservices account deployment list -n openai-invoicellm-dev -g
+// rg-invoice-llm-dev` -> gpt-5-mini, gpt-4o, gpt-5.6-luna, gpt-5.6-terra.
+// `utils/model_registry.py`'s catalog rows for still-deleted models are
+// deliberately KEPT and marked DELETED: historical telemetry and cost rows
+// still have to price, and removing a row would silently reprice them at zero.
 //
 // The deployment name is what the app reads (`AZURE_OPENAI_DEPLOYMENT_NAME`,
 // `AZURE_OPENAI_FAST_DEPLOYMENT_NAME`, `AZURE_OPENAI_JUDGE_DEPLOYMENT_NAME`,

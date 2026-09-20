@@ -642,11 +642,29 @@ def get_tenant_context_allow_unpaid(
         # untouched, regardless of what `role` clamped down to.
         existing_tenant = db_session.get(Tenant, user.tenant_id) if user.tenant_id else None
         org_matches = existing_tenant is not None and existing_tenant.clerk_org_id == clerk_org_id
-        if raw_org_role and org_matches and role and user.role != role:
+        role_changed = bool(raw_org_role and org_matches and role and user.role != role)
+        if role_changed:
             user.role = role
         db_session.add(user)
         db_session.commit()
         db_session.refresh(user)
+
+        if role_changed and user.tenant_id:
+            # BE Gap 719: this is the third and least obvious place a person's
+            # clearance changes -- Clerk changed their org role and this request
+            # is the first one to notice. Today's briefing was written for the
+            # old role, so it is marked stale here too; the import is local
+            # because `dependencies` is imported by every router and
+            # `services.atlas_briefing_cache` imports `models`.
+            try:
+                from services.atlas_briefing_cache import invalidate as _invalidate_briefing
+
+                _invalidate_briefing(db_session, user.tenant_id, user.clerk_user_id or "")
+            except Exception:  # noqa: BLE001 - a stale briefing must never fail a request
+                logger.warning(
+                    "Could not invalidate the ATLAS briefing after a role change for %s",
+                    user.clerk_user_id, exc_info=True,
+                )
 
         if user.tenant_id:
             tenant_id = user.tenant_id
