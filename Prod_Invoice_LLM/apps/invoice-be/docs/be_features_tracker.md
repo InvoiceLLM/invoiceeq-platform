@@ -3880,3 +3880,57 @@ match (turn 4), 4 partial, 6 miss, out of 11.
   user being removed — **2 passed in 14.12s**; whole file and suite green (**305 passed**);
   `tests/test_rbac.py` + `tests/test_dependency_spans.py` **60 passed in 100.08s** over the two
   files this touched. Spec: §13 (additive), incl. §13.3's table of every write site.
+
+
+- [ ] BE Gap 720 (BE, Feature 1.1 / RBAC): **"Send Invoices" was a per-user permission that read
+  as a fourth role.** *Who:* every Admin managing users, and every Loader who prepares outbound
+  invoices. *What:* `users.can_send_invoices`, added by Gap 405 on 2026-09-02, is removed
+  entirely -- column, `RoleMapper` default, `TenantContext` field, `require_can_send_invoices`,
+  the admin API field, the Admin-console checkbox and `useAuth().canSendInvoices`. *Where:*
+  `dependencies.py`, `models.py`, `routers/admin.py`, `routers/outbound_invoices.py`,
+  `services/atlas_capabilities.py`, `app/admin/page.tsx`, `hooks/useAuth.ts`,
+  `app/ingestion/page.tsx`, migration `e2f3a4b5c720`. *When:* founder ruling 2026-09-21 --
+  "Send invoice bolke u made a role, need to remove it. Only loader, trainer, auditor and admin".
+  *Why:* on Admin -> Users the grants render as one line ("Trainer, Auditor, Loader, Send
+  Invoices"), so an outbound *visibility* flag read as a fourth role, which this product does not
+  have.
+
+  **Why removing it is safe, and not a hole.** The separation Gap 405 was reaching for already
+  exists one step later: preparing an outbound invoice is `can_load` + the tenant's
+  `send_invoices_enabled`; **confirm-send -- the step that commits the document to the outside
+  world -- requires `can_audit`**, and mark-paid requires `can_audit` and only accepts status
+  `SENT`. So a Loader can prepare but cannot issue, before and after. What genuinely changes is
+  that a Loader no longer *also* needs the tick, which is the pre-2026-09-02 behaviour the
+  founder chose knowingly, against an Admin-only alternative.
+
+  **A real hole closed on the way past.** `GET /outbound-invoices/{id}/build-defaults` and
+  `POST /outbound-invoices/build/preview` never checked `send_invoices_enabled` at all -- they
+  leaned on Gap 405's permission. Removing that without adding the check would have left the
+  builder open to any Loader in a workspace that never switched outbound on. All four
+  preparation routes now call one `_require_sending_enabled()` helper.
+
+  **Backwards compatibility.** `PUT /admin/users/{ref}/permissions` still *accepts* and ignores
+  `can_send_invoices` for one release, so a browser left open on the previous FE build does not
+  422 an Admin mid-edit. Delete that field in the release after the column drop.
+
+  **RELEASE RISK: HIGH.** It changes RBAC on the live customer environment and drops a column.
+  *Rollback:* revert the code (the column and every saved tick are untouched until the migration
+  runs -- a clean revert). After the migration, `downgrade()` restores the column but every grant
+  returns False and must be re-granted by hand from the list `upgrade()` logs. Founder sign-off
+  required before merge.
+
+  **Evidence (partial -- Postgres owed).** `tests/test_rbac.py` rewritten: the 3-tuple arity is
+  pinned, `User` is asserted to have no such attribute, `/auth/me` and the admin list are
+  asserted not to carry it, and the outbound gate tests are replaced by four that assert the real
+  rule (no `can_load` -> 403 "ask an Admin"; toggle off -> 403 "not enabled for this tenant";
+  both -> past the 403s) plus a parametrised case covering the three build routes. Also updated:
+  `test_api_keys.py`, `test_atlas_actions.py` (it unpacked the tuple into FOUR values and
+  contains no "can_send_invoices" string, so a name-based grep does not find it),
+  `test_atlas_contract.py`, `test_invoice_builder.py`, `test_invoice_upload_formats.py`,
+  `test_atlas_briefing_router.py`, and `e2e/outbound-builder.spec.ts`. **test_rbac.py +
+  test_api_keys.py + test_atlas_actions.py + test_invoice_builder.py: 88 passed** on the SQLite
+  path; `alembic heads` single (`e2f3a4b5c720`); FE `tsc --noEmit` clean across `app/`,
+  `components/`, `hooks/`, `lib/`, `e2e/`. **The real-Postgres run is NOT done** -- the founder
+  asked for Docker to stay off on this machine. Postgres-only tests are skipped or error on
+  connection, and this entry stays `[ ]` until that run exists. Spec: `feature_1.1_rbac.md`
+  (withdrawal note), `feature_16_settings.md`, `feature_17_invoice_builder.md`.

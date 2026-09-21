@@ -44,7 +44,6 @@ from dependencies import (
     get_db_session,
     get_tenant_context,
     require_can_load,
-    require_can_send_invoices,
 )
 from main import app
 from models import Invoice, Tenant
@@ -411,7 +410,10 @@ def override_auth(db_session):
     # bare context, and without this the lineage assertion below reads whatever
     # tenant the mock-auth `user_test_default` row happens to point at rather
     # than this file's own (feature_28 §6's test-tenant hazard).
-    for dependency in (require_can_load, require_can_send_invoices, get_tenant_context):
+    # BE Gap 720: `require_can_send_invoices` is gone from this tuple with the
+    # permission itself. The tenant seeded below has `send_invoices_enabled`
+    # True, which is what the build routes now check in place of it.
+    for dependency in (require_can_load, get_tenant_context):
         app.dependency_overrides[dependency] = lambda: context
     yield
     app.dependency_overrides.clear()

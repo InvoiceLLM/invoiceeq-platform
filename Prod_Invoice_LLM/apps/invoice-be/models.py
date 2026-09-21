@@ -692,11 +692,19 @@ class User(SQLModel, table=True):
     can_train: bool = Field(default=False, nullable=False)
     can_audit: bool = Field(default=False, nullable=False)
     can_load: bool = Field(default=False, nullable=False)
-    # Gap 405: granular per-user visibility for the Send Invoices feature,
-    # layered on top of (not replacing) Tenant.send_invoices_enabled's
-    # tenant-wide plan/email prerequisite gate (feature_16_settings.md) --
-    # both must be true for a given user to see/use outbound sending.
-    can_send_invoices: bool = Field(default=False, nullable=False)
+    # BE Gap 720 (founder, 2026-09-21): `can_send_invoices` is GONE. Gap 405 had
+    # added it as a fourth per-user permission, but the Admin -> Users screen
+    # renders the grants as one line ("Trainer, Auditor, Loader, Send
+    # Invoices"), so a flag that was really an outbound *visibility* control
+    # read as a fourth role. The founder's ruling is that this product has
+    # Loader / Trainer / Auditor and the Admin role, and nothing else.
+    #
+    # What guards outbound now, unchanged by the removal:
+    #   prepare (upload/build)  -- can_load + Tenant.send_invoices_enabled
+    #   confirm-send            -- can_audit (Admin implied), never can_load
+    #   mark-paid               -- can_audit, and only from status SENT
+    # So the person who prepares an invoice still cannot be the one who issues
+    # it. The column is dropped by migration `e2f3a4b5c720`.
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: datetime | None = Field(default=None)
 
@@ -1704,15 +1712,13 @@ class RoleMapper:
         "restricted": NO_ROLE,
     }
 
-    # Gap 405: can_send_invoices defaults False for every role, including
-    # Auditor -- least-privilege by design, matching this class's existing
-    # philosophy for the other three (an Admin grants it explicitly per user,
-    # same as can_train/can_audit/can_load).
+    # BE Gap 720: back to three grants. Gap 405's `can_send_invoices` key is
+    # removed from every row here -- see the note on `User`.
     ROLE_PERMISSION_DEFAULTS = {
-        "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True,  "can_send_invoices": True},
-        "Trainer": {"can_train": True,  "can_audit": False, "can_load": False, "can_send_invoices": False},
-        "Auditor": {"can_train": False, "can_audit": True,  "can_load": False, "can_send_invoices": False},
-        NO_ROLE:   {"can_train": False, "can_audit": False, "can_load": False, "can_send_invoices": False},
+        "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True},
+        "Trainer": {"can_train": True,  "can_audit": False, "can_load": False},
+        "Auditor": {"can_train": False, "can_audit": True,  "can_load": False},
+        NO_ROLE:   {"can_train": False, "can_audit": False, "can_load": False},
     }
 
     @classmethod
@@ -1724,10 +1730,16 @@ class RoleMapper:
         return cls.ROLE_ALIAS_MAP.get(clean_key, raw_role.title() if raw_role else cls.NO_ROLE)
 
     @classmethod
-    def resolve_permissions(cls, role: str, user: Any = None) -> tuple[bool, bool, bool, bool]:
-        """Resolves (can_train, can_audit, can_load, can_send_invoices) for any role."""
+    def resolve_permissions(cls, role: str, user: Any = None) -> tuple[bool, bool, bool]:
+        """Resolves (can_train, can_audit, can_load) for any role.
+
+        BE Gap 720 returned this to a 3-tuple. Gap 405 had widened it to 4 to
+        carry `can_send_invoices`; every caller is updated in the same commit,
+        and the arity is asserted by tests/test_rbac.py so a missed one fails
+        loudly rather than silently unpacking the wrong flag.
+        """
         if role == "Admin":
-            return True, True, True, True
+            return True, True, True
 
         # Gap 337: an unrecognised role — including the literal "Viewer" on any
         # row that predates this gap's data migration — falls to the
@@ -1736,14 +1748,12 @@ class RoleMapper:
         can_train = getattr(user, "can_train", None) if user else None
         can_audit = getattr(user, "can_audit", None) if user else None
         can_load  = getattr(user, "can_load", None)  if user else None
-        can_send_invoices = getattr(user, "can_send_invoices", None) if user else None
 
         res_train = can_train if can_train is not None else defaults["can_train"]
         res_audit = can_audit if can_audit is not None else defaults["can_audit"]
         res_load  = can_load  if can_load  is not None  else defaults["can_load"]
-        res_send  = can_send_invoices if can_send_invoices is not None else defaults["can_send_invoices"]
 
-        return bool(res_train), bool(res_audit), bool(res_load), bool(res_send)
+        return bool(res_train), bool(res_audit), bool(res_load)
 
 # ---------------------------------------------------------------------------
 # Feature 19 / Feature Website 5: Support Ticket & Inquiry Engine

@@ -56,7 +56,6 @@ class AdminUserOut(BaseModel):
     can_train: bool
     can_audit: bool
     can_load: bool
-    can_send_invoices: bool  # Gap 405
     created_at: datetime
     last_login: datetime | None = None
 
@@ -70,7 +69,12 @@ class PermissionsUpdate(BaseModel):
     can_train: bool
     can_audit: bool
     can_load: bool
-    can_send_invoices: bool = False  # Gap 405 — defaulted so an older FE build omitting the field still validates
+    # BE Gap 720: the permission is gone, but the field is still ACCEPTED and
+    # ignored for one release. A browser left open on the previous FE build
+    # still PUTs it; rejecting that body would 422 an Admin mid-edit over a flag
+    # that no longer means anything. Delete this field in the release after the
+    # column drop.
+    can_send_invoices: bool = False
     email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -206,7 +210,8 @@ async def set_user_permissions(
     user.can_train = payload.can_train
     user.can_audit = payload.can_audit
     user.can_load = payload.can_load
-    user.can_send_invoices = payload.can_send_invoices  # Gap 405
+    # BE Gap 720: `payload.can_send_invoices` is read off the wire and dropped
+    # here deliberately -- see the note on PermissionsUpdate.
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
@@ -219,8 +224,8 @@ async def set_user_permissions(
     invalidate_briefing(db_session, context.tenant_id, user.clerk_user_id or "")
 
     logger.info(
-        "Admin %s set permissions for user %s: train=%s audit=%s load=%s send_invoices=%s",
-        context.user_id, user.clerk_user_id, user.can_train, user.can_audit, user.can_load, user.can_send_invoices,
+        "Admin %s set permissions for user %s: train=%s audit=%s load=%s",
+        context.user_id, user.clerk_user_id, user.can_train, user.can_audit, user.can_load,
     )
     return AdminUserOut.model_validate(user, from_attributes=True)
 

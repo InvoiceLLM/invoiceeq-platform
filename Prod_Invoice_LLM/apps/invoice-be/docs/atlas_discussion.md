@@ -118,6 +118,7 @@ The product already has a richer model than the binary that replaced it:
 
 ```python
 # models.py ROLE_PERMISSION_DEFAULTS
+# BE Gap 720 (2026-09-21): can_send_invoices is removed; these are 3 keys now.
 "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True,  "can_send_invoices": True},
 "Trainer": {"can_train": True,  "can_audit": False, "can_load": False, "can_send_invoices": False},
 "Auditor": {"can_train": False, "can_audit": True,  "can_load": False, "can_send_invoices": False},

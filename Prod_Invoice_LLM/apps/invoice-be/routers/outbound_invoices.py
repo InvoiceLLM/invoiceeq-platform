@@ -15,9 +15,6 @@ from pydantic import BaseModel, Field
 from dependencies import (
     get_db_session,
     require_can_load,
-    # Gap 405: per-user Send Invoices visibility, layered on top of can_load
-    # below -- both must pass to upload an outbound invoice.
-    require_can_send_invoices,
     # Feature 25 (Gap 335): gates confirm-send / mark-paid, which had NO
     # permission gate at all before this -- see the note on each handler.
     require_actions_scope,
@@ -69,6 +66,26 @@ def _submitter_email_from_context(db_session: Session, context: TenantContext) -
     if not user or not user.email:
         return None
     return str(user.email).strip().lower() or None
+
+
+def _require_sending_enabled(db_session: Session, context: TenantContext) -> Tenant:
+    """The caller's tenant row, refused unless outbound sending is switched on.
+
+    BE Gap 720: `/build-defaults` and `/build/preview` never made this check --
+    they leaned on Gap 405's per-user `can_send_invoices`, which is now gone. Two
+    of the four preparation routes asking a question the other two skipped is how
+    a gap like this survives, so the check is hoisted here and all four call it
+    with one wording. `/upload` and `/build` had it inline and now share this.
+    """
+    tenant = db_session.get(Tenant, context.tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
+    if not tenant.send_invoices_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
+        )
+    return tenant
 
 
 def _dispatch_outbound_webhook(db_session: Session, invoice: Invoice, event_type: str) -> None:
@@ -243,14 +260,13 @@ async def upload_outbound_invoice(
     # widening the AR ingestion surface to API keys was not requested, and the
     # inbound /invoices/upload is the ingestion path integrations actually
     # asked for. Revisit with Gap 336 if an AR integration needs it.
+    # BE Gap 720: Gap 405's second `require_can_send_invoices` dependency is
+    # removed here and on the three build routes below. Preparing an outbound
+    # invoice is now `can_load` + the tenant's `send_invoices_enabled` (checked
+    # in the body). The step that actually commits the document to the outside
+    # world -- confirm-send -- still requires `can_audit`, so the person who
+    # prepares an invoice is still not the one who can issue it.
     context: TenantContext = Depends(require_can_load),
-    # Gap 405: per-user Send Invoices visibility, on top of can_load above --
-    # both are required. can_load alone would let anyone who can upload
-    # inbound invoices also upload outbound ones regardless of an Admin's
-    # per-user grant, which is exactly the granular control this gap exists
-    # to add. A second Depends param (not a combined check) matches this
-    # codebase's existing one-permission-per-dependency convention.
-    _send_check: TenantContext = Depends(require_can_send_invoices),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 2.1, Task 2.1.5: upload the tenant's own invoice to be sent to
@@ -258,15 +274,7 @@ async def upload_outbound_invoice(
     invoice creation/generation (see feature_17_invoice_builder.md)."""
     fname = (file.filename or "").strip() or "invoice.pdf"
 
-    tenant = db_session.get(Tenant, context.tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
-
-    if not tenant.send_invoices_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
-        )
+    tenant = _require_sending_enabled(db_session, context)
 
     try:
         file_bytes = await file.read()
@@ -463,12 +471,13 @@ async def _render_build(db_session: Session, context: TenantContext, req: BuildR
 async def get_build_defaults(
     invoice_id: UUID,
     context: TenantContext = Depends(require_can_load),
-    _send_check: TenantContext = Depends(require_can_send_invoices),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 17: the prefill for a clone — everything copied, the invoice
     number incremented and the dates rolled forward by the source's own payment
-    term. Same permission pair as the upload door (Gap 405)."""
+    term. Same door as the upload route (BE Gap 720): `can_load` plus the
+    tenant's Send Invoices toggle."""
+    _require_sending_enabled(db_session, context)
     source = _load_clone_source(db_session, context, invoice_id)
     return default_build_from_source(source, date.today())
 
@@ -477,12 +486,12 @@ async def get_build_defaults(
 async def preview_built_invoice(
     req: BuildRequest,
     context: TenantContext = Depends(require_can_load),
-    _send_check: TenantContext = Depends(require_can_send_invoices),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 17: render exactly what `/build` would create, and persist
     nothing — no `Invoice` row, no blob, no quota charge. The user sees the real
     output before committing to it."""
+    _require_sending_enabled(db_session, context)
     pdf_bytes, _source, _intent = await _render_build(db_session, context, req)
     return Response(content=pdf_bytes, media_type="application/pdf")
 
@@ -491,7 +500,6 @@ async def preview_built_invoice(
 async def build_outbound_invoice(
     req: BuildRequest,
     context: TenantContext = Depends(require_can_load),
-    _send_check: TenantContext = Depends(require_can_send_invoices),
     db_session: Session = Depends(get_db_session),
 ):
     """Feature 17: create the cloned invoice.
@@ -502,14 +510,7 @@ async def build_outbound_invoice(
     lands on the Sending ledger as an ordinary outbound invoice carrying its
     lineage (`source_invoice_id`) and its intent (`builder_intent`).
     """
-    tenant = db_session.get(Tenant, context.tenant_id)
-    if not tenant:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found.")
-    if not tenant.send_invoices_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Send Invoices is not enabled for this tenant. Enable it in Settings first.",
-        )
+    tenant = _require_sending_enabled(db_session, context)
 
     pdf_bytes, source, intent = await _render_build(db_session, context, req)
 
