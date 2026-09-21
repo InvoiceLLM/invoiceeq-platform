@@ -497,7 +497,7 @@ Rows are written only by `queue_worker/handlers.handle_process_invoice()` (Flow 
 ```
 1. API Router
    └─ File: routers/admin.py -> list_tenant_users() / set_user_permissions() (role + can_train/can_audit/can_load/
-      can_send_invoices) / remove_tenant_user() / list_dropped_emails() (dropped_inbound_emails, platform-wide record;
+      BE Gap 720 removed a fourth, can_send_invoices) / remove_tenant_user() / list_dropped_emails() (dropped_inbound_emails, platform-wide record;
       services/inbound_mail_security.sender_domain_of() for unattributed rows)
 ```
 

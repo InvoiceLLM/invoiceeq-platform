@@ -323,7 +323,9 @@ def test_acting_gate_agrees_with_the_audit_router_gate():
     `GrantSet.holds(AUDIT)`. Asserted over every role the mapper defines.
     """
     for role in ("Admin", "Auditor", "Trainer", "Loader", "NO_ROLE"):
-        can_train, can_audit, can_load, _ = RoleMapper.resolve_permissions(role, None)
+        # BE Gap 720: a 3-tuple again -- the discarded fourth member was
+        # `can_send_invoices`, which no longer exists.
+        can_train, can_audit, can_load = RoleMapper.resolve_permissions(role, None)
         grants = GrantSet.from_user(role, None)
         assert grants.holds(AtlasCapability.AUDIT) == bool(can_audit), role
         assert grants.holds(AtlasCapability.LOAD) == bool(can_load), role

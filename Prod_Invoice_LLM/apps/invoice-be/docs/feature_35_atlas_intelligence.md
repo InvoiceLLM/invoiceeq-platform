@@ -795,11 +795,13 @@ changed here.
 ### 13.3 The three grant write sites, listed (BE Gap 719)
 
 Found by grepping every assignment to `role` / `can_train` / `can_audit` / `can_load` /
-`can_send_invoices` outside `tests/`:
+`can_send_invoices` outside `tests/`. (BE Gap 720, 2026-09-21: `can_send_invoices` no
+longer exists, so that grep is now three flags and a role. The sites and the
+invalidation are unchanged.)
 
 | site | what it writes | invalidated |
 |---|---|---|
-| `routers/admin.py::set_user_permissions()` | `can_train`, `can_audit`, `can_load`, `can_send_invoices` (and creates the row with `RoleMapper.NO_ROLE` on the pre-provisioning path) | yes, for `user.clerk_user_id` in `context.tenant_id` |
+| `routers/admin.py::set_user_permissions()` | `can_train`, `can_audit`, `can_load` (BE Gap 720 removed `can_send_invoices`; and creates the row with `RoleMapper.NO_ROLE` on the pre-provisioning path) | yes, for `user.clerk_user_id` in `context.tenant_id` |
 | `routers/admin.py::remove_tenant_user()` | on the detach path: all three flags to `False`, `role` to `RoleMapper.NO_ROLE`, `tenant_id` to `None` | yes, keyed on `context.tenant_id` — the tenant the briefing row was written under, which is no longer on the `users` row after the detach |
 | `dependencies.py::get_tenant_context()` | `user.role`, synced from a Clerk `org_role` claim when the org matches (Gap 157/173's guarded branch) | yes, only when the role actually changed and the user has a tenant |
 | `routers/auth.py` (signup) | creates a row with `role="Admin"` | n/a — a user being created has no briefing to date |

@@ -1383,7 +1383,13 @@ def require_send_scope(
     call site quietly mean something different from the others.
     """
     if context.auth_method == "api_key":
-        if context.key_scope != KEY_SCOPE_ACTIONS:
+        # Two different refusals, because they have two different remedies and
+        # an integrator reads this as JSON, not as a toast. A readonly key is
+        # refused for the reason it is refused everywhere else, in the wording
+        # it already had -- telling that caller "a person must send" would
+        # describe a policy their workspace is not even on, and hide the fact
+        # that their key cannot approve or mark-paid either.
+        if context.key_scope == KEY_SCOPE_ACTIONS_NO_SEND:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -1391,6 +1397,15 @@ def require_send_scope(
                     "API key cannot. An Auditor or Admin can send it in the app, or an "
                     "Admin can switch this workspace's workflow policy to Full Automation "
                     "in Settings."
+                ),
+            )
+        if context.key_scope != KEY_SCOPE_ACTIONS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is read-only and cannot approve, reject, send or "
+                    "mark invoices as paid. An Admin can switch this workspace's "
+                    "workflow policy to Full Automation in Settings to allow it."
                 ),
             )
         return context

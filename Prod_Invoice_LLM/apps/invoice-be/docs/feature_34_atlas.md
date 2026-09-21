@@ -71,6 +71,12 @@ Loader and sees document work. Only genuinely ungranted users get the empty stat
 False for every role on least-privilege grounds. Deliberate, recorded, not drift. The DB column
 may stay; ATLAS stops treating it as a separate audience.
 
+> **Update — BE Gap 720, 2026-09-21.** The column did not stay: the permission is withdrawn
+> entirely (founder ruling — the product's grants are Loader / Trainer / Auditor plus the Admin
+> role). D6 is unaffected in substance and becomes unconditional — there is no longer a flag
+> anyone could treat as a separate audience. `GrantSet` never had a field for it, so no ATLAS
+> code changed.
+
 ### 2.2 Assignment and collapse
 
 **Work is assigned, not only filtered.** A line belongs to whoever holds the capability. It

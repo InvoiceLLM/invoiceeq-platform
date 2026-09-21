@@ -398,6 +398,30 @@ def test_require_send_scope_refuses_an_actions_no_send_key():
     assert "requires a person to confirm-send" in exc.value.detail
 
 
+def test_require_send_scope_keeps_the_readonly_wording_for_a_readonly_key():
+    """A Strict Review workspace is not the "a person must send" case.
+
+    Telling a readonly caller that a person must confirm-send would describe a
+    policy they are not on and hide the larger fact that their key cannot
+    approve or mark-paid either. The two refusals have different remedies, so
+    they keep different words -- and this one keeps the exact wording it had
+    before BE Gap 721 existed.
+    """
+    from fastapi import HTTPException
+
+    from dependencies import TenantContext, require_send_scope
+
+    context = TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="api_key_client", role=RoleMapper.NO_ROLE,
+        billing_plan="pro", auth_method="api_key", key_scope=KEY_SCOPE_READONLY,
+    )
+    with pytest.raises(HTTPException) as exc:
+        require_send_scope(context)
+    assert exc.value.status_code == 403
+    assert "read-only" in exc.value.detail
+    assert "requires a person" not in exc.value.detail
+
+
 def test_require_send_scope_admits_an_actions_key():
     from dependencies import TenantContext, require_send_scope
 
