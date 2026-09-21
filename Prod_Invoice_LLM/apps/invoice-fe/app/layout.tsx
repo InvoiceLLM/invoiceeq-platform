@@ -14,14 +14,18 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const websiteUrl = process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000";
+
   return (
     <ClerkProvider
       publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      signInUrl={`${websiteUrl}/login`}
+      signUpUrl={`${websiteUrl}/signup`}
       // Gap 151: second layer behind Header.tsx's explicit signOut(redirectUrl)
       // -- covers any sign-out path that isn't that one button (e.g. a
       // Clerk-initiated session-expiry sign-out) so it doesn't fall through
       // to Clerk's hosted Account Portal either.
-      afterSignOutUrl={`${process.env.NEXT_PUBLIC_WEBSITE_URL || "http://localhost:3000"}/login`}
+      afterSignOutUrl={`${websiteUrl}/login`}
     >
       <html lang="en" suppressHydrationWarning>
         <head>

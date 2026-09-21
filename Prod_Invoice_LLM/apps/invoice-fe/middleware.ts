@@ -1,4 +1,5 @@
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import { NextResponse } from 'next/server';
 
 // FE Gap 358: every /api/* route is exempted from .protect() below, not just
 // '/flows'. invoice-be re-authenticates every request itself regardless
@@ -26,6 +27,16 @@ export default clerkMiddleware((auth, req) => {
   }
 
   if (!isPublicRoute(req)) {
+    const { userId } = auth();
+    if (!userId) {
+      const host = req.headers.get('host') || 'invoicellm.admsofttech.com';
+      const protocol = req.headers.get('x-forwarded-proto') || 'https';
+      const origin = `${protocol}://${host}`;
+
+      const signInUrl = new URL('/login', origin);
+      signInUrl.searchParams.set('redirect_url', req.nextUrl.pathname);
+      return NextResponse.redirect(signInUrl);
+    }
     auth().protect();
   }
 });
