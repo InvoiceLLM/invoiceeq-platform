@@ -18,7 +18,8 @@ import {
   CreditCard,
   HelpCircle,
   LogOut,
-  ChevronsUpDown,
+  ChevronUp,
+  ChevronDown,
   Copy,
   Check,
 } from "lucide-react";
@@ -177,7 +178,7 @@ export default function Sidebar() {
       data-collapsed={collapsed ? "true" : "false"}
       className={`${
         collapsed ? "w-[76px]" : "w-64"
-      } border-r border-[#222D3D] bg-[#0F172A]/40 backdrop-blur-md flex flex-col h-full text-slate-300 transition-[width] duration-200`}
+      } border-r border-[#222D3D] bg-[#0F172A]/40 backdrop-blur-md flex flex-col h-full text-slate-300 transition-[width] duration-200 relative z-40`}
     >
       {/* Brand Header */}
       <div className="h-16 flex items-center px-6 border-b border-[#222D3D] gap-3">
@@ -284,7 +285,11 @@ export default function Sidebar() {
 
           {/* Chevron icon (hidden if collapsed) */}
           {!collapsed && (
-            <ChevronsUpDown className="w-4 h-4 text-slate-500 group-hover:text-slate-300 shrink-0 transition-colors" />
+            showProfileMenu ? (
+              <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-slate-200 shrink-0 transition-colors" />
+            ) : (
+              <ChevronUp className="w-4 h-4 text-slate-500 group-hover:text-slate-300 shrink-0 transition-colors" />
+            )
           )}
         </button>
 
@@ -301,11 +306,9 @@ export default function Sidebar() {
               <p className="text-xs font-semibold text-white truncate mt-0.5">
                 {userEmail || (isLoaded ? "—" : "…")}
               </p>
-              {orgLine && (
-                <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-[#1E293B] text-slate-300 border border-[#222D3D]">
-                  {orgLine}
-                </span>
-              )}
+              <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-[#1E293B] text-slate-300 border border-[#222D3D] font-medium">
+                {role || "Admin"}
+              </span>
             </div>
 
             {/* Settings */}
