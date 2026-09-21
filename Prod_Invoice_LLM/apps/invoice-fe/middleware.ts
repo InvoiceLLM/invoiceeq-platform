@@ -29,11 +29,13 @@ export default clerkMiddleware((auth, req) => {
   if (!isPublicRoute(req)) {
     const { userId } = auth();
     if (!userId) {
-      const host = req.headers.get('host') || 'invoicellm.admsofttech.com';
-      const protocol = req.headers.get('x-forwarded-proto') || 'https';
-      const origin = `${protocol}://${host}`;
+      const host = req.headers.get('host') || '';
+      const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+      const websiteUrl =
+        process.env.NEXT_PUBLIC_WEBSITE_URL ||
+        (isLocal ? `http://${host}` : 'https://invoicellm.admsofttech.com');
 
-      const signInUrl = new URL('/login', origin);
+      const signInUrl = new URL('/login', websiteUrl);
       signInUrl.searchParams.set('redirect_url', req.nextUrl.pathname);
       return NextResponse.redirect(signInUrl);
     }
