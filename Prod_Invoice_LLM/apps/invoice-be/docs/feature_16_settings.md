@@ -39,6 +39,13 @@
 > from the tenant column. Same document as above for the design; this feature's own body is
 > unchanged.
 
+> **Superseded (2026-09-21, BE Gap 720):** the per-user `can_send_invoices`
+> permission the note below layers on top of has been removed. `send_invoices_enabled`
+> is now the *only* tenant-wide gate on outbound, and BE Gap 720 additionally added
+> the missing check to `GET /outbound-invoices/{id}/build-defaults` and
+> `POST /outbound-invoices/build/preview`, which never made it. Per-user access to
+> prepare an outbound invoice is `can_load`; issuing it is `can_audit`.
+>
 > **Additive note (2026-09-02, Gap 405 — built):** `send_invoices_enabled` above stays exactly as documented — a tenant-wide plan/email prerequisite gate, unchanged by this gap. What Gap 405 added sits in Feature 1.1, not here: a 4th per-user permission, `User.can_send_invoices`, checked *in addition to* this tenant-wide flag (`POST /outbound-invoices/upload` now requires both). See `feature_1.1_rbac.md` and `be_features_tracker.md` Gap 405 for the full build record.
 
 ### Tasks

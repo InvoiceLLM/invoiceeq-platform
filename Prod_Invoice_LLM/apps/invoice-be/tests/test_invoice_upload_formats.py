@@ -40,7 +40,6 @@ from dependencies import (
     get_db_session,
     require_can_load,
     require_can_load_or_api_key,
-    require_can_send_invoices,
 )
 from main import app
 from models import (
@@ -179,7 +178,8 @@ def override_db_session(db_session):
     The permission dependencies are overridden rather than satisfied with a real
     User row: this file is testing what the upload doors do with a file's
     *bytes*, and every one of them sits behind a different gate
-    (`can_load`, `can_send_invoices`, a paid plan). Granting those through the
+    (`can_load`, a paid plan, and for outbound the tenant's Send Invoices
+    toggle -- BE Gap 720). Granting those through the
     dependency layer keeps each test to the one thing it is about, and pins the
     tenant so the assertions read the same rows the router wrote.
     """
@@ -199,7 +199,6 @@ def override_db_session(db_session):
     for dependency in (
         require_can_load,
         require_can_load_or_api_key,
-        require_can_send_invoices,
         trainer_module.require_paid_plan,
     ):
         app.dependency_overrides[dependency] = lambda: context

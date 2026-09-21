@@ -281,15 +281,16 @@ def test_api_key_scope_defaults_to_readonly(db_session):
         # readonly reproduces exactly what the pre-Gap-335 hardcoded Viewer
         # produced -- this row is the regression guard on "nothing changed for
         # existing tenants".
-        (KEY_SCOPE_READONLY, (False, False, False, False)),
-        # actions grants the five financial actions' permissions, including
-        # can_send_invoices (Gap 405 -- "send" was one of the named actions)
-        # -- and NOT can_train. The founder's definition of full automation
-        # named approve/reject/verify/send/mark-paid; training was not among them.
-        (KEY_SCOPE_ACTIONS, (False, True, True, True)),
+        (KEY_SCOPE_READONLY, (False, False, False)),
+        # actions grants the financial actions' permissions -- and NOT
+        # can_train. The founder's definition of full automation named
+        # approve/reject/verify/send/mark-paid; training was not among them.
+        # BE Gap 720: three members, not four. Gap 405's `can_send_invoices`
+        # no longer exists, so a key's grants are the same shape a person's are.
+        (KEY_SCOPE_ACTIONS, (False, True, True)),
         # Anything unrecognised falls back to readonly, never to actions.
-        (None, (False, False, False, False)),
-        ("nonsense", (False, False, False, False)),
+        (None, (False, False, False)),
+        ("nonsense", (False, False, False)),
     ],
 )
 def test_scope_derives_permissions(scope, expected):

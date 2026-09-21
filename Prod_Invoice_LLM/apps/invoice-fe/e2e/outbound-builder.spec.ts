@@ -335,11 +335,12 @@ test.describe("Invoice Builder — create", () => {
     // FE Gap 457: /ingestion read none of these params, so the builder's
     // redirect used to land on Receiving with an idle outbound ledger.
     await stubCommon(page);
-    // /ingestion's Sending tab needs the per-user permission on top of the
-    // tenant-wide service-flow flag (Gap 405); registered after stubCommon so
-    // it wins over that ME fixture.
+    // /ingestion's Sending tab needs `can_load` on top of the tenant-wide
+    // service-flow flag. BE Gap 720 removed Gap 405's separate
+    // `can_send_invoices`; registered after stubCommon so it wins over that ME
+    // fixture.
     await page.route("**/api/auth/me", (route) =>
-      route.fulfill(json({ ...ME, can_send_invoices: true }))
+      route.fulfill(json({ ...ME, can_load: true }))
     );
     await page.route(`**/api/invoices/${CLONE_ID}`, (route) =>
       route.fulfill(

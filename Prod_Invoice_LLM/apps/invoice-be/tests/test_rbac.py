@@ -32,6 +32,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from dependencies import MOCK_USER_ID, resolve_permissions
+
+# A syntactically valid UUID that matches no row. The BE Gap 720 build-route
+# tests below need the *body* to validate so the handler actually runs -- a
+# malformed id would 422 before the toggle check they are asserting.
+UUID_ZERO = "00000000-0000-0000-0000-000000000000"
 from main import app
 from models import RoleMapper, User
 
@@ -89,21 +94,36 @@ def _grant(db_session, **flags) -> None:
 # ---------------------------------------------------------------------------
 
 def test_resolve_permissions_admin_implies_all():
-    """Admin is a role, not a per-permission flag -- it grants all four
-    (can_send_invoices added by Gap 405) regardless of the row."""
+    """Admin is a role, not a per-permission flag -- it grants all three
+    regardless of the row.
+
+    BE Gap 720: three, not four. Gap 405's `can_send_invoices` was the fourth
+    member between 2026-09-02 and 2026-09-21; the arity is asserted here so a
+    caller left unpacking four values fails in this file rather than silently
+    reading the wrong flag somewhere downstream."""
     user = User(
         email="a@example.com", role="Admin", clerk_user_id="user_admin",
-        can_train=False, can_audit=False, can_load=False, can_send_invoices=False,
+        can_train=False, can_audit=False, can_load=False,
     )
-    assert resolve_permissions("Admin", user) == (True, True, True, True)
+    assert resolve_permissions("Admin", user) == (True, True, True)
 
 
 def test_resolve_permissions_reads_the_user_row_for_non_admins():
     user = User(
         email="v@example.com", role=RoleMapper.NO_ROLE, clerk_user_id="user_v",
-        can_train=True, can_audit=False, can_load=True, can_send_invoices=True,
+        can_train=True, can_audit=False, can_load=True,
     )
-    assert resolve_permissions(RoleMapper.NO_ROLE, user) == (True, False, True, True)
+    assert resolve_permissions(RoleMapper.NO_ROLE, user) == (True, False, True)
+
+
+def test_user_model_has_no_send_invoices_flag():
+    """BE Gap 720, pinned against reintroduction. The founder's ruling is that
+    the product's grants are Loader / Trainer / Auditor plus the Admin role; a
+    fourth flag here renders on the Admin screen as a fourth role, which is the
+    misreading the gap exists to end."""
+    assert not hasattr(User(email="x@example.com", role=RoleMapper.NO_ROLE), "can_send_invoices")
+    for defaults in RoleMapper.ROLE_PERMISSION_DEFAULTS.values():
+        assert set(defaults) == {"can_train", "can_audit", "can_load"}
 
 
 # --- Feature 25 (Gap 337): the retired "Viewer" name ------------------------
@@ -129,24 +149,25 @@ def test_zero_permission_fallback_never_grants_anything(raw_role):
     org-mismatched session would silently acquire can_train."""
     role = RoleMapper.normalize_role(raw_role)
     assert role != "Trainer"
-    assert RoleMapper.resolve_permissions(role, None) == (False, False, False, False)
+    assert RoleMapper.resolve_permissions(role, None) == (False, False, False)
 
 
 def test_legacy_viewer_rows_still_resolve_to_no_permissions():
     """A `users` row written before this gap's data migration (or by an
     un-migrated database) still carries the literal 'Viewer'. It must resolve to
     zero permissions via the unmapped-role fallback, not raise a KeyError."""
-    assert RoleMapper.resolve_permissions("Viewer", None) == (False, False, False, False)
+    assert RoleMapper.resolve_permissions("Viewer", None) == (False, False, False)
 
 
 def test_auth_me_exposes_permissions_for_admin():
-    """GET /auth/me returns the 4 booleans (can_send_invoices added by Gap
-    369) -- this is the FE's only source for them."""
+    """GET /auth/me returns the 3 booleans -- this is the FE's only source for
+    them. BE Gap 720 removed a fourth, `can_send_invoices`; the FE's `useAuth`
+    no longer reads it."""
     data = client.get("/auth/me").json()
     assert data["can_train"] is True
     assert data["can_audit"] is True
     assert data["can_load"] is True
-    assert data["can_send_invoices"] is True
+    assert "can_send_invoices" not in data
 
 
 def test_auth_me_exposes_permissions_for_unpermissioned_user():
@@ -156,7 +177,7 @@ def test_auth_me_exposes_permissions_for_unpermissioned_user():
     assert data["can_train"] is False
     assert data["can_audit"] is False
     assert data["can_load"] is False
-    assert data["can_send_invoices"] is False
+    assert "can_send_invoices" not in data
 
 
 # ---------------------------------------------------------------------------
@@ -226,19 +247,40 @@ def test_outbound_upload_requires_can_load():
 
 
 # ---------------------------------------------------------------------------
-# Gap 405: can_send_invoices — a 4th, independent gate on outbound upload,
-# layered on top of can_load rather than folded into it.
+# BE Gap 720: outbound preparation is can_load + the tenant's Send Invoices
+# toggle. Gap 405's separate per-user permission is gone; these tests replace
+# the pair that asserted it, and additionally cover the three build routes,
+# which never checked the toggle at all while that permission carried them.
 # ---------------------------------------------------------------------------
 
-def test_outbound_upload_still_403s_with_can_load_but_no_send_invoices(db_session):
-    """can_load alone must not be enough -- that would make the new permission
-    a no-op for anyone who already has ingestion access. Asserts the exact
-    require_permission() wording, not just "contains 'send invoices'" --
-    the handler's own tenant-level send_invoices_enabled check (unrelated to
-    this permission, checked further down in the function body) 403s with a
-    *different* message ("...is not enabled for this tenant...") that would
-    also match a looser substring check and mask this gate not actually firing."""
-    _grant(db_session, can_load=True, can_send_invoices=False)
+def _enable_sending(db_session) -> None:
+    from dependencies import MOCK_TENANT_ID
+    from models import Tenant
+
+    tenant = db_session.get(Tenant, MOCK_TENANT_ID)
+    tenant.send_invoices_enabled = True
+    tenant.billing_plan = "pro_combined"
+    db_session.add(tenant)
+    db_session.commit()
+
+
+def _disable_sending(db_session) -> None:
+    from dependencies import MOCK_TENANT_ID
+    from models import Tenant
+
+    tenant = db_session.get(Tenant, MOCK_TENANT_ID)
+    tenant.send_invoices_enabled = False
+    db_session.add(tenant)
+    db_session.commit()
+
+
+def test_outbound_upload_403s_without_can_load(db_session):
+    """The remaining per-user gate. Asserts the exact require_permission()
+    wording rather than a substring: the tenant-level toggle 403s from the same
+    route with a different message, and a loose check would pass even if this
+    gate stopped firing."""
+    _grant(db_session, can_load=False)
+    _enable_sending(db_session)
     response = client.post(
         "/api/v1/outbound-invoices/upload",
         headers=VIEWER,
@@ -248,29 +290,54 @@ def test_outbound_upload_still_403s_with_can_load_but_no_send_invoices(db_sessio
     assert "ask an admin to grant it" in response.json()["detail"].lower()
 
 
-def test_outbound_upload_succeeds_with_both_permissions_granted(db_session):
-    """Both gates satisfied, AND the tenant's own send_invoices_enabled toggle
-    (Feature 16 -- a separate, pre-existing check in the handler body, not a
-    Depends) also on -- the upload itself may still fail past that for
-    unrelated reasons (storage, billing quota), so this only asserts past the
-    403s, matching how test_outbound_upload_requires_can_load only asserts
-    the 403 side for its own case."""
-    from dependencies import MOCK_TENANT_ID
-    from models import Tenant
+def test_outbound_upload_403s_when_the_tenant_toggle_is_off(db_session):
+    """can_load alone is not enough. After Gap 720 this toggle is the only
+    tenant-wide gate left on the outbound door, so it is pinned here."""
+    _grant(db_session, can_load=True)
+    _disable_sending(db_session)
+    response = client.post(
+        "/api/v1/outbound-invoices/upload",
+        headers=VIEWER,
+        files={"file": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
+    )
+    assert response.status_code == 403
+    assert "not enabled for this tenant" in response.json()["detail"].lower()
 
-    _grant(db_session, can_load=True, can_send_invoices=True)
-    tenant = db_session.get(Tenant, MOCK_TENANT_ID)
-    tenant.send_invoices_enabled = True
-    tenant.billing_plan = "pro_combined"
-    db_session.add(tenant)
-    db_session.commit()
 
+def test_outbound_upload_passes_the_gates_with_can_load_and_the_toggle_on(db_session):
+    """Both gates satisfied. The upload may still fail further down for
+    unrelated reasons (storage, billing quota), so this asserts only that it is
+    past the 403s -- matching how the can_load case above asserts only its own
+    side."""
+    _grant(db_session, can_load=True)
+    _enable_sending(db_session)
     response = client.post(
         "/api/v1/outbound-invoices/upload",
         headers=VIEWER,
         files={"file": ("a.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
     )
     assert response.status_code != 403
+
+
+@pytest.mark.parametrize(
+    "method,path,payload",
+    [
+        ("get", "/api/v1/outbound-invoices/%s/build-defaults" % UUID_ZERO, None),
+        ("post", "/api/v1/outbound-invoices/build/preview", {"source_invoice_id": UUID_ZERO}),
+        ("post", "/api/v1/outbound-invoices/build", {"source_invoice_id": UUID_ZERO}),
+    ],
+)
+def test_build_routes_403_when_the_tenant_toggle_is_off(db_session, method, path, payload):
+    """The hole Gap 720 closes on its way past. These three routes carried
+    Gap 405's permission but never checked `send_invoices_enabled`, so removing
+    that permission without adding this check would have left the builder open
+    to any Loader in a workspace that never switched outbound on."""
+    _grant(db_session, can_load=True)
+    _disable_sending(db_session)
+    call = getattr(client, method)
+    response = call(path, headers=VIEWER) if payload is None else call(path, headers=VIEWER, json=payload)
+    assert response.status_code == 403
+    assert "not enabled for this tenant" in response.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -344,31 +411,31 @@ def test_admin_lists_tenant_users(db_session):
     assert response.status_code == 200
     emails = [u["email"] for u in response.json()]
     assert "test@example.com" in emails
-    assert all({"can_train", "can_audit", "can_load", "can_send_invoices"} <= set(u) for u in response.json())
+    assert all({"can_train", "can_audit", "can_load"} <= set(u) for u in response.json())
+    # BE Gap 720: the withdrawn flag must not reappear in the admin payload.
+    assert all("can_send_invoices" not in u for u in response.json())
 
 
-def test_admin_sets_can_send_invoices(db_session):
-    """Gap 405's 4th flag round-trips through the same endpoint the other
-    three already use -- no separate admin endpoint was added."""
+def test_admin_permissions_put_accepts_and_ignores_the_withdrawn_flag(db_session):
+    """BE Gap 720's backwards-compatibility promise, for one release.
+
+    A browser left open on the previous FE build still PUTs `can_send_invoices`.
+    Rejecting that body would 422 an Admin mid-edit over a flag that no longer
+    means anything, so the field is still accepted -- and dropped. It must not
+    come back in the response, and it must not land on the row.
+    """
     user = _viewer_row(db_session)
     response = client.put(
         f"/api/v1/admin/users/{user.id}/permissions",
-        json={"can_train": False, "can_audit": False, "can_load": False, "can_send_invoices": True},
+        json={"can_train": False, "can_audit": False, "can_load": True, "can_send_invoices": True},
     )
     assert response.status_code == 200
-    assert response.json()["can_send_invoices"] is True
+    assert "can_send_invoices" not in response.json()
+    assert response.json()["can_load"] is True
 
     stored = db_session.exec(select(User).where(User.id == user.id)).first()
-    assert stored.can_send_invoices is True
-
-    # Revoke it again -- confirms the field is genuinely read both ways, not
-    # just accepted once and ignored on a second write.
-    response = client.put(
-        f"/api/v1/admin/users/{user.id}/permissions",
-        json={"can_train": False, "can_audit": False, "can_load": False, "can_send_invoices": False},
-    )
-    assert response.status_code == 200
-    assert response.json()["can_send_invoices"] is False
+    assert stored.can_load is True
+    assert not hasattr(stored, "can_send_invoices")
 
 
 def test_admin_sets_permissions_by_backend_uuid(db_session):

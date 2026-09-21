@@ -28,8 +28,9 @@ module, or anything that imports it, may grow a rank.
 
 What it is built on
 -------------------
-The four grant flags are real columns that predate ATLAS -- `models.py`
-(`User.can_train` / `can_audit` / `can_load` / `can_send_invoices`),
+The grant flags are real columns that predate ATLAS -- `models.py`
+(`User.can_train` / `can_audit` / `can_load`; a fourth, `can_send_invoices`,
+existed between BE Gaps 405 and 720 and is now gone),
 `RoleMapper.ROLE_PERMISSION_DEFAULTS`, `TenantContext` (`dependencies.py`),
 resolved per request by `resolve_permissions()` (Feature 1.1 / Gap 73). This
 module reads them; it does not define a second permission model beside them.
@@ -47,9 +48,9 @@ Three rules that are easy to get subtly wrong
    send, payments to chase -- declares `AtlasCapability.AUDIT` like every other
    audit line. This deliberately reverses BE Gap 405, which defaulted the flag
    False for every role on least-privilege grounds; it is a recorded reversal,
-   not drift. The column stays where it is and keeps its meaning for the Feature
-   2.1 / 7.1 outbound surfaces. ATLAS simply stops branching on it, which is why
-   `GrantSet` has no field for it: an unused field is an invitation to branch.
+   not drift. **BE Gap 720 has since deleted the flag entirely**, which makes D6
+   unconditional: there is no longer a flag anyone could branch on even if they
+   wanted to. `GrantSet` never had a field for it.
 """
 
 from __future__ import annotations
@@ -112,7 +113,8 @@ class GrantSet:
     can_load: bool = False
     is_admin: bool = False
 
-    # `can_send_invoices` is deliberately absent -- see the module docstring, D6.
+    # `can_send_invoices` is absent -- see the module docstring, D6. As of BE
+    # Gap 720 the flag no longer exists anywhere, so there is nothing to add.
 
     @classmethod
     def from_context(cls, ctx) -> "GrantSet":
@@ -142,9 +144,7 @@ class GrantSet:
         """
         from models import RoleMapper
 
-        can_train, can_audit, can_load, _can_send_invoices = RoleMapper.resolve_permissions(
-            role, user
-        )
+        can_train, can_audit, can_load = RoleMapper.resolve_permissions(role, user)
         return cls(
             can_audit=bool(can_audit),
             can_train=bool(can_train),

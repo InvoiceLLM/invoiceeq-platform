@@ -87,10 +87,13 @@ function IngestionPageContent() {
   // its one relevant view, unchanged from today's default when Send is off.
   const [receiveEnabled, setReceiveEnabled] = useState(true);
   const [sendEnabled, setSendEnabled] = useState(false);
-  // Gap 405: per-user Send Invoices visibility, on top of the tenant-wide
-  // sendEnabled flag above -- both must be true for this user to see Sending.
-  const { canSendInvoices } = useAuth();
-  const sendVisible = sendEnabled && canSendInvoices;
+  // FE Gap 709 / BE Gap 720: Gap 405's per-user `canSendInvoices` is gone. The
+  // tab is gated on the tenant-wide toggle plus `canLoad` -- the permission the
+  // outbound upload and build routes actually require. Before Gap 405 this read
+  // `sendEnabled` alone, which showed the tab to users who could do nothing
+  // with it; that half of Gap 405 is kept, only the extra grant is dropped.
+  const { canLoad } = useAuth();
+  const sendVisible = sendEnabled && canLoad;
   const [activeTab, setActiveTab] = useState<IngestionTab>("receiving");
 
   // Feature 13: Autopilot config state
@@ -258,10 +261,10 @@ function IngestionPageContent() {
         if (cancelled || !data) return;
         setReceiveEnabled(data.receive_invoices_enabled ?? true);
         setSendEnabled(data.send_invoices_enabled ?? false);
-        // Gap 405: only auto-switch to a tab this user can actually see --
-        // canSendInvoices=false must not land them on a tab with no visible
-        // button and nothing rendered.
-        if (!data.receive_invoices_enabled && data.send_invoices_enabled && canSendInvoices) {
+        // Gap 405, kept by Gap 720 with `canLoad` as the grant: only
+        // auto-switch to a tab this user can actually see -- a user without it
+        // must not land on a tab with no visible button and nothing rendered.
+        if (!data.receive_invoices_enabled && data.send_invoices_enabled && canLoad) {
           setActiveTab("sending");
         }
       })
@@ -284,8 +287,8 @@ function IngestionPageContent() {
   // an ordinary outbound row.
   //
   // Keyed on sendVisible rather than mount-once: it is false until the
-  // service-flow fetch above resolves, and Gap 405 means a user without
-  // canSendInvoices must never be moved onto a tab they cannot see. Re-running
+  // service-flow fetch above resolves, and a user without `canLoad` must never
+  // be moved onto a tab they cannot see. Re-running
   // is harmless -- the seed is idempotent on invoice id, and the deps do not
   // change when the user clicks a tab by hand.
   useEffect(() => {
@@ -424,10 +427,10 @@ function IngestionPageContent() {
     }
   };
 
-  // Gap 405: sendVisible (tenant flag AND per-user permission) replaces
-  // sendEnabled everywhere Sending's visibility, not just its backing data,
-  // is decided -- a user without canSendInvoices must not see the tab, the
-  // tab button, or land on it via the auto-switch effect above.
+  // Gap 405, now on Gap 720's terms: sendVisible (tenant toggle AND `canLoad`)
+  // replaces sendEnabled everywhere Sending's visibility, not just its backing
+  // data, is decided -- a user who cannot upload must not see the tab, the tab
+  // button, or land on it via the auto-switch effect above.
   const showTabs = receiveEnabled && sendVisible;
   const showReceiving = activeTab === "receiving" && (receiveEnabled || !sendVisible);
   const showSending = activeTab === "sending" && sendVisible;

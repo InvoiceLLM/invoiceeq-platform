@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useLayoutEffect, useRef } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../../lib/utils";
 
 interface KpiCardProps {
@@ -23,10 +23,21 @@ interface KpiCardProps {
 }
 
 // Font-size bounds for the auto-fit. MAX is the old `text-2xl` (24px) so a
-// single-currency card looks exactly as it always did; MIN is the smallest
-// size still legible in this theme's font at this contrast.
+// single-currency card looks exactly as it always did.
+//
+// FE Gap 710 (founder, 2026-09-21) raised MIN from 9px to 12px. 9px was chosen
+// when shrinking was the *only* escape from a fixed-height card, so the font had
+// to keep going until it fit whatever it was given. The value box now scrolls,
+// so a fifth currency no longer has to be paid for by making the other four
+// unreadable: the text shrinks to a size a person can still read, and anything
+// past that is reached by scrolling.
 const MAX_FONT_PX = 24;
-const MIN_FONT_PX = 9;
+const MIN_FONT_PX = 12;
+// The floor for the WIDTH case, which has no escape hatch: the box scrolls
+// vertically, never sideways, so a figure too wide for the card would simply be
+// cut off mid-digit. "₹23,227,070.20" is wider than a narrow card at 12px, so
+// width keeps the old 9px floor while height stops at MIN_FONT_PX and scrolls.
+const MIN_WIDTH_FONT_PX = 9;
 
 /**
  * FE Gap 183: shrink-to-fit, explicitly required over the alternatives. The
@@ -44,6 +55,10 @@ const MIN_FONT_PX = 9;
 function useFitText(fitKey: string) {
   const boxRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  // FE Gap 710: whether anything is still out of view once the font has shrunk
+  // as far as it may. Drives the fade hint only -- the scrolling itself is
+  // plain `overflow-y-auto` and needs no JavaScript.
+  const [overflowing, setOverflowing] = useState(false);
 
   useLayoutEffect(() => {
     const box = boxRef.current;
@@ -57,14 +72,23 @@ function useFitText(fitKey: string) {
 
       let size = MAX_FONT_PX;
       content.style.fontSize = `${size}px`;
+      const tooTall = () => content.scrollHeight > box.clientHeight + 0.5;
+      const tooWide = () => content.scrollWidth > box.clientWidth + 0.5;
       while (
-        size > MIN_FONT_PX &&
-        (content.scrollHeight > box.clientHeight + 0.5 ||
-          content.scrollWidth > box.clientWidth + 0.5)
+        size > MIN_WIDTH_FONT_PX &&
+        (tooWide() || (tooTall() && size > MIN_FONT_PX))
       ) {
         size -= 1;
         content.style.fontSize = `${size}px`;
       }
+
+      // Compared against the BOX, not the content: `content` is the inner div
+      // and its own scrollHeight equals its height once it is free to be as
+      // tall as it likes. Only ever flips state on a real change -- a
+      // ResizeObserver callback that always set state would re-render on every
+      // layout pass.
+      const spills = content.scrollHeight > box.clientHeight + 0.5;
+      setOverflowing((prev) => (prev === spills ? prev : spills));
     };
 
     fit();
@@ -75,7 +99,7 @@ function useFitText(fitKey: string) {
     return () => observer.disconnect();
   }, [fitKey]);
 
-  return { boxRef, contentRef };
+  return { boxRef, contentRef, overflowing };
 }
 
 export default function KpiCard({
@@ -87,7 +111,14 @@ export default function KpiCard({
   className,
 }: KpiCardProps) {
   const values = Array.isArray(value) ? value : [String(value)];
-  const { boxRef, contentRef } = useFitText(values.join("|"));
+  const fitKey = values.join("|");
+  const { boxRef, contentRef, overflowing } = useFitText(fitKey);
+  // FE Gap 710: the fade is a "there is more below" hint, so it is wrong once
+  // the reader has reached the bottom. Reset when the figures change, or a card
+  // whose last state was "scrolled to the end" would open without the hint.
+  const [atBottom, setAtBottom] = useState(false);
+  React.useEffect(() => setAtBottom(false), [fitKey]);
+  const showFade = overflowing && !atBottom;
 
   return (
     <div
@@ -124,13 +155,48 @@ export default function KpiCard({
           its bottom alignment via `self-end`. */}
       <div className="flex items-stretch justify-between gap-2 mt-1 z-10 min-h-0 flex-1">
         <div className="flex flex-col min-w-0 flex-1 justify-end">
-          {/* min-h-0 + overflow-hidden give useFitText a real box to measure
-              against; without a bounded parent scrollHeight always equals
-              clientHeight and nothing would ever shrink. */}
+          {/* min-h-0 gives useFitText a real box to measure against; without a
+              bounded parent scrollHeight always equals clientHeight and nothing
+              would ever shrink.
+
+              FE Gap 710: `overflow-y-auto`, not `overflow-hidden`. Gap 183 chose
+              hidden because the font always shrank until it fit -- but with four
+              or more currencies the shrink hit its floor and the lines that did
+              not fit were clipped off the TOP, silently (founder, 2026-09-21,
+              with a screenshot of ₹23,227,070.20 sliced in half). Scrolling is
+              the escape hatch that clipping never was. The scrollbar is themed
+              app-wide by FE Gap 704, and `scrollbar-gutter: stable` (globals.css)
+              means its arrival does not reflow the number beside it.
+
+              Alignment flips with the line count: a single figure stays bottom-
+              aligned exactly as before, while a multi-currency stack is
+              top-aligned so the FIRST currency is the one on screen. Bottom
+              alignment is what put the clipped line out of sight to begin with. */}
           <div
             ref={boxRef}
             data-testid="kpi-value"
-            className="min-h-0 flex-1 overflow-hidden flex flex-col justify-end"
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              const done = el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+              setAtBottom((prev) => (prev === done ? prev : done));
+            }}
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col",
+              values.length > 1 ? "justify-start" : "justify-end"
+            )}
+            style={
+              // Fades the last visible line instead of painting a gradient over
+              // it: a mask needs no knowledge of the card's background, which is
+              // a translucent `glass-panel` and differs between the two themes.
+              showFade
+                ? {
+                    maskImage:
+                      "linear-gradient(to bottom, black calc(100% - 12px), transparent)",
+                    WebkitMaskImage:
+                      "linear-gradient(to bottom, black calc(100% - 12px), transparent)",
+                  }
+                : undefined
+            }
           >
             <div
               ref={contentRef}

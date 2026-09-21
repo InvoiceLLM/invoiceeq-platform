@@ -1566,3 +1566,65 @@ component now uses the functional setter form so a value can never be re-read as
 
 - `[x]` **FE Gap 708 (FE, usability & navigation · shell-wide): user profile dropdown sat in the top-right header while settings, subscriptions and help cluttered the main navigation list** — CLOSED 2026-09-21 — S2 · release risk **Medium (app shell, header & sidebar layout across every screen)** · effort S. *(found in UX review following Claude/ChatGPT design alignment; filed and resolved 2026-09-21)* **Disambiguation, read this first:** Numbers are unique **per tracker**, not across them — the same situation as BE/FE Gap 378, BE/FE Gap 704, and BE/FE Gap 707. Always write "FE Gap 708" or "BE Gap 708", never a bare "Gap 708". **Symptom:** User profile card with downward dropdown was housed in the top-right header, requiring eye travel between left sidebar navigation and user identity/settings. Meanwhile, the primary sidebar menu was cluttered with secondary options (`Settings`, `Subscriptions`, `Help`) and ended with an awkward static gray box for "Tenant Isolation ID", leaving less visual focus on core audit/ingestion workflows. Additionally, profile pill chevron displayed static two-way arrows (`↕`) regardless of state, collapsed sidebar popover overlapped dashboard metric cards, and popover badge showed redundant organization name (`ADM Global Solutions (Admin)`). **Root cause:** Early legacy layout placed user profile in the top-right navbar and exposed every accessible route as a primary sidebar link without profile-level grouping or popover consolidation. Sidebar lacked explicit stacking context (`relative z-40`) over main content cards, and popover identity repeated the full organization string instead of a concise role chip. **Fixed 2026-09-21 (two files in `apps/invoice-fe`):** (1) `components/layout/Header.tsx` — removed the user profile dropdown card, profile handlers, and divider from the top-right header. Header now strictly renders route action portals, notification bell (with audit queue badge count), ATLAS mode toggle, and dual-theme switch. (2) `components/layout/Sidebar.tsx` — streamlined primary navigation `menuItems` to core workflow items only (`Dashboard`, `Ingest`, `Audit Queue`, `History`, `AI Trainer`, `Chat Rules`, `Chat`). Replaced the static tenant ID box at the bottom-left with an interactive User Profile Pill retaining `{orgLine || "Workspace"}` (`ADM Global Solutions (Admin)`) alongside dynamic arrow indicator: closed popover displays **only up arrow** (`ChevronUp`), open popover displays **down arrow** (`ChevronDown`). Added `relative z-40` to `<aside>` preventing popover overlap in collapsed mode (`w-[76px]`). Added an upward floating popover menu (`bottom-full mb-2`) triggered on click with outside-click and route-change dismissal: consolidates **Signed in as** (email & clean `{role || "Admin"}` role badge without organization clutter), **Settings** (`/settings`), **Upgrade Plan** (`/settings/subscriptions` with status badge), **Help** (`/help`), **Tenant Isolation ID** (monospace chip with 1-click **Copy button** and feedback state), and **Sign Out** (clean logout sequence via `clearAuth`, backend `/api/auth/logout`, and Clerk redirect). **Evidence:** `apps/invoice-fe` Next.js dev server compiled cleanly (`✓ Compiled in 6.3s`, 1707 modules); verified live on `http://localhost:3000`: clean header, bottom-left profile pill showing organization name with contextual arrow (`ChevronUp` when closed, `ChevronDown` when open), popover header badge showing strictly `Admin`, clean collapsed mode floating on top of dashboard cards, and upward popover menu with 1-click copy and seamless navigation. Real before & after screenshots captured in brain artifacts. **Does NOT handle / Stated limits:** Theme tokens and colors (#0B0F19, #0F172A, #222D3D, #3B82F6) remain strictly untouched. Code changes remain uncommitted and unpushed in local working tree per user instruction.
 
+
+## Send Invoices leaves the permissions panel (2026-09-21) -- FE Gap 709
+
+- `[ ]` **FE Gap 709 (FE, Admin console + Ingestion; pairs with BE Gap 720): the Admin -> Users
+  panel offered four grants, and the fourth read as a role.** The grants render as one line under
+  a user ("Trainer, Auditor, Loader, Send Invoices"), so `can_send_invoices` -- an outbound
+  *visibility* flag -- looked like a fourth role beside Loader, Trainer and Auditor. Founder
+  ruling 2026-09-21: the product has Loader / Trainer / Auditor plus Admin, and nothing else.
+
+  **Changed.** `app/admin/page.tsx`: the fourth checkbox, its type fields, its save payload field
+  and its entry in the permissions summary line are gone. `hooks/useAuth.ts`: `canSendInvoices`
+  removed. `app/ingestion/page.tsx`: the Sending tab is now `sendEnabled && canLoad` -- the
+  permission the outbound routes actually require. Note this **keeps** the half of Gap 405 that
+  was right: before it, the tab rendered on `sendEnabled` alone and was visible to users who
+  could do nothing with it.
+
+  **Evidence.** `npx tsc --noEmit` clean across `app/`, `components/`, `hooks/`, `lib/` and
+  `e2e/`. `e2e/outbound-builder.spec.ts` updated (`can_load` replaces `can_send_invoices` in the
+  ME stub). **The Playwright run itself is owed** -- it needs a running app and the founder asked
+  for Docker to stay off; this entry stays `[ ]` until it exists.
+
+
+## KPI cards: per-currency figures scroll instead of being clipped (2026-09-21) -- FE Gap 710
+
+- `[ ]` **FE Gap 710 (FE, Dashboard / KpiCard; supersedes part of FE Gap 183): with four or more
+  currencies the top line of a KPI card was sliced in half and the rest of the overflow was
+  hidden outright.** Founder, 2026-09-21, with a screenshot of the Command Center: TOTAL INVOICED
+  showed `Rs 23,227,070.20` cut through the middle, with USD / EUR / GBP legible below it.
+
+  **Root cause.** Gap 183 fixed the card's height (`max-h-[124px]`, `overflow-hidden`) and
+  shrank the font to fit, down to a 9px floor. That is enough for two or three currencies. At
+  four the loop reaches its floor with content still taller than the box -- and because the stack
+  was **bottom-aligned** (`justify-end`), the part that did not fit was pushed off the TOP. The
+  card gave no sign that anything was missing: no scrollbar, no ellipsis, no count.
+
+  **Fix (founder's choice, option A of four offered).** The value box is now `overflow-y-auto`
+  and, when there is more than one figure, top-aligned -- so the first currency is always the one
+  on screen and the rest are reached by scrolling. The font floor rises 9px -> 12px for the
+  HEIGHT case, since scrolling now carries what shrinking used to: a fifth currency no longer has
+  to be paid for by making the other four unreadable. The width case keeps the 9px floor, because
+  the box scrolls vertically only and an over-wide figure has no escape -- it would be cut
+  mid-digit. A mask-based fade on the bottom edge marks "more below" and disappears once the
+  reader reaches the end; a mask rather than a painted gradient because the card is a translucent
+  `glass-panel` whose colour differs between the two themes. Scrollbar chrome is already themed
+  app-wide by FE Gap 704, and `scrollbar-gutter: stable` keeps its arrival from reflowing the
+  figure beside it.
+
+  **What is deliberately unchanged.** A single-figure card (Collected, At-Risk, the non-money
+  cards) renders exactly as before -- same bottom alignment, same 24px, no scrollbar. Both KPI
+  strips get the fix from one file: Receiving (`MetricsGrid`) and Sending (`OutboundMetricsGrid`)
+  share `KpiCard`.
+
+  **Gap 183's test still stands** at two currencies -- the content fits, nothing scrolls, and the
+  font is below the 24px baseline. It is *not* rewritten, because its claim is still true for the
+  case it was written for. A new test covers four: all four lines present in the DOM, `overflowY`
+  is `auto`, `scrollTop` is 0 at rest (the assertion the old card would have failed), and the
+  last line can be scrolled into view.
+
+  **Evidence.** `npx tsc --noEmit` clean across `app/`, `components/`, `hooks/`, `lib/` and
+  `e2e/`. **The Playwright run is owed** -- it needs a running app, and Docker is off on this
+  machine at the founder's request; the founder also has to eyeball the result, which no test
+  can do for them. Stays `[ ]` until both exist. Spec: `feature_2_dashboard.md`.
