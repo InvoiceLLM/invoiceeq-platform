@@ -92,6 +92,43 @@ const INBOUND_METRICS_MULTI_CURRENCY = {
   ],
 };
 
+/** FE Gap 710: four currencies — the founder's own tenant. Three lines fit the
+ *  card; the fourth is what used to be sliced off the TOP of the box, because
+ *  the shrink-to-fit hit its floor and the stack was bottom-aligned. */
+const INBOUND_METRICS_FOUR_CURRENCIES = {
+  ...INBOUND_METRICS,
+  totals_by_currency: [
+    {
+      currency: "INR",
+      total_invoiced: 23227070.2,
+      paid_amount: 4039010,
+      outstanding_amount: 19188060.2,
+      at_risk_amount: 1904907.2,
+    },
+    {
+      currency: "USD",
+      total_invoiced: 647028.72,
+      paid_amount: 9093.25,
+      outstanding_amount: 112824.07,
+      at_risk_amount: 118.8,
+    },
+    {
+      currency: "EUR",
+      total_invoiced: 7887.15,
+      paid_amount: 0,
+      outstanding_amount: 7887.15,
+      at_risk_amount: 0,
+    },
+    {
+      currency: "GBP",
+      total_invoiced: 997.75,
+      paid_amount: 0,
+      outstanding_amount: 997.75,
+      at_risk_amount: 113.95,
+    },
+  ],
+};
+
 /** Text that would indicate a combined/net AP-vs-AR figure leaked onto the
  *  page. Both feature docs keep that comparison Chat-only. */
 const FORBIDDEN_COMBINED_TEXT = [
@@ -443,6 +480,60 @@ test.describe("Dashboard — multi-currency display (Gap 183)", () => {
     });
     expect(fontSize).toBeLessThan(24);
     expect(fontSize).toBeGreaterThanOrEqual(9);
+  });
+
+  test("four currencies: every line is reachable by scrolling, none clipped away", async ({
+    page,
+  }) => {
+    // FE Gap 710. Gap 183's answer to a too-full card was to shrink the text,
+    // and its test above still holds for two currencies. At four the shrink
+    // reaches its floor, and before this gap the overflow was simply hidden --
+    // the first currency was cut in half at the top of the box with nothing to
+    // tell the reader it was there.
+    await stubDashboardApis(
+      page,
+      { receive_invoices_enabled: true, send_invoices_enabled: false },
+      INBOUND_METRICS_FOUR_CURRENCIES
+    );
+
+    await page.goto("/dashboard");
+    await expect(inboundTotalCard(page)).toBeVisible();
+
+    const valueBox = page.getByTestId("kpi-value").first();
+    await expect(valueBox).toBeVisible();
+
+    // All four lines are rendered -- nothing is dropped from the DOM.
+    await expect(valueBox.locator("> div > div")).toHaveCount(4);
+
+    // The text stays readable rather than shrinking into illegibility.
+    const fontSize = await valueBox.evaluate((el) => {
+      const inner = el.firstElementChild as HTMLElement;
+      return parseFloat(getComputedStyle(inner).fontSize);
+    });
+    expect(fontSize).toBeGreaterThanOrEqual(9);
+
+    const box = await valueBox.evaluate((el) => ({
+      scrollable: el.scrollHeight > el.clientHeight + 1,
+      overflowY: getComputedStyle(el).overflowY,
+      scrollTop: el.scrollTop,
+    }));
+
+    // Whatever does not fit is reachable, not hidden.
+    expect(box.overflowY).toBe("auto");
+
+    // The FIRST currency is the one on screen at rest. Bottom alignment is what
+    // pushed it out of view, so this is the assertion that would have failed
+    // against the old card.
+    expect(box.scrollTop).toBe(0);
+
+    if (box.scrollable) {
+      // And the last line can actually be brought into view.
+      const reachedEnd = await valueBox.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+        return el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+      });
+      expect(reachedEnd).toBe(true);
+    }
   });
 
   test("per-invoice rows render their own currency, not a hardcoded $", async ({ page }) => {
