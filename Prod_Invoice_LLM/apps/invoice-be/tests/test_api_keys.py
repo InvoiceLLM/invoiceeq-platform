@@ -20,6 +20,7 @@ from dependencies import (
     MOCK_TENANT_ID,
     # Feature 25 (Gap 335): two-tier API key action scope.
     KEY_SCOPE_ACTIONS,
+    KEY_SCOPE_ACTIONS_NO_SEND,
     KEY_SCOPE_READONLY,
     api_key_service_clerk_id,
     permissions_for_key_scope,
@@ -281,15 +282,21 @@ def test_api_key_scope_defaults_to_readonly(db_session):
         # readonly reproduces exactly what the pre-Gap-335 hardcoded Viewer
         # produced -- this row is the regression guard on "nothing changed for
         # existing tenants".
-        (KEY_SCOPE_READONLY, (False, False, False, False)),
-        # actions grants the five financial actions' permissions, including
-        # can_send_invoices (Gap 405 -- "send" was one of the named actions)
-        # -- and NOT can_train. The founder's definition of full automation
-        # named approve/reject/verify/send/mark-paid; training was not among them.
-        (KEY_SCOPE_ACTIONS, (False, True, True, True)),
+        (KEY_SCOPE_READONLY, (False, False, False)),
+        # actions grants the financial actions' permissions -- and NOT
+        # can_train. The founder's definition of full automation named
+        # approve/reject/verify/send/mark-paid; training was not among them.
+        # BE Gap 720: three members, not four. Gap 405's `can_send_invoices`
+        # no longer exists, so a key's grants are the same shape a person's are.
+        (KEY_SCOPE_ACTIONS, (False, True, True)),
+        # BE Gap 721: `actions_no_send` holds the SAME permission triple. What
+        # the policy withholds is one route (confirm-send), enforced by
+        # require_send_scope -- not a permission, which would make the key a
+        # lesser reader and writer everywhere else too.
+        (KEY_SCOPE_ACTIONS_NO_SEND, (False, True, True)),
         # Anything unrecognised falls back to readonly, never to actions.
-        (None, (False, False, False, False)),
-        ("nonsense", (False, False, False, False)),
+        (None, (False, False, False)),
+        ("nonsense", (False, False, False)),
     ],
 )
 def test_scope_derives_permissions(scope, expected):
@@ -345,6 +352,97 @@ def test_actions_key_resolves_with_action_permissions_and_a_service_user(db_sess
         False,
         False,
     )
+
+
+# ---------------------------------------------------------------------------
+# BE Gap 721: "Full Automation except sending" -- the third scope.
+#
+# The founder's requirement was that a person signs off the one step that
+# commits an invoice to the outside world, without giving up the automation on
+# everything else. These pin the difference, which is one route wide.
+# ---------------------------------------------------------------------------
+
+def test_actions_no_send_key_resolves_like_an_actions_key(db_session):
+    """Same permissions, same service user. If this ever diverges, the policy
+    has quietly become "less automation" rather than "no sending"."""
+    tenant = _seed_tenant(db_session)
+    raw_key = client.post(ROTATE_URL).json()["api_key"]
+    tenant.api_key_scope = KEY_SCOPE_ACTIONS_NO_SEND
+    db_session.add(tenant)
+    db_session.commit()
+
+    context = resolve_api_key_context(raw_key, db_session)
+
+    assert context.key_scope == KEY_SCOPE_ACTIONS_NO_SEND
+    assert (context.can_train, context.can_audit, context.can_load) == (False, True, True)
+    assert context.role == RoleMapper.NO_ROLE
+    # It writes AuditLog rows (it may approve and reject), so it needs the
+    # FK-satisfying service user exactly as an actions key does.
+    assert context.db_user_id is not None
+
+
+def test_require_send_scope_refuses_an_actions_no_send_key():
+    """The whole policy, in one assertion."""
+    from fastapi import HTTPException
+
+    from dependencies import TenantContext, require_send_scope
+
+    context = TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="api_key_client", role=RoleMapper.NO_ROLE,
+        billing_plan="pro", can_audit=True, can_load=True, auth_method="api_key",
+        key_scope=KEY_SCOPE_ACTIONS_NO_SEND,
+    )
+    with pytest.raises(HTTPException) as exc:
+        require_send_scope(context)
+    assert exc.value.status_code == 403
+    assert "requires a person to confirm-send" in exc.value.detail
+
+
+def test_require_send_scope_admits_an_actions_key():
+    from dependencies import TenantContext, require_send_scope
+
+    context = TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="api_key_client", role=RoleMapper.NO_ROLE,
+        billing_plan="pro", can_audit=True, can_load=True, auth_method="api_key",
+        key_scope=KEY_SCOPE_ACTIONS,
+    )
+    assert require_send_scope(context) is context
+
+
+def test_require_send_scope_judges_humans_exactly_as_before():
+    """A person is unaffected by which policy the workspace is on -- the gate
+    reads can_audit, the same flag and the same wording require_actions_scope
+    uses. An Auditor can always send; someone without it never could."""
+    from fastapi import HTTPException
+
+    from dependencies import TenantContext, require_send_scope
+
+    auditor = TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="user_a", role="Auditor",
+        billing_plan="pro", can_audit=True, auth_method="clerk",
+    )
+    assert require_send_scope(auditor) is auditor
+
+    loader = TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="user_l", role=RoleMapper.NO_ROLE,
+        billing_plan="pro", can_audit=False, can_load=True, auth_method="clerk",
+    )
+    with pytest.raises(HTTPException) as exc:
+        require_send_scope(loader)
+    assert exc.value.status_code == 403
+    assert "ask an admin to grant it" in exc.value.detail.lower()
+
+
+def test_actions_no_send_still_satisfies_the_ordinary_actions_gate():
+    """Approve, reject, verify and mark-paid are untouched by the policy."""
+    from dependencies import TenantContext, require_actions_scope
+
+    context = TenantContext(
+        tenant_id=MOCK_TENANT_ID, user_id="api_key_client", role=RoleMapper.NO_ROLE,
+        billing_plan="pro", can_audit=True, can_load=True, auth_method="api_key",
+        key_scope=KEY_SCOPE_ACTIONS_NO_SEND,
+    )
+    assert require_actions_scope(context) is context
 
 
 def test_service_user_is_created_once_and_reused(db_session):

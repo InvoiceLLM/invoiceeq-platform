@@ -32,6 +32,7 @@ from main import app
 from dependencies import (
     get_db_session,
     KEY_SCOPE_ACTIONS,
+    KEY_SCOPE_ACTIONS_NO_SEND,
     KEY_SCOPE_READONLY,
     MOCK_TENANT_ID,
 )
@@ -39,6 +40,7 @@ from models import Tenant, TenantConnection, TenantEmailSender, TenantWorkflowCo
 import routers.settings as settings_router
 from routers.settings import (
     AUDIT_POLICY_FULL_AUTOMATION,
+    AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING,
     AUDIT_POLICY_STRICT_REVIEW,
     WORKFLOW_OUTPUT_DESTINATIONS_AVAILABLE,
     WORKFLOW_OUTPUT_DESTINATIONS_UNBUILT,
@@ -281,6 +283,39 @@ def test_strict_review_writes_readonly_scope_onto_the_tenant(db_session):
 
     db_session.refresh(tenant)
     assert tenant.api_key_scope == KEY_SCOPE_READONLY
+
+
+def test_full_automation_except_sending_writes_its_own_scope(db_session):
+    """BE Gap 721. The policy IS `Tenant.api_key_scope` -- if this mapping is
+    wrong the screen offers a setting that enforces something else."""
+    tenant = _seed_tenant(db_session)
+    assert tenant.api_key_scope == KEY_SCOPE_READONLY
+
+    response = client.put(
+        WORKFLOW_URL, json={"audit_policy": AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING}
+    )
+    assert response.status_code == 200
+    assert response.json()["api_key_scope"] == KEY_SCOPE_ACTIONS_NO_SEND
+    assert response.json()["audit_policy"] == AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING
+
+    db_session.refresh(tenant)
+    assert tenant.api_key_scope == KEY_SCOPE_ACTIONS_NO_SEND
+
+
+def test_the_three_policies_round_trip_in_both_directions(db_session):
+    """Each policy must survive a write and be derived back from the column it
+    wrote. A one-way mapping would leave the screen showing Strict Review for a
+    workspace that is actually automating."""
+    tenant = _seed_tenant(db_session)
+    for policy, scope in (
+        (AUDIT_POLICY_FULL_AUTOMATION, KEY_SCOPE_ACTIONS),
+        (AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING, KEY_SCOPE_ACTIONS_NO_SEND),
+        (AUDIT_POLICY_STRICT_REVIEW, KEY_SCOPE_READONLY),
+    ):
+        assert client.put(WORKFLOW_URL, json={"audit_policy": policy}).status_code == 200
+        db_session.refresh(tenant)
+        assert tenant.api_key_scope == scope
+        assert client.get(WORKFLOW_URL).json()["audit_policy"] == policy
 
 
 def test_get_derives_policy_from_the_tenant_column_not_the_stored_row(db_session):

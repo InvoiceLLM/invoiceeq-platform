@@ -201,7 +201,9 @@ def test_a_no_role_user_with_can_load_is_a_loader():
 def test_can_send_invoices_is_not_a_separate_audience():
     # D6: outbound folds into can_audit. GrantSet has no field for it, so there
     # is nothing to branch on -- asserted here so a future edit cannot quietly
-    # reintroduce the audience.
+    # reintroduce the audience. BE Gap 720 has since deleted the underlying
+    # `User.can_send_invoices` flag as well, which makes D6 unconditional: there
+    # is no longer a flag anyone could branch on even if they wanted to.
     assert not hasattr(GrantSet(), "can_send_invoices")
     outbound = _rec(id="rec-chase", capability=AtlasCapability.AUDIT, skill="chase_overdue")
     assert visible_to([outbound], GrantSet(can_audit=True)) == [outbound]
@@ -558,11 +560,9 @@ def test_grants_resolve_from_real_user_rows(pg_session):
         assert not grants.is_ungranted()
         assert [r.capability for r in visible_to(ALL_LINES, grants)] == [AtlasCapability.LOAD]
 
-        # D6: can_send_invoices alone is not an audience.
-        sender = _persist(pg_session, "Restricted", can_send_invoices=True)
-        created.append(sender)
-        assert GrantSet.from_user(sender.role, sender).is_ungranted()
-        assert visible_to(ALL_LINES, GrantSet.from_user(sender.role, sender)) == []
+        # D6 used to be asserted here against a user holding only
+        # `can_send_invoices`. BE Gap 720 deleted that column, so the case no
+        # longer exists -- an ungranted user is covered by the row above.
 
         # §2.2: the Admin is the superset, even with a flag explicitly revoked.
         admin = _persist(

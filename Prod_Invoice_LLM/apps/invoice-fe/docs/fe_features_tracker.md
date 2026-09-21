@@ -1561,3 +1561,38 @@ component now uses the functional setter form so a value can never be re-read as
 ## Unauthenticated deep-link redirect to gateway login (2026-09-21) — FE Gap 707
 
 - `[x]` **FE Gap 707 (FE, auth & routing · app-wide, related to Gap 358): direct navigation to protected routes (`/dashboard`, `/chat`, `/settings`, etc.) by unauthenticated users produced a 404 error instead of redirecting to the gateway login page** — CLOSED 2026-09-21 — S2 · release risk **Medium (all unauthenticated deep links across every protected route)** · effort S. *(related to Gap 358's Clerk middleware seam; filed and fixed 2026-09-21)* **Disambiguation, read this first:** **BE Gap 707** is a different, unrelated defect filed on chat attachments. Numbers are unique **per tracker**, not across them — the same situation as BE/FE Gap 378 and BE/FE Gap 704. Always write "FE Gap 707" or "BE Gap 707", never a bare "Gap 707". **Symptom:** an unauthenticated user (or a signed-out user opening an existing link or bookmarked deep link like `http://localhost:3000/dashboard`, `/chat`, `/settings`, `/invoices`, `/history`, `/trainer`, or `/work`) was greeted with Next.js's default error page: `"404: This page could not be found"` instead of being prompted to log in. **Root cause:** dual-container architecture mismatch. `invoice-website` (the gateway container) hosts the public landing `/`, `/login`, and `/signup`. `invoice-fe` (the protected application container) hosts `/dashboard`, `/chat`, `/settings`, etc., and has **no local `/login` or `/sign-in` route**. In `apps/invoice-fe/middleware.ts`, `clerkMiddleware` ran `await auth.protect()` on non-public routes. Without an explicit redirect target, Clerk's `.protect()` attempted an internal redirect to `/sign-in` or `/login` on `invoice-fe` itself, which failed with a 404. Furthermore, `<ClerkProvider>` in `app/layout.tsx` was unconfigured for external auth URLs, causing client-side auth boundaries to fail identically. **Fixed 2026-09-21 (two files in `apps/invoice-fe`):** (1) `app/layout.tsx` — configured `<ClerkProvider>` with `signInUrl={`${websiteUrl}/login`}` and `signUpUrl={`${websiteUrl}/signup`}` (reading `NEXT_PUBLIC_WEBSITE_URL` with empty fallback), so client-side Clerk redirects route to the gateway container rather than throwing internal 404s. (2) `middleware.ts` — replaced the bare `await auth.protect()` with deterministic unauthenticated redirect handling: `const { userId } = await auth(); if (!userId) { const websiteUrl = process.env.NEXT_PUBLIC_WEBSITE_URL || req.nextUrl.origin; const signInUrl = new URL(`${websiteUrl}/login`, req.url); signInUrl.searchParams.set('redirect_url', req.url); return NextResponse.redirect(signInUrl); }`. This explicitly redirects unauthenticated users to the gateway login screen and preserves the deep-link target via the `redirect_url` query parameter. **Evidence:** `npx tsc --noEmit` clean; local dev server (`next dev`) verified running on `http://localhost:3000`, protected route requests redirect cleanly to `/login?redirect_url=...` with HTTP 307/302 instead of 404. **Does NOT handle / Stated limits:** this does not alter public route exemptions (`/api/*`, `/embed/*`, `/fe-static/*`, etc.) established under Gap 358; those remain intact. Navigation/sidebar structural refactoring was explicitly omitted per founder instruction.
+
+
+## Send Invoices leaves the permissions panel; a third workflow policy (2026-09-21) -- FE Gap 708
+
+- `[ ]` **FE Gap 708 (FE, Admin console + Ingestion + Settings; pairs with BE Gaps 720/721): the
+  Admin -> Users panel offered four grants, and the fourth read as a role.** The grants render as
+  one line under a user ("Trainer, Auditor, Loader, Send Invoices"), so `can_send_invoices` -- an
+  outbound *visibility* flag -- looked like a fourth role beside Loader, Trainer and Auditor.
+  Founder ruling 2026-09-21: the product has Loader / Trainer / Auditor plus Admin, and nothing
+  else.
+
+  **Changed.** `app/admin/page.tsx`: the fourth checkbox, its type fields, its save payload field
+  and its entry in the permissions summary line are gone. `hooks/useAuth.ts`: `canSendInvoices`
+  removed. `app/ingestion/page.tsx`: the Sending tab is now `sendEnabled && canLoad` -- the
+  permission the outbound routes actually require. Note this **keeps** the half of Gap 405 that
+  was right: before it, the tab rendered on `sendEnabled` alone and was visible to users who
+  could do nothing with it.
+
+  **Added (BE Gap 721).** `app/settings/workflows/page.tsx` gains a third policy tile, **Full
+  Automation except sending** (`UserCheck` icon -- `ShieldCheck` already means Strict Review on
+  that screen), listed between the two originals so the order reads most-to-least automation.
+  `app/settings/security/page.tsx` gains a **"What this key can do"** block under the API-key
+  panel, naming the workspace's live policy and spelling out what the key may and may not do, per
+  the founder's instruction: *"automation api ke vha likh do ... so user will be informed better
+  what they are doing."* Settings -> Workflows already warned about this; Security is where the
+  credential is actually created, and the two are not the same person on the same day. The block
+  reads the policy from `/api/settings/workflow` and renders nothing if that read fails -- naming
+  the wrong policy on a credential screen is worse than naming none.
+
+  **Evidence.** `npx tsc --noEmit` clean across `app/`, `components/`, `hooks/`, `lib/` and
+  `e2e/`. `e2e/outbound-builder.spec.ts` updated (`can_load` replaces `can_send_invoices` in the
+  ME stub); `e2e/workflow-wizard.spec.ts` extended to select the third tile and assert
+  single-select still holds and that `actions_no_send` is the resulting scope. **The Playwright
+  run itself is owed** -- it needs a running app and the founder asked for Docker to stay off;
+  this entry stays `[ ]` until it exists.

@@ -38,11 +38,9 @@ class TenantContext(BaseModel):
     can_train: bool = False
     can_audit: bool = False
     can_load: bool = False
-    # Gap 405: granular per-user Send Invoices visibility, layered on top of
-    # Tenant.send_invoices_enabled's tenant-wide gate. Defaults False, so
-    # every existing TenantContext(...) construction site that predates this
-    # field is unaffected, same pattern as auth_method/key_scope below.
-    can_send_invoices: bool = False
+    # BE Gap 720: `can_send_invoices` removed. Outbound is gated by
+    # can_load + Tenant.send_invoices_enabled to prepare, and by can_audit to
+    # confirm-send. See the note on models.User.
     # Feature 25 (Gap 335): which door this request came through -- "clerk" for a
     # browser session, "api_key" for an `inv_live_...` credential.
     #
@@ -307,10 +305,12 @@ def get_authenticated_clerk_identity(
     )
 
 
-def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool, bool]:
+def resolve_permissions(role: str, user: User | None) -> tuple[bool, bool, bool]:
     """
-    Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load,
-    can_send_invoices — the last added by Gap 405).
+    Feature 1.1 (Task 1.1.3) / Gap 73: resolve (can_train, can_audit, can_load).
+
+    BE Gap 720 returned this to three: Gap 405's fourth member,
+    `can_send_invoices`, no longer exists.
     Delegates to RoleMapper for enterprise-scale role mapping and fallback permissions.
     """
     return RoleMapper.resolve_permissions(role, user)
@@ -747,7 +747,7 @@ def get_tenant_context_allow_unpaid(
     # permissions -- on the user's real tenant. See reconcile_role_with_org().
     role = reconcile_role_with_org(role, user, tenant, clerk_org_id, is_mock_identity)
 
-    can_train, can_audit, can_load, can_send_invoices = resolve_permissions(role, user)
+    can_train, can_audit, can_load = resolve_permissions(role, user)
 
     # Gap 71: lazy lapse check. PayU's classic API has no recurring object and
     # no cancellation webhook, so a lapse can only be inferred from a date --
@@ -788,7 +788,6 @@ def get_tenant_context_allow_unpaid(
         can_train=can_train,
         can_audit=can_audit,
         can_load=can_load,
-        can_send_invoices=can_send_invoices,
     )
 
     return context
@@ -849,17 +848,32 @@ API_KEY_USER_ID = "api_key_client"
 # has not ruled on the rename; see docs/feature_25_plug_and_play_workflows.md.)
 KEY_SCOPE_READONLY = "readonly"
 KEY_SCOPE_ACTIONS = "actions"
-KEY_SCOPE_VALUES = (KEY_SCOPE_READONLY, KEY_SCOPE_ACTIONS)
+# BE Gap 721 (founder, 2026-09-21): the middle setting. Everything `actions`
+# grants EXCEPT confirm-send -- the one step that commits a document to the
+# outside world in the tenant's name. The founder's words: "full automation but
+# only sending part is human operated ... by admin and auditor".
+#
+# Why this is a scope value and not a second boolean: `api_key_scope` is already
+# the one thing every gate in this file reads, `require_key_scope()` already
+# resolves it per route, and `permissions_for_key_scope()` already fails closed
+# on anything it does not recognise. A parallel flag would give two sources of
+# truth for one question.
+KEY_SCOPE_ACTIONS_NO_SEND = "actions_no_send"
+KEY_SCOPE_VALUES = (KEY_SCOPE_READONLY, KEY_SCOPE_ACTIONS, KEY_SCOPE_ACTIONS_NO_SEND)
+
+# The scopes that satisfy an `actions`-level gate. Confirm-send asks a stricter
+# question (see require_send_scope below) and deliberately does not read this.
+KEY_SCOPES_WITH_ACTIONS = (KEY_SCOPE_ACTIONS, KEY_SCOPE_ACTIONS_NO_SEND)
 
 # Non-routable domain for the synthetic service users below. `users.email` is
 # globally unique, so the tenant id goes inside the local part.
 API_KEY_SERVICE_USER_EMAIL_DOMAIN = "service.invoice-llm.internal"
 
 
-def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool, bool]:
+def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool]:
     """
-    Feature 25 (Gap 335): (can_train, can_audit, can_load, can_send_invoices —
-    the last added by Gap 405) for an API-key scope.
+    Feature 25 (Gap 335): (can_train, can_audit, can_load) for an API-key scope.
+    BE Gap 720 removed the fourth member, `can_send_invoices`.
 
     Replaces Gap 184's hardcoded `role = "Viewer"` -> resolve_permissions(). The
     readonly row below is the SAME effective permission set that Viewer label
@@ -869,8 +883,15 @@ def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool, bool
     from scope rather than from a role string mattered: nothing here had to
     change when the role vocabulary did.)
 
-        readonly -> (False, False, False, False)
-        actions  -> (False, True,  True,  True)
+        readonly        -> (False, False, False)
+        actions         -> (False, True,  True)
+        actions_no_send -> (False, True,  True)
+
+    `actions_no_send` (BE Gap 721) resolves to the SAME permission triple as
+    `actions`. The difference between them is not a permission a key holds, it
+    is one route it may not call, and that is enforced by `require_send_scope()`
+    rather than smuggled in here -- a third permission tuple would imply the key
+    is a lesser reader/writer everywhere, which it is not.
 
     can_train is False at BOTH scopes, deliberately. The founder's description
     of full automation named approve/reject/verify/send (and mark-paid);
@@ -878,18 +899,13 @@ def permissions_for_key_scope(scope: str | None) -> tuple[bool, bool, bool, bool
     extraction rules is a much larger claim than letting it finish an invoice,
     and it will not arrive here as a side effect.
 
-    can_send_invoices is True at `actions` scope (Gap 405) -- "send" is one of
-    the exact actions the founder's full-automation description named, so an
-    actions-scoped key is granted the same outbound-visibility permission a
-    human Admin gets, consistent with how can_audit/can_load already work here.
-
     Anything unrecognised (including None, i.e. a row predating the migration on
     a database that somehow skipped the server_default) falls to readonly --
     fail closed, never open.
     """
-    if scope == KEY_SCOPE_ACTIONS:
-        return False, True, True, True
-    return False, False, False, False
+    if scope in KEY_SCOPES_WITH_ACTIONS:
+        return False, True, True
+    return False, False, False
 
 
 def api_key_service_clerk_id(tenant_id: UUID) -> str:
@@ -952,7 +968,6 @@ def resolve_api_key_service_user(tenant: Tenant, db_session: Session) -> UUID:
         can_train=False,
         can_audit=False,
         can_load=False,
-        can_send_invoices=False,
         tenant_id=tenant.id,
         last_login=datetime.utcnow(),
     )
@@ -1088,12 +1103,15 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
                 headers={"WWW-Authenticate": "Bearer"},
             )
         scope = KEY_SCOPE_READONLY
-    can_train, can_audit, can_load, can_send_invoices = permissions_for_key_scope(scope)
+    can_train, can_audit, can_load = permissions_for_key_scope(scope)
 
     # Only an actions-scoped key can reach a route that writes an AuditLog, so
     # only it needs the FK-satisfying service user. A readonly key keeps
     # db_user_id=None exactly as before Gap 335 and creates no rows at all.
-    db_user_id = resolve_api_key_service_user(tenant, db_session) if scope == KEY_SCOPE_ACTIONS else None
+    # BE Gap 721: `actions_no_send` writes AuditLog rows too (it may approve and
+    # reject), so it needs the FK-satisfying service user exactly as `actions`
+    # does. Only a readonly key still keeps db_user_id=None.
+    db_user_id = resolve_api_key_service_user(tenant, db_session) if scope in KEY_SCOPES_WITH_ACTIONS else None
 
     return TenantContext(
         tenant_id=tenant.id,
@@ -1105,7 +1123,6 @@ def resolve_api_key_context(raw_key: str, db_session: Session) -> TenantContext:
         can_train=can_train,
         can_audit=can_audit,
         can_load=can_load,
-        can_send_invoices=can_send_invoices,
         auth_method="api_key",
         key_scope=scope,
         api_key_prefix=tenant.api_key_prefix,
@@ -1244,7 +1261,6 @@ _PERMISSION_LABELS = {
     "can_train": "AI Trainer",
     "can_audit": "the Audit Queue",
     "can_load": "invoice ingestion",
-    "can_send_invoices": "Send Invoices",
 }
 
 
@@ -1273,7 +1289,11 @@ def require_permission(permission: str):
 require_can_train = require_permission("can_train")
 require_can_audit = require_permission("can_audit")
 require_can_load = require_permission("can_load")
-require_can_send_invoices = require_permission("can_send_invoices")  # Gap 405
+# BE Gap 720: `require_can_send_invoices` is deleted, not retired to an alias.
+# An alias would keep the four outbound routes reading as though a dedicated
+# send permission still governed them, which is the misreading this gap exists
+# to end. Those routes now state their real guards: `require_can_load` plus the
+# tenant's `send_invoices_enabled`.
 
 
 # --- Feature 25 (Gap 335): dual-credential gates ---------------------------
@@ -1316,7 +1336,7 @@ def require_key_scope(scope: str):
             return context
 
         if context.auth_method == "api_key":
-            if context.key_scope != KEY_SCOPE_ACTIONS:
+            if context.key_scope not in KEY_SCOPES_WITH_ACTIONS:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=(
@@ -1341,6 +1361,49 @@ def require_key_scope(scope: str):
 
 
 require_actions_scope = require_key_scope(KEY_SCOPE_ACTIONS)
+
+
+def require_send_scope(
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
+) -> TenantContext:
+    """BE Gap 721: the gate on confirm-send, the one outward step.
+
+    Humans are judged exactly as `require_actions_scope` judges them -- the same
+    `can_audit` check, the same wording -- so an Auditor or Admin is unaffected
+    by which policy the workspace is on. The founder's requirement was that a
+    person signs the send off, and a person still can.
+
+    An API key is judged more strictly than anywhere else in this file: ONLY
+    `actions` satisfies it. On `actions_no_send` the key may do everything else
+    it could before -- approve, reject, verify, mark-paid -- and is refused
+    here, which is the entire behaviour the policy is named after.
+
+    Deliberately not built from `require_key_scope()`: that factory now admits
+    both actions scopes by design, and passing it a narrower list would make one
+    call site quietly mean something different from the others.
+    """
+    if context.auth_method == "api_key":
+        if context.key_scope != KEY_SCOPE_ACTIONS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This workspace requires a person to confirm-send an invoice, so an "
+                    "API key cannot. An Auditor or Admin can send it in the app, or an "
+                    "Admin can switch this workspace's workflow policy to Full Automation "
+                    "in Settings."
+                ),
+            )
+        return context
+
+    if not context.can_audit:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"You do not have permission to access {_PERMISSION_LABELS['can_audit']}. "
+                "Ask an Admin to grant it."
+            ),
+        )
+    return context
 
 
 def require_permission_or_api_key(permission: str):
@@ -1382,7 +1445,9 @@ def require_actions_scope_or_human(
 ) -> TenantContext:
     """Admit human users of any permission level, but require actions scope for API keys (BE Gap 573)."""
     if context.auth_method == "api_key":
-        if context.key_scope != KEY_SCOPE_ACTIONS:
+        # BE Gap 721: `actions_no_send` passes here. The policy holds back one
+        # route -- confirm-send -- not the key's ability to work.
+        if context.key_scope not in KEY_SCOPES_WITH_ACTIONS:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(

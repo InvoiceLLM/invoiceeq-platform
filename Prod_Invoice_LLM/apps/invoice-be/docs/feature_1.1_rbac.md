@@ -1,6 +1,27 @@
 # Feature 1.1: Granular Role-Based Access Control
 
-> **Additive note — 2026-09-02, BE Gap 405.** A 4th permission, `can_send_invoices`,
+> **WITHDRAWN — 2026-09-21, BE Gap 720.** The 4th permission described in the
+> note below **no longer exists**. The founder's ruling: this product's grants are
+> **Loader / Trainer / Auditor**, plus the **Admin** role, and nothing else. On
+> Admin → Users the grants render as one line ("Trainer, Auditor, Loader, Send
+> Invoices"), so a flag that was really an outbound *visibility* control read as a
+> fourth role.
+>
+> What guards outbound now — unchanged by the removal, which is why it is safe:
+>
+> | Step | Guard |
+> |---|---|
+> | prepare (upload / build) | `can_load` + `Tenant.send_invoices_enabled` |
+> | confirm-send | `can_audit` (BE Gap 721 also refuses an API key on `actions_no_send`) |
+> | mark-paid | `can_audit`, and only from status `SENT` |
+>
+> So the person who prepares an invoice still cannot be the one who issues it —
+> the separation Gap 405 was reaching for was already there, one step later.
+> `resolve_permissions()` is a 3-tuple again; the column is dropped by migration
+> `c1d2e3f4a720`. The original note is kept below, struck through in meaning, so
+> the reversal is readable rather than invisible.
+>
+> ~~**Additive note — 2026-09-02, BE Gap 405.**~~ A 4th permission, `can_send_invoices`,
 > was added following exactly this feature's existing shape (own column, own
 > `RoleMapper` default per role, own `require_can_send_invoices` dependency, own
 > Admin-console checkbox) — nothing about `can_train`/`can_audit`/`can_load` changed.

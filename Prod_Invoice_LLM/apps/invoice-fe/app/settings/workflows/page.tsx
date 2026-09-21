@@ -56,6 +56,10 @@ import {
   CheckCircle2,
   Pencil,
   Workflow,
+  // FE Gap 708: the "except sending" policy — a machine runs the pipeline, a
+  // person signs the one outward step. ShieldCheck already means Strict Review
+  // on this screen, so the two must not share it.
+  UserCheck,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePageHeader } from "@/components/layout/PageHeaderContext";
@@ -150,11 +154,17 @@ const INPUT_CHANNELS: Option[] = [
 ];
 
 /**
- * The founder's two policies. The wire values are `full_automation` /
- * `strict_review` — NOT `full_auto_pilot`. Feature 13 already ships a "Tenant
- * Autopilot" that means scheduled Google Drive sync and is configured from this
- * same Settings area, so the copy below names that collision explicitly instead
- * of leaving two unrelated things sharing a word.
+ * The founder's policies. The wire values are `full_automation` /
+ * `full_automation_except_sending` / `strict_review` — NOT `full_auto_pilot`.
+ * Feature 13 already ships a "Tenant Autopilot" that means scheduled Google
+ * Drive sync and is configured from this same Settings area, so the copy below
+ * names that collision explicitly instead of leaving two unrelated things
+ * sharing a word.
+ *
+ * FE Gap 708 / BE Gap 721 added the middle option. It is listed between the two
+ * originals on purpose: the order on screen is how much a machine may do, most
+ * to least, so the one a cautious customer wants is the one they read second
+ * rather than having to infer it from the gap between the other two.
  */
 const AUDIT_POLICIES: (Option & { scope: string; caution: string })[] = [
   {
@@ -165,6 +175,15 @@ const AUDIT_POLICIES: (Option & { scope: string; caution: string })[] = [
     scope: "actions",
     caution:
       "This widens what a leaked or misused key can do — it can finalise money movement, not just read and upload. Rotate the key from Settings → Security if you ever suspect it is exposed.",
+  },
+  {
+    value: "full_automation_except_sending",
+    label: "Full Automation except sending",
+    desc: "Your API key can approve, reject, verify and mark-paid on its own. Only Confirm Send stays with a person — an Auditor or Admin in this app.",
+    icon: UserCheck,
+    scope: "actions_no_send",
+    caution:
+      "A leaked key still cannot send an invoice in your name, but it can finalise everything up to that point. Mark-paid is not separately held back: an invoice can only be marked paid once it is SENT, which a person has already approved.",
   },
   {
     value: "strict_review",

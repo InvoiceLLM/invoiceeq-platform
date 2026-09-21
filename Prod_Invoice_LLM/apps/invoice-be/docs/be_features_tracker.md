@@ -3880,3 +3880,100 @@ match (turn 4), 4 partial, 6 miss, out of 11.
   user being removed — **2 passed in 14.12s**; whole file and suite green (**305 passed**);
   `tests/test_rbac.py` + `tests/test_dependency_spans.py` **60 passed in 100.08s** over the two
   files this touched. Spec: §13 (additive), incl. §13.3's table of every write site.
+
+
+- [ ] BE Gap 720 (BE, Feature 1.1 / RBAC): **"Send Invoices" was a per-user permission that read
+  as a fourth role.** *Who:* every Admin managing users, and every Loader who prepares outbound
+  invoices. *What:* `users.can_send_invoices`, added by Gap 405 on 2026-09-02, is removed
+  entirely -- column, `RoleMapper` default, `TenantContext` field, `require_can_send_invoices`,
+  the admin API field, the Admin-console checkbox and `useAuth().canSendInvoices`. *Where:*
+  `dependencies.py`, `models.py`, `routers/admin.py`, `routers/outbound_invoices.py`,
+  `services/atlas_capabilities.py`, `app/admin/page.tsx`, `hooks/useAuth.ts`,
+  `app/ingestion/page.tsx`, migration `c1d2e3f4a720`. *When:* founder ruling 2026-09-21 --
+  "Send invoice bolke u made a role, need to remove it. Only loader, trainer, auditor and admin".
+  *Why:* on Admin -> Users the grants render as one line ("Trainer, Auditor, Loader, Send
+  Invoices"), so an outbound *visibility* flag read as a fourth role, which this product does not
+  have.
+
+  **Why removing it is safe, and not a hole.** The separation Gap 405 was reaching for already
+  exists one step later: preparing an outbound invoice is `can_load` + the tenant's
+  `send_invoices_enabled`; **confirm-send -- the step that commits the document to the outside
+  world -- requires `can_audit`**, and mark-paid requires `can_audit` and only accepts status
+  `SENT`. So a Loader can prepare but cannot issue, before and after. What genuinely changes is
+  that a Loader no longer *also* needs the tick, which is the pre-2026-09-02 behaviour the
+  founder chose knowingly (Option B, offered against an Admin-only alternative).
+
+  **A real hole closed on the way past.** `GET /outbound-invoices/{id}/build-defaults` and
+  `POST /outbound-invoices/build/preview` never checked `send_invoices_enabled` at all -- they
+  leaned on Gap 405's permission. Removing that without adding the check would have left the
+  builder open to any Loader in a workspace that never switched outbound on. All four
+  preparation routes now call one `_require_sending_enabled()` helper.
+
+  **Backwards compatibility.** `PUT /admin/users/{ref}/permissions` still *accepts* and ignores
+  `can_send_invoices` for one release, so a browser left open on the previous FE build does not
+  422 an Admin mid-edit. Delete that field in the release after the column drop.
+
+  **RELEASE RISK: HIGH.** It changes RBAC on the live customer environment and drops a column.
+  Merge in two steps: the code commits first, then the migration once that deploy is green --
+  Container Apps keeps the old revision serving while the new one migrates, and old code
+  SELECTing a dropped column fails every user lookup, logins included. *Rollback:* revert the
+  code commits (the column and every saved tick are untouched -- a clean revert). After the
+  migration, `downgrade()` restores the column but every grant returns False and must be
+  re-granted by hand from the list `upgrade()` logs; the image can no longer be rolled back past
+  the code commits. Founder sign-off required before merge.
+
+  **Evidence (partial -- Postgres owed).** `tests/test_rbac.py` rewritten: the 3-tuple arity is
+  pinned, `User` is asserted to have no such attribute, `/auth/me` and the admin list are
+  asserted not to carry it, and the outbound gate tests are replaced by four that assert the real
+  rule (no `can_load` -> 403 "ask an Admin"; toggle off -> 403 "not enabled for this tenant";
+  both -> past the 403s) plus a parametrised case covering the three build routes. Also updated:
+  `test_api_keys.py`, `test_atlas_contract.py`, `test_invoice_builder.py`,
+  `test_invoice_upload_formats.py`, `test_atlas_briefing_router.py`, and
+  `e2e/outbound-builder.spec.ts`. **test_rbac.py + test_api_keys.py + test_invoice_builder.py:
+  83 passed** on the SQLite path; `alembic heads` single (`c1d2e3f4a720`); FE `tsc --noEmit`
+  clean across `app/`, `components/`, `hooks/`, `lib/`, `e2e/`. **The real-Postgres run is NOT
+  done** -- the founder asked for Docker to stay off on this machine. Postgres-only tests are
+  skipped or error on connection, and this entry stays `[ ]` until that run exists. Spec:
+  `feature_1.1_rbac.md` (withdrawal note), `feature_16_settings.md`,
+  `feature_17_invoice_builder.md`.
+
+  *Pre-existing, unrelated, found while running:*
+  `tests/test_sandbox_keys.py::TestChatMetering::test_exhausted_allowance_is_a_402_on_the_chat_route`
+  fails on a clean checkout of `f0cdc63` too (a sandbox key gets 403 from
+  `POST /chat/sessions`, which requires an actions-scoped key while
+  `SANDBOX_KEY_SCOPE = "readonly"`). Verified in a detached worktree; not touched here.
+
+- [ ] BE Gap 721 (BE, Feature 25 / workflow policy): **there was no way to automate everything
+  except the one step that leaves the building.** *Who:* any workspace that wants an integration
+  to run the pipeline but refuses to let a machine issue invoices in its name. *What:* a third
+  `audit_policy`, `full_automation_except_sending`, mapping to a third `Tenant.api_key_scope`,
+  `actions_no_send`. *Where:* `dependencies.py` (`KEY_SCOPE_ACTIONS_NO_SEND`,
+  `KEY_SCOPES_WITH_ACTIONS`, `require_send_scope`), `routers/settings.py`,
+  `routers/outbound_invoices.py` (confirm-send only), `models.py`,
+  `app/settings/workflows/page.tsx`, `app/settings/security/page.tsx`. *When:* founder,
+  2026-09-21 -- "full automation but only sending part is human operated in this by admin and
+  auditor". *Why:* the only alternatives were full automation (a key can send with no human at
+  all) and strict review (a key can do nothing), so customers who wanted the middle had to pick
+  the unsafe end.
+
+  **Design.** `actions_no_send` resolves to the *same* permission triple as `actions`: the
+  difference is one route, not a lesser key. `require_send_scope()` guards confirm-send and
+  admits `actions` only; every other actions-gated route accepts both. Humans are judged
+  identically under all three policies (`can_audit`), so an Auditor can always send. Mark-paid is
+  not separately withheld -- it only accepts an invoice already in `SENT`, so a person has
+  necessarily approved the send first. **No migration:** `api_key_scope` is a plain `String(20)`
+  with no constraint, and `permissions_for_key_scope()` already fails closed on any unrecognised
+  value. Nobody is moved onto the new policy; it is a button a tenant presses. The sandbox guard
+  in `PUT /settings/workflow` now covers **both** widening policies -- checking only
+  `full_automation` would have let a sandbox take the new policy and acquire the powers that
+  guard exists to withhold.
+
+  **RELEASE RISK: LOW.** Opt-in, additive, no schema change, fails closed.
+
+  **Evidence (partial -- Postgres owed).** 5 new cases in `tests/test_api_keys.py` (the scope
+  resolves like `actions` and gets a service user; `require_send_scope` refuses
+  `actions_no_send`, admits `actions`, judges humans on `can_audit` exactly as before; the
+  ordinary actions gate still admits it) and 2 in `tests/test_workflow_config.py` (the policy
+  writes its own scope; all three policies round-trip in both directions).
+  **test_api_keys.py 37 passed; test_workflow_config.py green** on the SQLite path. Spec:
+  `feature_25_plug_and_play_workflows.md`.

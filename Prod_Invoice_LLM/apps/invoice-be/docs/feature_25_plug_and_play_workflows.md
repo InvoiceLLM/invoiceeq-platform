@@ -396,9 +396,24 @@ after `TenantAutopilotConfig` (the closest existing analogue): `UNIQUE(tenant_id
 commit** as the config row:
 
 ```
-full_automation  ->  Tenant.api_key_scope = "actions"
-strict_review    ->  Tenant.api_key_scope = "readonly"
+full_automation                 ->  Tenant.api_key_scope = "actions"
+full_automation_except_sending  ->  Tenant.api_key_scope = "actions_no_send"
+strict_review                   ->  Tenant.api_key_scope = "readonly"
 ```
+
+**BE Gap 721 (2026-09-21) added the middle policy**, in the founder's words:
+"full automation but only sending part is human operated ... by admin and
+auditor". `actions_no_send` resolves to the same permission triple as `actions`
+— the difference is not a permission the key lacks, it is one route it may not
+call. `require_send_scope()` guards `PUT /outbound-invoices/{id}/confirm-send`
+and admits `actions` only; every other actions-gated route accepts both. Humans
+are judged identically under all three policies (`can_audit`), so an Auditor can
+always send.
+
+Mark-paid is deliberately *not* separately withheld: it only accepts an invoice
+already in `SENT`, so a person has necessarily signed the send off before a key
+can record the payment. Nobody is migrated onto the new policy — it is a button
+a tenant presses, which is why no data migration accompanies it.
 
 And `GET` **derives** `audit_policy` back from `Tenant.api_key_scope` rather than
 reading `config.audit_policy`. That asymmetry is deliberate. `api_key_scope` is

@@ -118,7 +118,7 @@ Every decision of correctness in this feature is deterministic code: totals arit
 | D4 | **Sources: `VERIFIED` / `SENT` / `PAID` / `OVERDUE` only.** `NEEDS_REVIEW` → 409. | Unchanged. |
 | D5 | **Refuse at build time** if `(tenant_id, customer_name, invoice_number)` already exists. | `POST /build` and `/build/preview` return 409 `{"detail": "Invoice number already used for this customer"}` before rendering. Deterministic query, same predicate the pipeline's `duplicate_invoice_number` check uses. Auto-increment stays a suggestion. |
 | D6 | **Own FE spec.** | Filed as `apps/invoice-fe/docs/feature_20_invoice_builder.md`, tracker row added. |
-| D7 | **Defer pricing; ship behind Send Invoices.** | Endpoints gated `require_can_load` + `require_can_send_invoices` only. Pricing remains open in `feature_3.1_vendor_flow_pricing.md`. |
+| D7 | **Defer pricing; ship behind Send Invoices.** | Endpoints gated `require_can_load` + `Tenant.send_invoices_enabled` (BE Gap 720, 2026-09-21 — was `require_can_load` + `require_can_send_invoices`; the per-user permission is withdrawn and the tenant toggle, which these three routes never checked, is now enforced on all four). Pricing remains open in `feature_3.1_vendor_flow_pricing.md`. |
 
 #### Hybrid renderer (from D3)
 

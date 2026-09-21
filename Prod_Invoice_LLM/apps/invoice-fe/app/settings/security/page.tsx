@@ -26,6 +26,37 @@ interface ApiKeyRotateResponse extends ApiKeyStatus {
 }
 
 const API_KEY_URL = "/api/settings/security/api-key";
+// FE Gap 708 / BE Gap 721: the workflow policy decides what a key may do, and
+// this screen is where a key is created. Reading it here is the whole point of
+// the "What this key can do" block below -- the policy lives two screens away
+// (Settings -> Workflows), and nobody generating a credential should have to go
+// and look it up to learn what they have just minted.
+const WORKFLOW_URL = "/api/settings/workflow";
+
+/** What each policy lets an API key do, in the words a key's owner needs. */
+const KEY_POWERS: Record<string, { title: string; body: string; change: string }> = {
+  full_automation: {
+    title: "Full Automation",
+    body:
+      "This key can do everything a person can do to an invoice: upload, approve, reject, verify, confirm-send and mark-paid — with nobody approving it. An invoice can go from arriving to SENT without anyone on your team touching it.",
+    change:
+      "To require a person for sending, switch to Full Automation except sending in Settings → Workflows.",
+  },
+  full_automation_except_sending: {
+    title: "Full Automation except sending",
+    body:
+      "This key can upload, approve, reject, verify and mark-paid on its own. It cannot confirm-send — an Auditor or Admin has to do that in this app.",
+    change:
+      "Mark-paid is not separately held back: an invoice can only be marked paid once it is SENT, which a person has already approved.",
+  },
+  strict_review: {
+    title: "Strict Review",
+    body:
+      "This key can read data and upload invoices only. It cannot approve, reject, confirm-send or mark an invoice paid — a person has to do that in this app.",
+    change:
+      "Switching to an automation policy in Settings → Workflows would let this key take those actions too.",
+  },
+};
 const API_KEY_ROTATE_URL = "/api/settings/security/api-key/rotate";
 
 /**
@@ -76,6 +107,10 @@ export default function SecuritySettingsPage() {
   const [copiedKey, setCopiedKey] = useState(false);
   const [isRotating, setIsRotating] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
+  // Null until the policy is known. The block below renders nothing rather than
+  // guessing: naming the wrong policy on a credential screen is worse than
+  // naming none, and this fetch is not something the page needs to block on.
+  const [auditPolicy, setAuditPolicy] = useState<string | null>(null);
 
   // `can_rotate` comes from the backend (which is the thing that enforces it);
   // the local role is only a fallback for rendering before the first response.
@@ -100,6 +135,28 @@ export default function SecuritySettingsPage() {
   useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  // FE Gap 708: read-only here. The policy is chosen on Settings -> Workflows;
+  // this screen only reports it. A failure leaves `auditPolicy` null and the
+  // block hidden -- the key panel itself must keep working either way.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(WORKFLOW_URL, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && typeof data?.audit_policy === "string") {
+          setAuditPolicy(data.audit_policy);
+        }
+      } catch {
+        /* the key panel does not depend on this */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleCopyKey = () => {
     if (typeof window === "undefined" || !revealedKey) return;
@@ -315,6 +372,40 @@ export default function SecuritySettingsPage() {
             <p className="text-[11px] text-slate-500">
               Rotating immediately invalidates the previous key — any integration still using it will start receiving 401 responses.
             </p>
+          )}
+
+          {/* FE Gap 708 / BE Gap 721 — what this key can do.
+              The founder's instruction, verbatim: "automation api ke vha likh
+              do ... so user will be informed better what they are doing."
+              Settings → Workflows already carries this warning, but that is the
+              screen where the policy is *chosen*; this is the screen where the
+              credential is *created*, and the two audiences are not the same
+              person on the same day. */}
+          {auditPolicy && KEY_POWERS[auditPolicy] && (
+            <div
+              data-testid="key-powers"
+              data-policy={auditPolicy}
+              className="bg-[#0B0F19] border border-[#222D3D] rounded-xl p-3.5 space-y-2"
+            >
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span className="text-[11px] uppercase font-mono text-slate-500 tracking-wider">
+                  What this key can do
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                This workspace is set to{" "}
+                <span className="font-semibold text-white">{KEY_POWERS[auditPolicy].title}</span>, so{" "}
+                {KEY_POWERS[auditPolicy].body}
+              </p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                {KEY_POWERS[auditPolicy].change}
+              </p>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                A key acts as the whole workspace, not as a user. Actions taken with it are
+                recorded against the key, not against a person.
+              </p>
+            </div>
           )}
         </section>
 

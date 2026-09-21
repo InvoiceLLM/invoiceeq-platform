@@ -36,6 +36,8 @@ from dependencies import (
     get_tenant_context,
     get_db_session,
     KEY_SCOPE_ACTIONS,
+    # BE Gap 721: the third policy's enforcement primitive.
+    KEY_SCOPE_ACTIONS_NO_SEND,
     KEY_SCOPE_READONLY,
     TenantContext,
 )
@@ -340,11 +342,22 @@ async def rotate_api_key(
 
 AUDIT_POLICY_FULL_AUTOMATION = "full_automation"
 AUDIT_POLICY_STRICT_REVIEW = "strict_review"
+# BE Gap 721 (founder, 2026-09-21): the third policy, in the founder's words
+# "full automation but only sending part is human operated ... by admin and
+# auditor". The key keeps approve / reject / verify / mark-paid; confirm-send --
+# the step that commits an invoice to the outside world in the tenant's name --
+# is refused to keys and left to an Auditor or Admin in the app.
+#
+# Nobody is moved onto it: it is a button a tenant presses. Existing
+# full_automation and strict_review tenants are untouched by this gap, which is
+# why no data migration accompanies it.
+AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING = "full_automation_except_sending"
 
 # The whole point of this endpoint: the policy the tenant picks IS
 # Tenant.api_key_scope (Gap 335), not a second field that could drift from it.
 AUDIT_POLICY_TO_KEY_SCOPE = {
     AUDIT_POLICY_FULL_AUTOMATION: KEY_SCOPE_ACTIONS,
+    AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING: KEY_SCOPE_ACTIONS_NO_SEND,
     AUDIT_POLICY_STRICT_REVIEW: KEY_SCOPE_READONLY,
 }
 KEY_SCOPE_TO_AUDIT_POLICY = {v: k for k, v in AUDIT_POLICY_TO_KEY_SCOPE.items()}
@@ -635,14 +648,22 @@ async def update_workflow_settings(
         # properties of *other* code, any of which a later change could remove
         # without anyone connecting it to sandbox scope. The pin is stated where
         # the widening happens so it survives that.
-        if payload.audit_policy == AUDIT_POLICY_FULL_AUTOMATION:
+        # BE Gap 721: both widening policies are guarded, not just
+        # full_automation. `full_automation_except_sending` still moves the key
+        # off `readonly` -- it may approve, reject, verify and mark-paid -- so
+        # checking only the older value would have let a sandbox take the new
+        # policy and acquire exactly the powers this guard exists to withhold.
+        if payload.audit_policy in (
+            AUDIT_POLICY_FULL_AUTOMATION,
+            AUDIT_POLICY_FULL_AUTOMATION_EXCEPT_SENDING,
+        ):
             sandbox = is_sandbox_tenant(db_session, context.tenant_id)
             if sandbox is not None and sandbox.claimed_at is None:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=(
                         "A sandbox workspace is read-only and cannot be switched to "
-                        "Full Automation. Claim this sandbox with a real account "
+                        "an automation policy. Claim this sandbox with a real account "
                         "first, then choose a workflow policy."
                     ),
                 )

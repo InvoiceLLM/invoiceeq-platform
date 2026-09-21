@@ -150,6 +150,18 @@ test.describe("Setup Wizard -- step navigation and selection semantics", () => {
     await expect(option(page, "strict_review")).toHaveAttribute("aria-checked", "true");
     await expect(option(page, "full_automation")).toHaveAttribute("aria-checked", "false");
     await expect(page.getByText("readonly", { exact: true })).toBeVisible();
+
+    // FE Gap 708 / BE Gap 721: the third option, and the scope it maps to.
+    // Single-select must still hold with three tiles -- a third radio that does
+    // not deselect the others is how two policies end up half-chosen.
+    await option(page, "full_automation_except_sending").click();
+    await expect(option(page, "full_automation_except_sending")).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+    await expect(option(page, "strict_review")).toHaveAttribute("aria-checked", "false");
+    await expect(option(page, "full_automation")).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByText("actions_no_send", { exact: true })).toBeVisible();
   });
 
   test("step 3: drive_archive is disabled and cannot be force-selected; email_summary and webhook can", async ({

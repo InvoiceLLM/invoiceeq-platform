@@ -783,7 +783,6 @@ def test_changing_a_users_permissions_makes_their_next_open_re_run(pg, monkeypat
                 "can_train": True,
                 "can_audit": True,
                 "can_load": False,
-                "can_send_invoices": False,
             },
         )
         assert res.status_code == 200, res.text

@@ -63,12 +63,18 @@ class Tenant(SQLModel, table=True):
     # rotating it, or one that has never been used at all).
     api_key_last_used_at: datetime | None = Field(default=None)
     # Feature 25 / Gap 335: how much of the invoice lifecycle this tenant's API
-    # key is allowed to finish. Exactly two values:
-    #   "readonly" -- the founder's "Strict Review": the integration may upload
-    #                 and read; a human finalizes in the web UI.
-    #   "actions"  -- the founder's "Full Automation": the key may additionally
-    #                 approve/reject/verify (audit resolve, inbound and
-    #                 outbound), confirm-send, and mark-paid.
+    # key is allowed to finish. Exactly three values:
+    #   "readonly"        -- the founder's "Strict Review": the integration may
+    #                        upload and read; a human finalizes in the web UI.
+    #   "actions"         -- the founder's "Full Automation": the key may
+    #                        additionally approve/reject/verify (audit resolve,
+    #                        inbound and outbound), confirm-send, and mark-paid.
+    #   "actions_no_send" -- BE Gap 721, "Full Automation except sending":
+    #                        everything "actions" grants EXCEPT confirm-send,
+    #                        which stays with an Auditor or Admin in the app.
+    #                        Mark-paid is not separately withheld because it only
+    #                        accepts an invoice already in SENT, so a person has
+    #                        necessarily signed the send off first.
     # The default is "readonly" and that is a FAIL-CLOSED choice, not a
     # stylistic one: every tenant that already exists when migration
     # d8e9f0a1b2c3 runs, and every tenant created later without an explicit
@@ -692,11 +698,21 @@ class User(SQLModel, table=True):
     can_train: bool = Field(default=False, nullable=False)
     can_audit: bool = Field(default=False, nullable=False)
     can_load: bool = Field(default=False, nullable=False)
-    # Gap 405: granular per-user visibility for the Send Invoices feature,
-    # layered on top of (not replacing) Tenant.send_invoices_enabled's
-    # tenant-wide plan/email prerequisite gate (feature_16_settings.md) --
-    # both must be true for a given user to see/use outbound sending.
-    can_send_invoices: bool = Field(default=False, nullable=False)
+    # BE Gap 720 (founder, 2026-09-21): `can_send_invoices` is GONE. Gap 405 had
+    # added it as a fourth per-user permission, but on the Admin → Users screen
+    # the four grants render as one line ("Trainer, Auditor, Loader, Send
+    # Invoices"), so it read as a fourth *role* -- which is not what it was. The
+    # founder's ruling is that this product has Loader / Trainer / Auditor and
+    # the Admin role, and nothing else.
+    #
+    # What guards outbound now, unchanged by the removal:
+    #   prepare (upload/build)  -- can_load + Tenant.send_invoices_enabled
+    #   confirm-send            -- can_audit (Admin implied), never can_load
+    #   mark-paid               -- can_audit, and only from status SENT
+    # So the irreversible outward step still needs a different person from the
+    # one who prepared it. The column itself is dropped in the migration that
+    # follows this commit; the field is removed here first so no running code
+    # references a column that is about to disappear.
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: datetime | None = Field(default=None)
 
@@ -1151,8 +1167,12 @@ class TenantWorkflowConfig(SQLModel, table=True):
     API key may actually do, and it is the only thing the auth layer reads.
     This column is the *user-facing wording* of that same decision:
 
-        full_automation  <-> Tenant.api_key_scope == "actions"
-        strict_review    <-> Tenant.api_key_scope == "readonly"
+        full_automation                 <-> Tenant.api_key_scope == "actions"
+        full_automation_except_sending  <-> Tenant.api_key_scope == "actions_no_send"
+        strict_review                   <-> Tenant.api_key_scope == "readonly"
+
+    The middle value is BE Gap 721: everything `actions` grants except
+    confirm-send, which is left to an Auditor or Admin in the app.
 
     `PUT /settings/workflow` writes BOTH in one transaction, and
     `GET /settings/workflow` **derives** `audit_policy` from
@@ -1189,7 +1209,8 @@ class TenantWorkflowConfig(SQLModel, table=True):
     tenant_id: UUID = Field(foreign_key="tenant.id")
     # subset of 'email' | 'drive' | 'api' | 'manual'
     input_channels: list = Field(default=[], sa_column=Column(JSON_VARIANT))
-    # 'full_automation' | 'strict_review' — mirrors Tenant.api_key_scope, see above
+    # 'full_automation' | 'full_automation_except_sending' | 'strict_review'
+    # — mirrors Tenant.api_key_scope, see above
     audit_policy: str = Field(default="strict_review", max_length=32)
     # subset of 'webhook' | 'dashboard_only' | 'email_summary' (Gap 339);
     # 'drive_archive' (Gap 338) is not built and is rejected at the endpoint
@@ -1704,15 +1725,13 @@ class RoleMapper:
         "restricted": NO_ROLE,
     }
 
-    # Gap 405: can_send_invoices defaults False for every role, including
-    # Auditor -- least-privilege by design, matching this class's existing
-    # philosophy for the other three (an Admin grants it explicitly per user,
-    # same as can_train/can_audit/can_load).
+    # BE Gap 720: back to three grants. Gap 405's `can_send_invoices` key is
+    # removed from every row here -- see the note on `User`.
     ROLE_PERMISSION_DEFAULTS = {
-        "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True,  "can_send_invoices": True},
-        "Trainer": {"can_train": True,  "can_audit": False, "can_load": False, "can_send_invoices": False},
-        "Auditor": {"can_train": False, "can_audit": True,  "can_load": False, "can_send_invoices": False},
-        NO_ROLE:   {"can_train": False, "can_audit": False, "can_load": False, "can_send_invoices": False},
+        "Admin":   {"can_train": True,  "can_audit": True,  "can_load": True},
+        "Trainer": {"can_train": True,  "can_audit": False, "can_load": False},
+        "Auditor": {"can_train": False, "can_audit": True,  "can_load": False},
+        NO_ROLE:   {"can_train": False, "can_audit": False, "can_load": False},
     }
 
     @classmethod
@@ -1724,10 +1743,16 @@ class RoleMapper:
         return cls.ROLE_ALIAS_MAP.get(clean_key, raw_role.title() if raw_role else cls.NO_ROLE)
 
     @classmethod
-    def resolve_permissions(cls, role: str, user: Any = None) -> tuple[bool, bool, bool, bool]:
-        """Resolves (can_train, can_audit, can_load, can_send_invoices) for any role."""
+    def resolve_permissions(cls, role: str, user: Any = None) -> tuple[bool, bool, bool]:
+        """Resolves (can_train, can_audit, can_load) for any role.
+
+        BE Gap 720 returned this to a 3-tuple. Gap 405 had widened it to 4 to
+        carry `can_send_invoices`; every caller is updated in the same commit,
+        and the arity is asserted by tests/test_rbac.py so a missed one fails
+        loudly rather than silently unpacking the wrong flag.
+        """
         if role == "Admin":
-            return True, True, True, True
+            return True, True, True
 
         # Gap 337: an unrecognised role — including the literal "Viewer" on any
         # row that predates this gap's data migration — falls to the
@@ -1736,14 +1761,12 @@ class RoleMapper:
         can_train = getattr(user, "can_train", None) if user else None
         can_audit = getattr(user, "can_audit", None) if user else None
         can_load  = getattr(user, "can_load", None)  if user else None
-        can_send_invoices = getattr(user, "can_send_invoices", None) if user else None
 
         res_train = can_train if can_train is not None else defaults["can_train"]
         res_audit = can_audit if can_audit is not None else defaults["can_audit"]
         res_load  = can_load  if can_load  is not None  else defaults["can_load"]
-        res_send  = can_send_invoices if can_send_invoices is not None else defaults["can_send_invoices"]
 
-        return bool(res_train), bool(res_audit), bool(res_load), bool(res_send)
+        return bool(res_train), bool(res_audit), bool(res_load)
 
 # ---------------------------------------------------------------------------
 # Feature 19 / Feature Website 5: Support Ticket & Inquiry Engine
