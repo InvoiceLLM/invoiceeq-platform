@@ -1643,3 +1643,19 @@ component now uses the functional setter form so a value can never be re-read as
   - **Evidence:** Tested and verified live in browser: Chat Rules button rendered in `/chat` header, clicking it opens the slide-over drawer, rules load and delete cleanly, Esc/close dismisses drawer, and sidebar displays streamlined navigation without Chat Rules. Before and after UI screenshots captured in brain artifacts.
   - **Stated limits / Boundary:** The underlying route `/settings/chat-rules` and its tile in `app/settings/page.tsx` remain intact so direct links and settings navigation do not 404. All changes remain uncommitted in the local working tree per user instruction.
 
+
+## Relocate Ingestion History to Ingest page drawer & remove from sidebar (2026-09-22) — FE Gap 712
+
+- `[x]` **FE Gap 712 (FE, usability & navigation · ingestion & sidebar, follows FE Gap 464 & FE Gap 711): Ingestion History was exposed as a separate sidebar link rather than contextually on the Ingestion screen, cluttering the primary navigation** — CLOSED 2026-09-22 — S2 · release risk **Low (ingestion & sidebar navigation)** · effort S. *(founder request: "in the side bar history botton that botton page also need to add in the insest page like chat rules & rule history... remove from sidebar")*
+  - **Symptom:** FE Gap 464 created the durable `/history` screen as a net-zero swap for the legacy Documents page and placed it on the sidebar gated on `canAudit`. However, having "History" in the primary sidebar cluttered navigation and separated file ingestion status from durable ingestion logs. Both Rule History (`/trainer`) and Chat Rules (`/chat`) already follow the slide-over drawer pattern in their page headers.
+  - **Root cause:** The Ingestion History log was placed in the global sidebar before the contextual slide-over drawer and PageHeaderActions pattern was established as the platform design standard.
+  - **Fixed 2026-09-22 (five files in `apps/invoice-fe`):**
+    1. `components/ingestion/IngestionHistoryDrawer.tsx` (NEW) — created a wide slide-over drawer (`w-screen max-w-5xl`) with dark backdrop blur (`bg-black/60 backdrop-blur-sm`), header with `History` icon, title, subtitle, close (`X`) button, and `Escape` key dismissal. Embeds `OpenFindingsChip` and `IngestionHistoryTable` (providing search, filters, run expansion, file inspection, and archive operations).
+    2. `app/ingestion/page.tsx` (EDIT) — integrated `PageHeaderActions` to render the "History" button with `History` icon beside the Receiving / Sending / Autopilot tab controls (gated on `canAudit`), and mounted `<IngestionHistoryDrawer isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />`.
+    3. `components/layout/Sidebar.tsx` (EDIT) — removed `"History"` from `menuItems` and removed the unused `History` import from `lucide-react`, streamlining the primary sidebar to strictly 5 core workspaces (`Dashboard`, `Ingest`, `Audit Queue`, `AI Trainer`, `Chat`).
+    4. `e2e/rbac-sidebar.spec.ts` (EDIT) — updated `GRANTABLE` list, adjusted `can_audit` assertion to `["Audit Queue"]`, and added a dedicated test suite verifying History is absent from the sidebar across all roles and that the "History" button is accessible on the `/ingestion` header.
+    5. `docs/fe_features_tracker.md` (EDIT) — recorded FE Gap 712.
+  - **Evidence:** Clean TypeScript typecheck (`npx tsc --noEmit`); local dev server compiled cleanly (`✓ Compiled in 687ms`); verified live in browser: "History" removed from sidebar, "History" button rendered in `/ingestion` header, drawer slides open smoothly displaying open findings and ingestion history table, and dismisses cleanly.
+  - **Stated limits / Boundary:** The underlying route `/history` (`app/history/page.tsx`) remains intact so direct URLs and bookmarks continue to function without 404s. All changes remain uncommitted in the local working tree per user instruction.
+
+

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, Suspense } from "react";
-import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, ChevronDown, Bot, Zap, Settings2 } from "lucide-react";
+import { UploadCloud, CheckCircle, AlertCircle, RefreshCw, FolderSearch, Send, ChevronDown, Bot, Zap, Settings2, History } from "lucide-react";
 import TagSelector from "../../components/ingestion/TagSelector";
 import DropZone from "../../components/ingestion/DropZone";
 import StatusTable from "../../components/ingestion/StatusTable";
@@ -10,6 +10,7 @@ import LogTerminal from "../../components/ingestion/LogTerminal";
 import SendInvoiceStatusTable from "../../components/ingestion/SendInvoiceStatusTable";
 import ConnectorBrowseBar from "../../components/ingestion/ConnectorBrowseBar";
 import AutopilotHistoryTable from "../../components/ingestion/AutopilotHistoryTable";
+import IngestionHistoryDrawer from "../../components/ingestion/IngestionHistoryDrawer";
 import FolderTreeExplorer from "../../components/connectors/FolderTreeExplorer";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -92,9 +93,10 @@ function IngestionPageContent() {
   // outbound upload and build routes actually require. Before Gap 405 this read
   // `sendEnabled` alone, which showed the tab to users who could do nothing
   // with it; that half of Gap 405 is kept, only the extra grant is dropped.
-  const { canLoad } = useAuth();
+  const { canLoad, canAudit } = useAuth();
   const sendVisible = sendEnabled && canLoad;
   const [activeTab, setActiveTab] = useState<IngestionTab>("receiving");
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   // Feature 13: Autopilot config state
   const [autopilotConfig, setAutopilotConfig] = useState({
@@ -438,39 +440,55 @@ function IngestionPageContent() {
 
   return (
     <div className="space-y-6">
-      {/* Tab toggle in header — always shown (Autopilot is always available) */}
+      {/* Tab toggle & History drawer trigger in header */}
       <PageHeaderActions>
-        <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
-          {receiveEnabled && (
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+            {receiveEnabled && (
+              <button
+                onClick={() => setActiveTab("receiving")}
+                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Receiving
+              </button>
+            )}
+            {sendVisible && (
+              <button
+                onClick={() => setActiveTab("sending")}
+                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                Sending
+              </button>
+            )}
+            {/* Feature 13: Autopilot tab — always visible */}
             <button
-              onClick={() => setActiveTab("receiving")}
-              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+              onClick={() => setActiveTab("autopilot")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${
+                activeTab === "autopilot" ? "bg-violet-600 text-white" : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              Receiving
+              <Bot className="w-3 h-3" />
+              Autopilot
             </button>
-          )}
-          {sendVisible && (
+          </div>
+
+          {/* FE Gap 712: Ingestion History drawer trigger (relocated from sidebar) */}
+          {canAudit && (
             <button
-              onClick={() => setActiveTab("sending")}
-              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-              }`}
+              type="button"
+              onClick={() => setIsHistoryOpen(true)}
+              aria-label="Ingestion History"
+              title="View durable ingestion history and file outcomes"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[#222D3D] bg-[#0F172A] hover:bg-[#1E293B] text-slate-300 hover:text-white transition-all cursor-pointer shadow-sm shrink-0"
             >
-              Sending
+              <History className="w-3.5 h-3.5 text-blue-400" />
+              <span>History</span>
             </button>
           )}
-          {/* Feature 13: Autopilot tab — always visible */}
-          <button
-            onClick={() => setActiveTab("autopilot")}
-            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${
-              activeTab === "autopilot" ? "bg-violet-600 text-white" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            <Bot className="w-3 h-3" />
-            Autopilot
-          </button>
         </div>
       </PageHeaderActions>
 
@@ -998,6 +1016,14 @@ function IngestionPageContent() {
             </div>
           )}
         </div>
+      )}
+
+      {/* FE Gap 712: Contextual Ingestion History Drawer */}
+      {canAudit && (
+        <IngestionHistoryDrawer
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+        />
       )}
     </div>
   );

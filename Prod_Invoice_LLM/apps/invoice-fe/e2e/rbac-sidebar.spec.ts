@@ -19,8 +19,8 @@ import { test, expect, Page } from "@playwright/test";
  */
 
 const ALWAYS_VISIBLE = ["Dashboard", "Chat", "Help"];
-// Chat Rules moved into the Chat page (/chat) header action drawer to streamline navigation.
-const GRANTABLE = ["Ingest", "Audit Queue", "History", "AI Trainer"];
+// Chat Rules and History moved into their page header action drawers to streamline navigation.
+const GRANTABLE = ["Ingest", "Audit Queue", "AI Trainer"];
 // FE Gap 143 added "Subscriptions" (/settings/subscriptions) as a direct nav
 // entry, gated on Admin exactly as Settings is.
 const ADMIN_ONLY = ["Settings", "Subscriptions"];
@@ -169,12 +169,11 @@ test.describe("Sidebar — permission-less user (no role assigned)", () => {
 
 test.describe("Sidebar — individually granted permissions", () => {
   // One permission can reveal more than one row: can_audit carries the audit
-  // queue and History (FE Gap 464), can_train carries the Trainer and Chat
-  // Rules (FE Gap 478). Asserting the exact set -- not "contains" -- is what
-  // makes a leak in either direction fail.
+  // queue, can_train carries the Trainer. Asserting the exact set -- not "contains" --
+  // is what makes a leak in either direction fail.
   const cases: { granted: keyof Identity; labels: string[] }[] = [
     { granted: "can_load", labels: ["Ingest"] },
-    { granted: "can_audit", labels: ["Audit Queue", "History"] },
+    { granted: "can_audit", labels: ["Audit Queue"] },
     { granted: "can_train", labels: ["AI Trainer"] },
   ];
 
@@ -254,6 +253,25 @@ test.describe("Chat Rules Relocation to Chat Page", () => {
 
     const rulesBtn = page.locator("header").getByRole("button", { name: /Chat Rules/i });
     await expect(rulesBtn).toBeVisible();
+  });
+});
+
+test.describe("History Relocation to Ingestion Page", () => {
+  test("History is removed from sidebar across all roles", async ({ page }) => {
+    await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
+    await page.goto("/dashboard");
+    await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
+
+    await expect(navLink(page, "History")).toHaveCount(0);
+  });
+
+  test("History button is accessible on /ingestion header for can_audit users", async ({ page }) => {
+    await stubShell(page, { role: "Restricted", can_load: true, can_audit: true });
+    await page.goto("/ingestion");
+    await expect(page.locator("header")).toBeVisible();
+
+    const historyBtn = page.locator("header").getByRole("button", { name: /History/i });
+    await expect(historyBtn).toBeVisible();
   });
 });
 

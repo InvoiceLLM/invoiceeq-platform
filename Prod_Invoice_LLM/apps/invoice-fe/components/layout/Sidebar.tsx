@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   UploadCloud,
-  History,
   MessageSquare,
   GraduationCap,
   FileText,
@@ -149,7 +148,6 @@ export default function Sidebar() {
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, visible: true },
     { name: "Ingest", href: "/ingestion", icon: UploadCloud, visible: canLoad },
     { name: "Audit Queue", href: "/invoices", icon: ListChecks, visible: canAudit },
-    { name: "History", href: "/history", icon: History, visible: canAudit },
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap, visible: canTrain },
     { name: "Chat", href: "/chat", icon: MessageSquare, visible: true },
   ];
