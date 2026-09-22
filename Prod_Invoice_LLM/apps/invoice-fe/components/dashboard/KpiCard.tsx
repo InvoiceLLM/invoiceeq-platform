@@ -181,22 +181,24 @@ export default function KpiCard({
               setAtBottom((prev) => (prev === done ? prev : done));
             }}
             className={cn(
-              "min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col",
+              "min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
               values.length > 1 ? "justify-start" : "justify-end"
             )}
-            style={
+            style={{
+              scrollbarWidth: "none",
+              msOverflowStyle: "none",
               // Fades the last visible line instead of painting a gradient over
               // it: a mask needs no knowledge of the card's background, which is
               // a translucent `glass-panel` and differs between the two themes.
-              showFade
+              ...(showFade
                 ? {
                     maskImage:
                       "linear-gradient(to bottom, black calc(100% - 12px), transparent)",
                     WebkitMaskImage:
                       "linear-gradient(to bottom, black calc(100% - 12px), transparent)",
                   }
-                : undefined
-            }
+                : {}),
+            }}
           >
             <div
               ref={contentRef}

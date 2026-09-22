@@ -160,99 +160,201 @@ export default function FilterBar({
       )}
 
       {/* Select Controls */}
-      <div className={compact ? "flex flex-wrap items-center gap-2" : "flex flex-wrap items-center gap-3 flex-1 justify-end"}>
-        {/* Vendor Selector */}
-        <div className="flex flex-col gap-1 min-w-[140px]">
-          <select
-            value={filters.vendorName}
-            onChange={(e) => handleChange("vendorName", e.target.value)}
-            className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+      {compact ? (
+        <div className="flex flex-col gap-2 w-full">
+          {/* Row 1: Vendor + Date */}
+          <div className="flex items-center gap-2 w-full">
+            {/* Vendor Selector */}
+            <div className="flex-1 min-w-0">
+              <select
+                value={filters.vendorName}
+                onChange={(e) => handleChange("vendorName", e.target.value)}
+                className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+              >
+                <option value="">{partyLabel}</option>
+                {filters.vendorName && !availableVendors.includes(filters.vendorName) && (
+                  <option value={filters.vendorName}>{filters.vendorName}</option>
+                )}
+                {availableVendors.map((vendor) => (
+                  <option key={vendor} value={vendor}>
+                    {vendor}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Range Selector */}
+            <div className="flex-1 min-w-0">
+              <select
+                value={filters.dateRange}
+                onChange={(e) => handleChange("dateRange", e.target.value)}
+                className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+              >
+                {DATE_RANGES.map((range) => (
+                  <option key={range.value} value={range.value}>
+                    {range.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Row 2: Tag + Status + Save Filter */}
+          <div className="flex items-center gap-2 w-full">
+            {/* Tag Selector */}
+            <div className="flex-1 min-w-0">
+              <select
+                value={filters.tag}
+                onChange={(e) => handleChange("tag", e.target.value)}
+                className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+              >
+                <option value="">All Tags</option>
+                {filters.tag && !availableTags.includes(filters.tag) && (
+                  <option value={filters.tag}>#{filters.tag.replace(/^#/, "")}</option>
+                )}
+                {availableTags.map((t) => (
+                  <option key={t} value={t}>
+                    #{t.replace(/^#/, "")}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status Selector */}
+            <div className="flex-1 min-w-0">
+              <select
+                value={filters.status}
+                onChange={(e) => handleChange("status", e.target.value)}
+                disabled={statusFilterDisabled}
+                title={statusFilterDisabled ? "Status is already set by the selected tab above" : undefined}
+                className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
+              >
+                {statusOptions.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Save Button */}
+            <button
+              onClick={handleSaveFilters}
+              className={`shrink-0 flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border whitespace-nowrap ${
+                isSaved
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                  : "bg-accent-blue/15 hover:bg-accent-blue/25 border-accent-blue/30 hover:border-accent-blue/50 text-[#3B82F6]"
+              }`}
+            >
+              {isSaved ? (
+                <>
+                  <Check className="w-3.5 h-3.5 animate-bounce" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  Save Filter
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3 flex-1 justify-end">
+          {/* Vendor Selector */}
+          <div className="flex flex-col gap-1 min-w-[140px]">
+            <select
+              value={filters.vendorName}
+              onChange={(e) => handleChange("vendorName", e.target.value)}
+              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+            >
+              <option value="">{partyLabel}</option>
+              {filters.vendorName && !availableVendors.includes(filters.vendorName) && (
+                <option value={filters.vendorName}>{filters.vendorName}</option>
+              )}
+              {availableVendors.map((vendor) => (
+                <option key={vendor} value={vendor}>
+                  {vendor}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Date Range Selector */}
+          <div className="flex flex-col gap-1 min-w-[130px]">
+            <select
+              value={filters.dateRange}
+              onChange={(e) => handleChange("dateRange", e.target.value)}
+              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+            >
+              {DATE_RANGES.map((range) => (
+                <option key={range.value} value={range.value}>
+                  {range.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Tag Selector */}
+          <div className="flex flex-col gap-1 min-w-[120px]">
+            <select
+              value={filters.tag}
+              onChange={(e) => handleChange("tag", e.target.value)}
+              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+            >
+              <option value="">All Tags</option>
+              {filters.tag && !availableTags.includes(filters.tag) && (
+                <option value={filters.tag}>#{filters.tag.replace(/^#/, "")}</option>
+              )}
+              {availableTags.map((t) => (
+                <option key={t} value={t}>
+                  #{t.replace(/^#/, "")}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Status Selector */}
+          <div className="flex flex-col gap-1 min-w-[130px]">
+            <select
+              value={filters.status}
+              onChange={(e) => handleChange("status", e.target.value)}
+              disabled={statusFilterDisabled}
+              title={statusFilterDisabled ? "Status is already set by the selected tab above" : undefined}
+              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
+            >
+              {statusOptions.map((status) => (
+                <option key={status.value} value={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Save Button */}
+          <button
+            onClick={handleSaveFilters}
+            className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border ${
+              isSaved
+                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                : "bg-accent-blue/15 hover:bg-accent-blue/25 border-accent-blue/30 hover:border-accent-blue/50 text-[#3B82F6]"
+            }`}
           >
-            <option value="">{partyLabel}</option>
-            {filters.vendorName && !availableVendors.includes(filters.vendorName) && (
-              <option value={filters.vendorName}>{filters.vendorName}</option>
+            {isSaved ? (
+              <>
+                <Check className="w-3.5 h-3.5 animate-bounce" />
+                Saved
+              </>
+            ) : (
+              <>
+                <Save className="w-3.5 h-3.5" />
+                Save Filter
+              </>
             )}
-            {availableVendors.map((vendor) => (
-              <option key={vendor} value={vendor}>
-                {vendor}
-              </option>
-            ))}
-          </select>
+          </button>
         </div>
-
-        {/* Date Range Selector */}
-        <div className="flex flex-col gap-1 min-w-[130px]">
-          <select
-            value={filters.dateRange}
-            onChange={(e) => handleChange("dateRange", e.target.value)}
-            className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
-          >
-            {DATE_RANGES.map((range) => (
-              <option key={range.value} value={range.value}>
-                {range.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Tag Selector */}
-        <div className="flex flex-col gap-1 min-w-[120px]">
-          <select
-            value={filters.tag}
-            onChange={(e) => handleChange("tag", e.target.value)}
-            className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
-          >
-            <option value="">All Tags</option>
-            {filters.tag && !availableTags.includes(filters.tag) && (
-              <option value={filters.tag}>#{filters.tag.replace(/^#/, "")}</option>
-            )}
-            {availableTags.map((t) => (
-              <option key={t} value={t}>
-                #{t.replace(/^#/, "")}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Status Selector */}
-        <div className="flex flex-col gap-1 min-w-[130px]">
-          <select
-            value={filters.status}
-            onChange={(e) => handleChange("status", e.target.value)}
-            disabled={statusFilterDisabled}
-            title={statusFilterDisabled ? "Status is already set by the selected tab above" : undefined}
-            className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
-          >
-            {statusOptions.map((status) => (
-              <option key={status.value} value={status.value}>
-                {status.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Save Button */}
-        <button
-          onClick={handleSaveFilters}
-          className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border ${
-            isSaved
-              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-              : "bg-accent-blue/15 hover:bg-accent-blue/25 border-accent-blue/30 hover:border-accent-blue/50 text-[#3B82F6]"
-          }`}
-        >
-          {isSaved ? (
-            <>
-              <Check className="w-3.5 h-3.5 animate-bounce" />
-              Saved
-            </>
-          ) : (
-            <>
-              <Save className="w-3.5 h-3.5" />
-              Save Filter
-            </>
-          )}
-        </button>
-      </div>
+      )}
     </div>
   );
 }

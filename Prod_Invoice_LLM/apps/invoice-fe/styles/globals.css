@@ -2175,6 +2175,8 @@ td, .table-cell {
 }
 
 /* Filter Chips (ACTIVE & INACTIVE) */
+[data-theme="infinevo"] #ingestion-history button[data-testid*="history-filter"][data-active="true"],
+[data-theme="infinevo"] #ingestion-history button[data-testid*="history-filter"].border-sky-500\/40,
 [data-theme="infinevo"] #history-page button[data-testid*="history-filter"][data-active="true"],
 [data-theme="infinevo"] #history-page button[data-testid*="history-filter"].border-sky-500\/40 {
   background: linear-gradient(135deg, #0F6FC6 0%, #009DD9 100%) !important;
@@ -2185,24 +2187,34 @@ td, .table-cell {
   box-shadow: 0 2px 8px rgba(15, 111, 198, 0.3) !important;
 }
 
+[data-theme="infinevo"] #ingestion-history button[data-testid*="history-filter"][data-active="false"],
 [data-theme="infinevo"] #history-page button[data-testid*="history-filter"][data-active="false"] {
   background: #FFFFFF !important;
   background-color: #FFFFFF !important;
-  border: 1px solid #CBD5E1 !important;
-  color: #475569 !important;
+  border: 1.5px solid #CBD5E1 !important;
+  color: #1E293B !important;
   font-weight: 600 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history button[data-testid*="history-filter"][data-active="false"]:hover,
 [data-theme="infinevo"] #history-page button[data-testid*="history-filter"][data-active="false"]:hover {
   background-color: #EBF5FC !important;
-  border-color: #BAE6FD !important;
+  border-color: #0F6FC6 !important;
   color: #0F6FC6 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history span.text-slate-700,
+[data-theme="infinevo"] #history-page span.text-slate-700 {
+  color: #94A3B8 !important;
 }
 
 /* Status Badges (RunStatusChip & OutcomeBadge) */
 /* LOADED */
+[data-theme="infinevo"] #ingestion-history span[data-run-status="LOADED"],
+[data-theme="infinevo"] #ingestion-history span[data-outcome="LOADED"],
 [data-theme="infinevo"] #history-page span[data-run-status="LOADED"],
 [data-theme="infinevo"] #history-page span[data-outcome="LOADED"],
+[data-theme="infinevo"] #ingestion-history span[class*="border-emerald-"][class*="text-emerald-"],
 [data-theme="infinevo"] #history-page span[class*="border-emerald-"][class*="text-emerald-"] {
   background: #D1FAE5 !important;
   background-color: #D1FAE5 !important;
@@ -2214,8 +2226,11 @@ td, .table-cell {
 }
 
 /* PARTIAL */
+[data-theme="infinevo"] #ingestion-history span[data-run-status="PARTIAL"],
+[data-theme="infinevo"] #ingestion-history span[data-outcome="PARTIAL"],
 [data-theme="infinevo"] #history-page span[data-run-status="PARTIAL"],
 [data-theme="infinevo"] #history-page span[data-outcome="PARTIAL"],
+[data-theme="infinevo"] #ingestion-history span[class*="border-amber-"][class*="text-amber-"],
 [data-theme="infinevo"] #history-page span[class*="border-amber-"][class*="text-amber-"] {
   background: #FEF3C7 !important;
   background-color: #FEF3C7 !important;
@@ -2227,8 +2242,11 @@ td, .table-cell {
 }
 
 /* REJECTED */
+[data-theme="infinevo"] #ingestion-history span[data-run-status="REJECTED"],
+[data-theme="infinevo"] #ingestion-history span[data-outcome="REJECTED"],
 [data-theme="infinevo"] #history-page span[data-run-status="REJECTED"],
 [data-theme="infinevo"] #history-page span[data-outcome="REJECTED"],
+[data-theme="infinevo"] #ingestion-history span[class*="border-rose-"][class*="text-rose-"],
 [data-theme="infinevo"] #history-page span[class*="border-rose-"][class*="text-rose-"] {
   background: #FEE2E2 !important;
   background-color: #FEE2E2 !important;
@@ -2240,8 +2258,11 @@ td, .table-cell {
 }
 
 /* NOT_LOADED */
+[data-theme="infinevo"] #ingestion-history span[data-run-status="NOT_LOADED"],
+[data-theme="infinevo"] #ingestion-history span[data-outcome="NOT_LOADED"],
 [data-theme="infinevo"] #history-page span[data-run-status="NOT_LOADED"],
 [data-theme="infinevo"] #history-page span[data-outcome="NOT_LOADED"],
+[data-theme="infinevo"] #ingestion-history span[class*="border-sky-"][class*="text-sky-"],
 [data-theme="infinevo"] #history-page span[class*="border-sky-"][class*="text-sky-"] {
   background: #E0F2FE !important;
   background-color: #E0F2FE !important;
@@ -2253,6 +2274,8 @@ td, .table-cell {
 }
 
 /* IN_PROGRESS */
+[data-theme="infinevo"] #ingestion-history span[data-run-status="IN_PROGRESS"],
+[data-theme="infinevo"] #ingestion-history span[data-outcome="IN_PROGRESS"],
 [data-theme="infinevo"] #history-page span[data-run-status="IN_PROGRESS"],
 [data-theme="infinevo"] #history-page span[data-outcome="IN_PROGRESS"] {
   background: #F1F5F9 !important;
@@ -2263,6 +2286,7 @@ td, .table-cell {
 }
 
 /* EMPTY */
+[data-theme="infinevo"] #ingestion-history span[data-run-status="EMPTY"],
 [data-theme="infinevo"] #history-page span[data-run-status="EMPTY"] {
   background: #F8FAFC !important;
   background-color: #F8FAFC !important;
@@ -2272,45 +2296,55 @@ td, .table-cell {
 }
 
 /* Row Layout & Text Readability */
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"],
 [data-theme="infinevo"] #history-page [data-testid="history-run"] {
   background-color: #FFFFFF !important;
   border-bottom: 1px solid #EBF1F7 !important;
   transition: background-color 0.15s ease !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"]:hover,
 [data-theme="infinevo"] #history-page [data-testid="history-run"]:hover {
   background-color: #F0F7FD !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] button:not([data-testid*="history-archive"]),
 [data-theme="infinevo"] #history-page [data-testid="history-run"] button:not([data-testid*="history-archive"]) {
   background: transparent !important;
   border: none !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] svg.lucide-chevron-right,
 [data-theme="infinevo"] #history-page [data-testid="history-run"] svg.lucide-chevron-right {
   color: #0F6FC6 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] span.font-medium.text-slate-200,
 [data-theme="infinevo"] #history-page [data-testid="history-run"] span.font-medium.text-slate-200 {
   color: #0F2847 !important;
   font-weight: 700 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] p.text-slate-300,
 [data-theme="infinevo"] #history-page [data-testid="history-run"] p.text-slate-300 {
   color: #1E293B !important;
   font-weight: 600 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] span.text-slate-600,
 [data-theme="infinevo"] #history-page [data-testid="history-run"] span.text-slate-600 {
   color: #94A3B8 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] span.text-slate-400,
 [data-theme="infinevo"] #history-page [data-testid="history-run"] span.text-slate-400 {
   color: #475569 !important;
   font-weight: 500 !important;
 }
 
 /* Archive Action Button */
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive"],
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-unarchive"],
 [data-theme="infinevo"] #history-page button[data-testid="history-archive"],
 [data-theme="infinevo"] #history-page button[data-testid="history-unarchive"] {
   background: transparent !important;
@@ -2318,35 +2352,72 @@ td, .table-cell {
   color: #94A3B8 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive"]:hover,
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-unarchive"]:hover,
 [data-theme="infinevo"] #history-page button[data-testid="history-archive"]:hover,
 [data-theme="infinevo"] #history-page button[data-testid="history-unarchive"]:hover {
   background-color: #EBF5FC !important;
   color: #0F6FC6 !important;
 }
 
-/* Expanded Run File List View */
-[data-theme="infinevo"] #history-page [data-testid="history-run"] > div:last-child[class*="bg-slate-950"] {
-  background-color: #F8FAFD !important;
+/* Expanded Run File List View & High-Contrast Metadata Cards */
+[data-theme="infinevo"] #ingestion-history [data-testid="history-run"] > div:last-child,
+[data-theme="infinevo"] #history-page [data-testid="history-run"] > div:last-child {
+  background-color: #F1F6FB !important;
   border-top: 1px solid #D6E4F0 !important;
+  padding: 8px 0 !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"],
 [data-theme="infinevo"] #history-page [data-testid="run-file"] {
-  border-color: #E2EDF5 !important;
+  background-color: #FFFFFF !important;
+  border: 1px solid #D6E4F0 !important;
+  border-radius: 8px !important;
+  margin: 6px 16px !important;
+  padding: 12px 16px !important;
+  box-shadow: 0 1px 3px rgba(15, 30, 60, 0.04) !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] p.text-slate-300,
 [data-theme="infinevo"] #history-page [data-testid="run-file"] p.text-slate-300 {
   color: #0F2847 !important;
   font-weight: 700 !important;
+  font-size: 13px !important;
 }
 
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] dt,
 [data-theme="infinevo"] #history-page [data-testid="run-file"] dt {
   color: #64748B !important;
+  font-weight: 700 !important;
+  font-size: 10px !important;
+  letter-spacing: 0.05em !important;
+}
+
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] dd,
+[data-theme="infinevo"] #history-page [data-testid="run-file"] dd {
+  color: #0F2847 !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+}
+
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] p.text-slate-500,
+[data-theme="infinevo"] #history-page [data-testid="run-file"] p.text-slate-500 {
+  color: #475569 !important;
+  font-weight: 600 !important;
+  font-size: 11px !important;
+}
+
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] [data-testid="missed-this-trigger"],
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] button,
+[data-theme="infinevo"] #history-page [data-testid="run-file"] button {
+  color: #0F6FC6 !important;
   font-weight: 600 !important;
 }
 
-[data-theme="infinevo"] #history-page [data-testid="run-file"] dd {
-  color: #1E293B !important;
-  font-weight: 600 !important;
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] [data-testid="missed-this-trigger"]:hover,
+[data-theme="infinevo"] #ingestion-history [data-testid="run-file"] button:hover,
+[data-theme="infinevo"] #history-page [data-testid="run-file"] button:hover {
+  color: #009DD9 !important;
 }
 
 /* Footer Note */
@@ -2354,6 +2425,35 @@ td, .table-cell {
   background-color: #FAFBFD !important;
   border-top: 1px solid #E2EDF5 !important;
   color: #64748B !important;
+}
+
+/* InfiNevo Theme - Drawer Container & Header */
+[data-theme="infinevo"] [role="dialog"] div[class*="bg-[#151B26]"] {
+  background-color: #F8FAFD !important;
+  border-left: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [role="dialog"] div[class*="bg-[#0F172A]"] {
+  background-color: #FFFFFF !important;
+  border-bottom: 1px solid #D6E4F0 !important;
+}
+
+[data-theme="infinevo"] [role="dialog"] h3 {
+  color: #0F2847 !important;
+  font-weight: 700 !important;
+}
+
+[data-theme="infinevo"] [role="dialog"] p.text-slate-400 {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] [role="dialog"] button[aria-label="Close drawer"] {
+  color: #64748B !important;
+}
+
+[data-theme="infinevo"] [role="dialog"] button[aria-label="Close drawer"]:hover {
+  background-color: #EBF5FC !important;
+  color: #0F6FC6 !important;
 }
 
 /* Help Search & Navigation */
