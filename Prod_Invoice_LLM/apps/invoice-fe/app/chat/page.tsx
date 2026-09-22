@@ -5,6 +5,7 @@
 
 import { Suspense, useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { ScrollText } from "lucide-react";
 
 import { useChatSession } from "@/hooks/useChatSession";
 import {
@@ -12,9 +13,11 @@ import {
   type AttachmentClarificationIntent,
 } from "@/lib/chatAttachments";
 import ChatWindow from "@/components/chat/ChatWindow";
-import { usePageHeader } from "@/components/layout/PageHeaderContext";
+import ChatRulesDrawer from "@/components/chat/ChatRulesDrawer";
+import { usePageHeader, PageHeaderActions } from "@/components/layout/PageHeaderContext";
 
 function ChatPageInner() {
+  const [isRulesDrawerOpen, setIsRulesDrawerOpen] = useState(false);
   // FE Feature 23 task 5 -- the Verify affordance. A work-screen line links here
   // as `/chat?seed=<verify.question>`, and the composer opens holding that
   // question. `useSearchParams()` already percent-decodes.
@@ -161,43 +164,63 @@ function ChatPageInner() {
   );
 
   return (
-    // WHY -m-8: the Shell component (components/layout/Shell.tsx) wraps
-    //   <main> with p-8.  A standard scrollable page works great with that
-    //   padding, but the chat layout needs to fill the entire available area
-    //   with no outer gutters so the left thread sidebar and pinned input bar
-    //   reach the edges.  Negative margin cancels the p-8 without modifying
-    //   Shell (which is shared across all pages).
-    //
-    // WHY h-[calc(100vh-4rem)]: the Header is 4rem (64px) tall.  Subtracting
-    //   it from 100vh gives the chat window exactly the remaining vertical
-    //   space.  overflow-hidden is set here so that ChatWindow manages its own
-    //   internal scroll regions (thread list + message area) — the outer page
-    //   should never scroll.
-    <div className="-m-8 h-[calc(100vh-4rem)] overflow-hidden">
-      <ChatWindow
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        messages={messages}
-        isLoadingSessions={isLoadingSessions}
-        isLoadingMessages={isLoadingMessages}
-        isSending={isSending}
-        error={error}
-        onCreateSession={createSession}
-        onSelectSession={selectSession}
-        onSendMessage={sendMessage}
-        onRenameSession={renameSession}
-        onDeleteSession={deleteSession}
-        onAttach={uploadAttachment}
-        attachment={attachment}
-        onRemoveAttachment={removeAttachment}
-        onCancelAttachment={cancelAttachment}
-        attachmentHandlers={attachmentHandlers}
-        attachmentCount={attachmentCount}
-        onAttachmentIntent={onAttachmentIntent}
-        updatedInsightMessageIds={updatedInsightMessageIds}
-        initialSeed={seed}
+    <>
+      <PageHeaderActions>
+        <button
+          type="button"
+          onClick={() => setIsRulesDrawerOpen(true)}
+          aria-label="Chat Rules"
+          title="Chat Rules"
+          className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#1E293B] hover:bg-[#283548] text-slate-200 text-xs font-medium border border-[#222D3D] transition-colors cursor-pointer shrink-0"
+        >
+          <ScrollText className="w-4 h-4 text-[#3B82F6]" />
+          <span className="hidden sm:inline">Chat Rules</span>
+        </button>
+      </PageHeaderActions>
+
+      {/* WHY -m-8: the Shell component (components/layout/Shell.tsx) wraps
+          <main> with p-8. A standard scrollable page works great with that
+          padding, but the chat layout needs to fill the entire available area
+          with no outer gutters so the left thread sidebar and pinned input bar
+          reach the edges. Negative margin cancels the p-8 without modifying
+          Shell (which is shared across all pages).
+
+          WHY h-[calc(100vh-4rem)]: the Header is 4rem (64px) tall. Subtracting
+          it from 100vh gives the chat window exactly the remaining vertical
+          space. overflow-hidden is set here so that ChatWindow manages its own
+          internal scroll regions (thread list + message area) — the outer page
+          should never scroll. */}
+      <div className="-m-8 h-[calc(100vh-4rem)] overflow-hidden">
+        <ChatWindow
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          messages={messages}
+          isLoadingSessions={isLoadingSessions}
+          isLoadingMessages={isLoadingMessages}
+          isSending={isSending}
+          error={error}
+          onCreateSession={createSession}
+          onSelectSession={selectSession}
+          onSendMessage={sendMessage}
+          onRenameSession={renameSession}
+          onDeleteSession={deleteSession}
+          onAttach={uploadAttachment}
+          attachment={attachment}
+          onRemoveAttachment={removeAttachment}
+          onCancelAttachment={cancelAttachment}
+          attachmentHandlers={attachmentHandlers}
+          attachmentCount={attachmentCount}
+          onAttachmentIntent={onAttachmentIntent}
+          updatedInsightMessageIds={updatedInsightMessageIds}
+          initialSeed={seed}
+        />
+      </div>
+
+      <ChatRulesDrawer
+        isOpen={isRulesDrawerOpen}
+        onClose={() => setIsRulesDrawerOpen(false)}
       />
-    </div>
+    </>
   );
 }
 

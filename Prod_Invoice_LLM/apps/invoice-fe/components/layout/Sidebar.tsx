@@ -9,7 +9,6 @@ import {
   History,
   MessageSquare,
   GraduationCap,
-  ScrollText,
   FileText,
   ListChecks,
   ChevronsLeft,
@@ -152,7 +151,6 @@ export default function Sidebar() {
     { name: "Audit Queue", href: "/invoices", icon: ListChecks, visible: canAudit },
     { name: "History", href: "/history", icon: History, visible: canAudit },
     { name: "AI Trainer", href: "/trainer", icon: GraduationCap, visible: canTrain },
-    { name: "Chat Rules", href: "/settings/chat-rules", icon: ScrollText, visible: canTrain },
     { name: "Chat", href: "/chat", icon: MessageSquare, visible: true },
   ];
 

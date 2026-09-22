@@ -14,15 +14,13 @@ import { test, expect, Page } from "@playwright/test";
  *   Dashboard / Chat / Help  -> always
  *   Ingest                   -> can_load
  *   Audit Queue / History    -> can_audit
- *   AI Trainer / Chat Rules  -> can_train
+ *   AI Trainer               -> can_train
  *   Settings / Subscriptions -> Admin only
  */
 
 const ALWAYS_VISIBLE = ["Dashboard", "Chat", "Help"];
-// FE Gap 478 added "Chat Rules" (/settings/chat-rules) as its own nav entry,
-// gated on can_train -- the same permission that guards deleting a rule
-// backend-side -- rather than on Admin like the other /settings/* entry.
-const GRANTABLE = ["Ingest", "Audit Queue", "History", "AI Trainer", "Chat Rules"];
+// Chat Rules moved into the Chat page (/chat) header action drawer to streamline navigation.
+const GRANTABLE = ["Ingest", "Audit Queue", "History", "AI Trainer"];
 // FE Gap 143 added "Subscriptions" (/settings/subscriptions) as a direct nav
 // entry, gated on Admin exactly as Settings is.
 const ADMIN_ONLY = ["Settings", "Subscriptions"];
@@ -177,7 +175,7 @@ test.describe("Sidebar — individually granted permissions", () => {
   const cases: { granted: keyof Identity; labels: string[] }[] = [
     { granted: "can_load", labels: ["Ingest"] },
     { granted: "can_audit", labels: ["Audit Queue", "History"] },
-    { granted: "can_train", labels: ["AI Trainer", "Chat Rules"] },
+    { granted: "can_train", labels: ["AI Trainer"] },
   ];
 
   for (const { granted, labels } of cases) {
@@ -240,31 +238,22 @@ test.describe("Sidebar — identity lookup fails", () => {
  * tracks `can_train` in both directions and points at the real route, which the
  * set-equality tests above cannot say (they compare labels, not hrefs).
  */
-test.describe("Sidebar — Chat Rules (FE Gap 478)", () => {
-  test("a can_train user sees it and it links to /settings/chat-rules", async ({ page }) => {
-    await stubShell(page, { role: "Restricted", can_train: true });
-    await page.goto("/dashboard");
-    await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
-
-    const link = navLink(page, "Chat Rules");
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute("href", "/settings/chat-rules");
-  });
-
-  test("it is absent without can_train, even for a user with every other permission", async ({ page }) => {
-    await stubShell(page, { role: "Restricted", can_audit: true, can_load: true });
+test.describe("Chat Rules Relocation to Chat Page", () => {
+  test("Chat Rules is removed from sidebar across all roles", async ({ page }) => {
+    await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
     await page.goto("/dashboard");
     await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
 
     await expect(navLink(page, "Chat Rules")).toHaveCount(0);
   });
 
-  test("an Admin sees it, since Admin resolves can_train server-side", async ({ page }) => {
-    await stubShell(page, { role: "Admin", can_train: true, can_audit: true, can_load: true });
-    await page.goto("/dashboard");
-    await expect(page.locator("aside")).toHaveAttribute("data-auth-loading", "false");
+  test("Chat Rules button is accessible on /chat header", async ({ page }) => {
+    await stubShell(page, { role: "Restricted", can_train: true });
+    await page.goto("/chat");
+    await expect(page.locator("header")).toBeVisible();
 
-    await expect(navLink(page, "Chat Rules")).toBeVisible();
+    const rulesBtn = page.locator("header").getByRole("button", { name: /Chat Rules/i });
+    await expect(rulesBtn).toBeVisible();
   });
 });
 
