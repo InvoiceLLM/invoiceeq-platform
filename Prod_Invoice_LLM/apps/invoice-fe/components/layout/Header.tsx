@@ -103,12 +103,12 @@ export default function Header() {
     // between the brand and the profile, rather than every screen drawing its
     // own title bar underneath (which on Trainer/Settings meant two stacked
     // header bars, the leftover half of Gaps 76/88).
-    <header className="h-16 shrink-0 border-b border-[#222D3D] bg-[#0B0F19]/80 backdrop-blur-md flex items-center justify-between gap-4 px-8 text-slate-300 z-10">
+    <header className="h-16 shrink-0 border-b border-[#222D3D] bg-[#0B0F19]/80 backdrop-blur-md flex items-center justify-between gap-2 sm:gap-3 xl:gap-4 px-3 sm:px-4 xl:px-6 2xl:px-8 text-slate-300 z-10">
       {/* Active route's title cluster. Empty on routes that declare none. */}
-      <div className="min-w-0 flex-1">{pageMeta && <PageHeader {...pageMeta} />}</div>
+      <div className="min-w-[130px] sm:min-w-[160px] flex-1 max-w-fit sm:max-w-none">{pageMeta && <PageHeader {...pageMeta} />}</div>
 
       {/* Right Controls Container */}
-      <div className="flex items-center gap-6 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-3 xl:gap-4 shrink-0 min-w-0">
         {/* Page-specific header controls portal in here (Trainer's Commit /
             Rule History, Ingestion's Receiving/Sending toggle, an invoice's
             status badge). Always rendered so the portal has a stable target;
@@ -117,7 +117,7 @@ export default function Header() {
             Gap 110 also removed the HelpCircle link that used to sit here: it
             was a second entry point to the exact same /help route the Sidebar
             already has. The Sidebar's "Help" item is the one that stays. */}
-        <div ref={actionsRef} className="flex items-center gap-3 empty:hidden" />
+        <div ref={actionsRef} className="flex items-center gap-1 sm:gap-1.5 xl:gap-2.5 empty:hidden" />
 
         {/* Needs Attention -- Gap 87/95. Rendered only for a user who can
             actually open the queue; the badge appears only when the count is

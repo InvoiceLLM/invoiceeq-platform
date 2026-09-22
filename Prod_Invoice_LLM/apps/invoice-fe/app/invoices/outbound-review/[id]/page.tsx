@@ -411,7 +411,7 @@ export default function OutboundAuditorReviewPage() {
     <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
       <PageHeaderActions>
         <span
-          className={`rounded-full border px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium whitespace-nowrap ${
+          className={`rounded-full border px-2 sm:px-2.5 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium whitespace-nowrap shrink-0 ${
             invoice.status === "PAID"
               ? "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
               : invoice.status === "SENT"
@@ -428,10 +428,10 @@ export default function OutboundAuditorReviewPage() {
           <button
             onClick={handleConfirmSend}
             disabled={!!actionLoading}
-            className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50"
+            className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50 shrink-0"
           >
             {actionLoading === "send" ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-            Approve &amp; Send
+            <span>Approve<span className="hidden 2xl:inline"> &amp; Send</span></span>
           </button>
         )}
 
@@ -439,10 +439,10 @@ export default function OutboundAuditorReviewPage() {
           <button
             onClick={handleMarkPaid}
             disabled={!!actionLoading}
-            className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50"
+            className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50 shrink-0"
           >
             {actionLoading === "paid" ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
-            Mark Paid
+            <span><span className="hidden 2xl:inline">Mark </span>Paid</span>
           </button>
         )}
 

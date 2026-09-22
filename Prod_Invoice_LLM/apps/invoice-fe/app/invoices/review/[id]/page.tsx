@@ -631,7 +631,7 @@ export default function AuditorReviewPage() {
               the list, or entirely if this invoice isn't part of it (e.g.
               opened via a chat citation or the notification bell rather than
               from the Audit Queue itself). */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() => previousAuditInvoiceId && router.push(`/invoices/review/${previousAuditInvoiceId}`)}
@@ -643,8 +643,9 @@ export default function AuditorReviewPage() {
               <ChevronLeft size={14} />
             </button>
             {auditQueueIndex >= 0 && (
-              <span className="hidden text-[10px] text-slate-500 sm:inline whitespace-nowrap">
-                {auditQueueIndex + 1} of {auditQueueIds.length}
+              <span className="text-[10px] text-slate-500 whitespace-nowrap px-0.5">
+                <span className="hidden 2xl:inline">{auditQueueIndex + 1} of {auditQueueIds.length}</span>
+                <span className="2xl:hidden">{auditQueueIndex + 1}/{auditQueueIds.length}</span>
               </span>
             )}
             <button
@@ -659,7 +660,7 @@ export default function AuditorReviewPage() {
             </button>
           </div>
           <span
-            className={`rounded-full border px-2 sm:px-3 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium whitespace-nowrap ${
+            className={`rounded-full border px-2 sm:px-2.5 py-0.5 sm:py-1 text-[10px] sm:text-xs font-medium whitespace-nowrap shrink-0 ${
               invoice.status === "PAID"
                 ? "border-emerald-600/50 bg-emerald-500/10 text-emerald-300"
                 : invoice.status === "REJECTED"
@@ -694,10 +695,10 @@ export default function AuditorReviewPage() {
                   window.alert(err?.message || "Failed to reopen invoice. Please try again.");
                 }
               }}
-              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30"
+              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30 shrink-0"
             >
               <Undo2 size={13} />
-              Reopen Audit
+              <span><span className="hidden 2xl:inline">Reopen </span>Audit</span>
             </button>
           )}
           {/* Gap 407: two non-terminal deferral actions, distinct from the
@@ -710,57 +711,63 @@ export default function AuditorReviewPage() {
             <button
               onClick={() => handleResolve("REVIEW_LATER")}
               disabled={!!actionLoading}
-              title="Defer a decision on this invoice without finalizing it"
-              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-sky-500/50 bg-sky-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-sky-300 transition hover:bg-sky-600/30 disabled:opacity-50"
+              title="Defer a decision on this invoice without finalizing it (Review Later)"
+              aria-label="Review Later"
+              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-sky-500/50 bg-sky-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-sky-300 transition hover:bg-sky-600/30 disabled:opacity-50 shrink-0"
             >
               {actionLoading === "review_later" ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
                 <Clock size={13} />
               )}
-              Review Later
+              <span><span className="hidden 2xl:inline">Review </span><span className="hidden lg:inline">Later</span></span>
             </button>
           )}
           {!isResolved && invoice.status !== "NEEDS_RESUBMISSION" && (
             <button
               onClick={() => handleResolve("NEEDS_RESUBMISSION")}
               disabled={!!actionLoading}
-              title="Flag as disputed and queue for vendor correction / resubmission"
-              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50"
+              title="Flag as disputed and queue for vendor correction / resubmission (Needs Resubmission)"
+              aria-label="Needs Resubmission"
+              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50 shrink-0"
             >
               {actionLoading === "needs_resubmission" ? (
                 <Loader2 size={13} className="animate-spin" />
               ) : (
                 <RotateCcw size={13} />
               )}
-              Needs Resubmission
+              <span><span className="hidden 2xl:inline">Needs Resubmission</span><span className="hidden lg:inline 2xl:hidden">Resubmit</span></span>
             </button>
           )}
           {!isResolved && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
                 onClick={() => setShowRejectModal(true)}
                 disabled={!!actionLoading}
-                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-red-500/50 bg-red-600/10 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-red-300 transition hover:bg-red-600/30 disabled:opacity-50"
+                title="Reject invoice"
+                aria-label="Reject invoice"
+                className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-red-500/50 bg-red-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-red-300 transition hover:bg-red-600/30 disabled:opacity-50 shrink-0"
               >
                 {actionLoading === "rejected" ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <XCircle size={13} />
                 )}
-                Reject
+                <span><span className="hidden sm:inline">Reject</span></span>
               </button>
               <button
                 onClick={() => handleResolve("PAID")}
                 disabled={!!actionLoading}
-                className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50"
+                title="Approve invoice"
+                aria-label="Approve invoice"
+                className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50 shrink-0"
               >
                 {actionLoading === "paid" ? (
                   <Loader2 size={13} className="animate-spin" />
                 ) : (
                   <CheckCircle size={13} />
                 )}
-                Approve Invoice
+                <span>Approve<span className="hidden 2xl:inline"> Invoice</span></span>
               </button>
             </div>
           )}

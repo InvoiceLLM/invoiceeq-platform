@@ -1660,6 +1660,26 @@ component now uses the functional setter form so a value can never be re-read as
   - **Stated limits / Boundary:** The underlying route `/history` (`app/history/page.tsx`) remains intact so direct URLs and bookmarks continue to function without 404s. All styling refinements remain uncommitted in the local working tree per user instruction.
 
 
+## Review Console Header & Expand PDF Toolbar Responsiveness Across All Screen Sizes (2026-09-22) — FE Gap 714
+
+- `[x]` **FE Gap 714 (FE, layout & responsiveness · auditor review console header & PDF toolbar buttons, follows FE Gap 112 & FE Gap 155): Auditor Review Console header title squashed & actions clipped at 100% zoom (1280px), and PDF canvas "Expand PDF" button wrapped awkwardly into two lines** — CLOSED 2026-09-22 — S2 · release risk **Low (auditor review header & PDF toolbar layout)** · effort S. *(founder requests: "this page not header not showing perfectly if screen size 90% it showing all header options but when the screen size 100% ont showing all heder options and if i collapes the sidebar then all are showing so fix the ishhu dont chnage other things make implimentation plan dont run DOM give Visual Test Results. flexible for all screen size make." and "expand pdf button also fix as like 90% screen for all type of 100% and other sceen and give visual test result.")*
+  - **Symptom:**
+    1. At 100% zoom on a standard 1280px laptop viewport with the sidebar expanded, the review console header title ("Auditor Review Console") was squashed down to 0px width (showing just "..."), the SENTINEL agent badge collided with queue navigation, and right-side header controls overflowed.
+    2. In the PDF viewer panel (`PdfViewerCanvas.tsx`), the "Expand PDF" button text wrapped onto two lines ("Expand \n PDF"), and zoom buttons ("Zoom \n In", "Zoom \n Out") also broke across lines due to missing `shrink-0 whitespace-nowrap` and inflexible toolbar paddings when Column 1 width was constrained (~360px).
+  - **Root cause:**
+    1. Header title container lacked a minimum floor (`min-w-[130px] sm:min-w-[160px]`), padding was rigidly `px-8` (64px), gaps were rigid, and the SENTINEL badge occupied ~95px of width on laptop screens instead of hiding until ultra-wide (`2xl`). Review action buttons lacked responsive labels.
+    2. In `PdfViewerCanvas.tsx`, the toolbar container had rigid `px-4` padding and `gap-2`, and buttons lacked `shrink-0 whitespace-nowrap`, allowing flexbox to shrink the elements and wrap button text when column width was under 400px.
+  - **Fixed 2026-09-22 (five files in `apps/invoice-fe`):**
+    1. `components/layout/Header.tsx` (EDIT) — responsive padding `px-3 sm:px-4 xl:px-6 2xl:px-8`, container gap `gap-2 sm:gap-3 xl:gap-4`, right controls gap `gap-2 sm:gap-3 xl:gap-4`, title wrapper guaranteed floor `min-w-[130px] sm:min-w-[160px]`, and action portal gap `gap-1 sm:gap-1.5 xl:gap-2.5`.
+    2. `components/layout/PageHeader.tsx` (EDIT) — moved `agentName` badge breakpoint to `hidden 2xl:flex` (saving 95px on laptop screens) and responsive title typography.
+    3. `app/invoices/review/[id]/page.tsx` (EDIT) — responsive review action button labels ("Review Later" / "Later", "Needs Resubmission" / "Resubmit", "Approve Invoice" / "Approve"), compact queue count `2/5`, and responsive button padding.
+    4. `app/invoices/outbound-review/[id]/page.tsx` (EDIT) — symmetrically applied responsive button padding and labels.
+    5. `components/audit/PdfViewerCanvas.tsx` (EDIT) — added `shrink-0 whitespace-nowrap` to all toolbar buttons (`Zoom In`, `Zoom Out`, `Rotate`, `Expand PDF`), tuned container padding to `px-2 sm:px-3 2xl:px-4 py-2` and gap to `gap-1 sm:gap-1.5 2xl:gap-2` with `overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`, and adaptive zoom button text (`<span className="hidden 2xl:inline">Zoom </span>In/Out`), guaranteeing that "Expand PDF" renders cleanly on a single line across 100% zoom (1280px), 90% zoom (1440px), 1024px, and collapsed sidebar states.
+    6. `docs/fe_features_tracker.md` (EDIT) — recorded FE Gap 714.
+  - **Evidence:** Verified across viewports (1280px, 1440px, 1024px, and collapsed sidebar) using automated headless Playwright screenshot tests (`header_1280_after.png`, `header_1440_after.png`, `header_1024_after.png`, `header_collapsed_after.png`). The title, review actions, and the "Expand PDF" button fit with clean, single-line alignment and generous padding across all screen sizes.
+  - **Stated limits / Boundary:** Zero DOM tests run per user instruction. All styling and component updates remain uncommitted in the local working tree per user instruction.
+
+
 ## Dashboard FilterBar flexible responsive rows & KPI card scrollbar slider removal (2026-09-22) — FE Gap 713
 
 - `[x]` **FE Gap 713 (FE, layout & usability · dashboard filters & KPI metrics, follows FE Gap 136 & FE Gap 704): Dashboard FilterBar "Save Filter" button wrapped awkwardly to a lonely bottom row in split view, and KPI cards displayed native scrollbar slider arrows / thumb chrome** — CLOSED 2026-09-22 — S2 · release risk **Low (dashboard filters & KPI cards)** · effort S. *(founder request: "in the dashbord the save filter are showing in down side in reciving tab make it flexble for all screen and the this slide icone remove from all ,dashbord card. make plan and fix dont chnage other things fix it.")*
@@ -1668,7 +1688,7 @@ component now uses the functional setter form so a value can never be re-read as
     2. KPI cards in `MetricsGrid` and `OutboundMetricsGrid` (which adopted vertical scrolling in FE Gap 704 for multi-currency values) showed native browser scrollbar sliders (up/down arrow controls and thumb slider icon `▲ [thumb] ▼`) in certain browsers/engines, visually cluttering the clean glassmorphism metric cards.
   - **Root cause:**
     1. `FilterBar.tsx` relied on an unstructured `flex-wrap` container without balanced row grouping or text truncation in `compact` mode, allowing longer label text in `<select>` elements to force the save button onto an orphaned line.
-    2. `KpiCard.tsx` enabled vertical scrolling via `overflow-y-auto` but lacked explicit CSS scrollbar suppression rules (`scrollbar-width: none` / `::-webkit-scrollbar { display: none }`), exposing native browser scroll chrome slider icons over the metric numbers.
+    2. `KpiCard.tsx` enabled vertical scrolling via `overflow-y-auto` but lacked explicit CSS scrollbar suppression rules (`scrollbar-width: none` / `::-webkit-scrollbar { display: none }`), exposing native browser scroll slider icons over the metric numbers.
   - **Fixed 2026-09-22 (two files in `apps/invoice-fe`):**
     1. `components/dashboard/FilterBar.tsx` (EDIT) — structured the `compact` mode into two dedicated, balanced flexible rows:
        - **Row 1:** Vendor selector (`flex-1 min-w-0`) + Date Range selector (`flex-1 min-w-0`).

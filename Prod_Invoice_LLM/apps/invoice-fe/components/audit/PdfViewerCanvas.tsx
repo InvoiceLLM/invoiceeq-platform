@@ -94,37 +94,50 @@ export default function PdfViewerCanvas({
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b border-[#222D3D] px-4 py-2 text-slate-400">
+      <div className="flex items-center gap-1 sm:gap-1.5 2xl:gap-2 border-b border-[#222D3D] px-2 sm:px-2.5 2xl:px-4 py-2 text-slate-400 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <button
           type="button"
           onClick={handleZoomIn}
-          className="flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-[#1E293B] hover:text-slate-200"
+          title="Zoom In"
+          aria-label="Zoom In"
+          className="flex items-center gap-1 rounded p-1 sm:px-1.5 py-1 text-xs transition hover:bg-[#1E293B] hover:text-slate-200 shrink-0 whitespace-nowrap"
         >
-          <ZoomIn size={13} /> Zoom In
+          <ZoomIn size={13} className="shrink-0" />
+          <span className="hidden 2xl:inline">Zoom In</span>
         </button>
         <button
           type="button"
           onClick={handleZoomOut}
-          className="flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-[#1E293B] hover:text-slate-200"
+          title="Zoom Out"
+          aria-label="Zoom Out"
+          className="flex items-center gap-1 rounded p-1 sm:px-1.5 py-1 text-xs transition hover:bg-[#1E293B] hover:text-slate-200 shrink-0 whitespace-nowrap"
         >
-          <ZoomOut size={13} /> Zoom Out
+          <ZoomOut size={13} className="shrink-0" />
+          <span className="hidden 2xl:inline">Zoom Out</span>
         </button>
         <button
           type="button"
           onClick={handleRotate}
-          className="flex items-center gap-1 rounded px-2 py-1 text-xs transition hover:bg-[#1E293B] hover:text-slate-200"
+          title="Rotate"
+          aria-label="Rotate"
+          className="flex items-center gap-1 rounded p-1 sm:px-1.5 py-1 text-xs transition hover:bg-[#1E293B] hover:text-slate-200 shrink-0 whitespace-nowrap"
         >
-          <RotateCw size={13} /> Rotate
+          <RotateCw size={13} className="shrink-0" />
+          <span className="hidden 2xl:inline">Rotate</span>
         </button>
-        <span className="text-xs text-slate-500 font-mono ml-1">{zoom}%</span>
+        <span className="text-xs text-slate-500 font-mono ml-0.5 sm:ml-1 shrink-0">{zoom}%</span>
 
         {/* Gap 155: Fullscreen Lightbox Modal Button */}
         <button
           type="button"
           onClick={handleOpenModal}
-          className="ml-auto flex items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-xs text-blue-300 transition hover:bg-blue-500/20"
+          title="Expand PDF"
+          aria-label="Expand PDF"
+          data-testid="expand-pdf-btn"
+          className="expand-pdf-btn ml-auto flex items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-300 transition hover:bg-blue-500/20 shrink-0 whitespace-nowrap"
         >
-          <Maximize2 size={13} /> Expand PDF
+          <Maximize2 size={13} className="shrink-0" />
+          <span>Expand PDF</span>
         </button>
       </div>
 

@@ -4960,3 +4960,68 @@ td, .table-cell {
   border-radius: 0.25rem;
   transition: outline-color 200ms ease-out;
 }
+
+/* =============================================================================
+   Auditor Review Console: Expand PDF Button InfiNevo (Light Theme) Blueish Styling
+   ============================================================================= */
+[data-theme="infinevo"] main div[class*="bg-[#0F172A]"] button[data-testid="expand-pdf-btn"],
+[data-theme="infinevo"] main div[class*="bg-[#0F172A]"] button.expand-pdf-btn,
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:nth-child(2) button.expand-pdf-btn,
+[data-theme="infinevo"] main [data-testid="expand-pdf-btn"],
+[data-theme="infinevo"] main .expand-pdf-btn,
+[data-theme="infinevo"] main button[data-testid="expand-pdf-btn"],
+[data-theme="infinevo"] main button.expand-pdf-btn,
+[data-theme="infinevo"] main div button.expand-pdf-btn {
+  background: #E0F2FE !important;
+  background-color: #E0F2FE !important;
+  border: 1px solid #38BDF8 !important;
+  border-color: #38BDF8 !important;
+  color: #0284C7 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main div[class*="bg-[#0F172A]"] button[data-testid="expand-pdf-btn"]:hover,
+[data-theme="infinevo"] main div[class*="bg-[#0F172A]"] button.expand-pdf-btn:hover,
+[data-theme="infinevo"] .flex.h-full.min-h-\[500px\] > div:nth-child(2) button.expand-pdf-btn:hover,
+[data-theme="infinevo"] main [data-testid="expand-pdf-btn"]:hover,
+[data-theme="infinevo"] main .expand-pdf-btn:hover,
+[data-theme="infinevo"] main button[data-testid="expand-pdf-btn"]:hover,
+[data-theme="infinevo"] main button.expand-pdf-btn:hover,
+[data-theme="infinevo"] main div button.expand-pdf-btn:hover {
+  background: #BAE6FD !important;
+  background-color: #BAE6FD !important;
+  border: 1px solid #0284C7 !important;
+  border-color: #0284C7 !important;
+  color: #0369A1 !important;
+}
+
+[data-theme="infinevo"] main button[data-testid="expand-pdf-btn"] svg,
+[data-theme="infinevo"] main button.expand-pdf-btn svg,
+[data-theme="infinevo"] main [data-testid="expand-pdf-btn"] svg,
+[data-theme="infinevo"] main .expand-pdf-btn svg {
+  color: #0284C7 !important;
+  stroke: #0284C7 !important;
+}
+
+[data-theme="infinevo"] main button[data-testid="expand-pdf-btn"] span,
+[data-theme="infinevo"] main button.expand-pdf-btn span,
+[data-theme="infinevo"] main [data-testid="expand-pdf-btn"] span,
+[data-theme="infinevo"] main .expand-pdf-btn span {
+  color: #0284C7 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] main button[data-testid="expand-pdf-btn"]:hover svg,
+[data-theme="infinevo"] main button.expand-pdf-btn:hover svg,
+[data-theme="infinevo"] main [data-testid="expand-pdf-btn"]:hover svg,
+[data-theme="infinevo"] main .expand-pdf-btn:hover svg {
+  color: #0369A1 !important;
+  stroke: #0369A1 !important;
+}
+
+[data-theme="infinevo"] main button[data-testid="expand-pdf-btn"]:hover span,
+[data-theme="infinevo"] main button.expand-pdf-btn:hover span,
+[data-theme="infinevo"] main [data-testid="expand-pdf-btn"]:hover span,
+[data-theme="infinevo"] main .expand-pdf-btn:hover span {
+  color: #0369A1 !important;
+}

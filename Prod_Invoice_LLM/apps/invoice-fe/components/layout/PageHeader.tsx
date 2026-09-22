@@ -46,11 +46,11 @@ export default function PageHeader({
 
       <div className="min-w-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <h1 className="text-base sm:text-lg font-semibold text-white tracking-wide truncate">
+          <h1 className="text-sm sm:text-base xl:text-lg font-semibold text-white tracking-wide truncate">
             {title}
           </h1>
           {agentName && (
-            <span className="hidden xl:flex items-center gap-1.5 shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold tracking-wide whitespace-nowrap">
+            <span className="hidden 2xl:flex items-center gap-1.5 shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-[#6366F1]/10 text-[#6366F1] border border-[#6366F1]/30 font-mono font-semibold tracking-wide whitespace-nowrap">
               {agentIcon && <span className="text-xs leading-none not-italic">{agentIcon}</span>}
               {agentName}
               {agentRole && (
@@ -62,7 +62,7 @@ export default function PageHeader({
           )}
         </div>
         {subtitle && (
-          <p className="hidden sm:block text-[11px] text-slate-400 truncate leading-tight">
+          <p className="hidden md:block text-[11px] text-slate-400 truncate leading-tight">
             {subtitle}
           </p>
         )}
