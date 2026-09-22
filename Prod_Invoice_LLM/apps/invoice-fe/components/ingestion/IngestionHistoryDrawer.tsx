@@ -9,7 +9,8 @@
 // screen, mirroring RuleHistoryDrawer (AI Trainer) and ChatRulesDrawer (Chat).
 // =============================================================================
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { History, X } from "lucide-react";
 import IngestionHistoryTable from "@/components/ingestion/IngestionHistoryTable";
 import OpenFindingsChip from "@/components/insights/OpenFindingsChip";
@@ -25,6 +26,12 @@ export default function IngestionHistoryDrawer({
   isOpen,
   onClose,
 }: IngestionHistoryDrawerProps) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Close on Escape key press
   useEffect(() => {
     if (!isOpen) return;
@@ -37,14 +44,14 @@ export default function IngestionHistoryDrawer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !mounted) return null;
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Ingestion History"
-      className="fixed inset-0 z-50 overflow-hidden bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+      className="fixed inset-0 z-[100] overflow-hidden bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
     >
       <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
         <div className="w-screen max-w-5xl bg-[#151B26] border-l border-[#222D3D] shadow-2xl flex flex-col h-full">
@@ -83,6 +90,7 @@ export default function IngestionHistoryDrawer({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -273,6 +273,25 @@ test.describe("History Relocation to Ingestion Page", () => {
     const historyBtn = page.locator("header").getByRole("button", { name: /History/i });
     await expect(historyBtn).toBeVisible();
   });
+
+  test("clicking History opens full-viewport drawer and close button dismisses it", async ({ page }) => {
+    await stubShell(page, { role: "Restricted", can_load: true, can_audit: true });
+    await page.goto("/ingestion");
+    await expect(page.locator("header")).toBeVisible();
+
+    const historyBtn = page.locator("header").getByRole("button", { name: /History/i });
+    await expect(historyBtn).toBeVisible();
+    await historyBtn.click();
+
+    const drawer = page.getByRole("dialog", { name: /Ingestion History/i });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText("Ingestion History & Outcomes")).toBeVisible();
+
+    // Verify close button dismisses drawer
+    const closeBtn = drawer.getByRole("button", { name: /close drawer/i });
+    await closeBtn.click();
+    await expect(drawer).not.toBeVisible();
+  });
 });
 
 /**

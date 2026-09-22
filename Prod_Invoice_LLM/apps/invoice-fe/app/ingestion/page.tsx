@@ -442,52 +442,53 @@ function IngestionPageContent() {
     <div className="space-y-6">
       {/* Tab toggle & History drawer trigger in header */}
       <PageHeaderActions>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
-            {receiveEnabled && (
-              <button
-                onClick={() => setActiveTab("receiving")}
-                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                Receiving
-              </button>
-            )}
-            {sendVisible && (
-              <button
-                onClick={() => setActiveTab("sending")}
-                className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                Sending
-              </button>
-            )}
-            {/* Feature 13: Autopilot tab — always visible */}
+        <div className="flex items-center gap-1 bg-[#0B0F19] border border-[#222D3D] rounded-lg p-1 w-fit">
+          {receiveEnabled && (
             <button
-              onClick={() => setActiveTab("autopilot")}
-              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${
-                activeTab === "autopilot" ? "bg-violet-600 text-white" : "text-slate-400 hover:text-slate-200"
+              onClick={() => setActiveTab("receiving")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === "receiving" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              <Bot className="w-3 h-3" />
-              Autopilot
+              Receiving
             </button>
-          </div>
-
-          {/* FE Gap 712: Ingestion History drawer trigger (relocated from sidebar) */}
-          {canAudit && (
+          )}
+          {sendVisible && (
             <button
-              type="button"
-              onClick={() => setIsHistoryOpen(true)}
-              aria-label="Ingestion History"
-              title="View durable ingestion history and file outcomes"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[#222D3D] bg-[#0F172A] hover:bg-[#1E293B] text-slate-300 hover:text-white transition-all cursor-pointer shadow-sm shrink-0"
+              onClick={() => setActiveTab("sending")}
+              className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                activeTab === "sending" ? "bg-[#3B82F6] text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
             >
-              <History className="w-3.5 h-3.5 text-blue-400" />
-              <span>History</span>
+              Sending
             </button>
+          )}
+          {/* Feature 13: Autopilot tab — always visible */}
+          <button
+            onClick={() => setActiveTab("autopilot")}
+            className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1 ${
+              activeTab === "autopilot" ? "bg-violet-600 text-white" : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Bot className="w-3 h-3" />
+            Autopilot
+          </button>
+
+          {/* FE Gap 712: Ingestion History button matching the other tab buttons */}
+          {canAudit && (
+            <>
+              <div className="h-4 w-[1px] bg-[#222D3D] my-auto mx-0.5" />
+              <button
+                type="button"
+                onClick={() => setIsHistoryOpen(true)}
+                aria-label="Ingestion History"
+                title="View durable ingestion history and file outcomes"
+                className="px-4 py-1.5 text-xs font-medium rounded-md transition-colors flex items-center gap-1.5 text-slate-400 hover:text-slate-200 hover:bg-[#1E293B] cursor-pointer"
+              >
+                <History className="w-3.5 h-3.5 text-blue-400" />
+                <span>History</span>
+              </button>
+            </>
           )}
         </div>
       </PageHeaderActions>
