@@ -66,6 +66,17 @@ export function correctionErrorMessage(err: unknown): string {
     if (typeof detail === "string" && detail) {
       return `Not saved — ${detail}`;
     }
+    // FE Gap 717 (Finding F-12): a slow rule save outliving the proxy is not a refusal.
+    // Differentiate an unconfirmed network timeout / socket drop from a server rejection
+    // to prevent destructive repeated retries creating duplicate rule versions.
+    if (
+      err.code === "ECONNABORTED" ||
+      err.code === "ETIMEDOUT" ||
+      err.code === "ERR_NETWORK" ||
+      !err.response
+    ) {
+      return "Save request timed out waiting for server confirmation. The change may still have saved — please check Rule History before retrying to avoid duplicate rules.";
+    }
   }
   return "Not saved — the server did not accept this change. Please try again.";
 }

@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  experimental: {
+    proxyTimeout: 120_000,
+  },
   env: {
     ENABLE_FE_PROXY: process.env.ENABLE_FE_PROXY || "false",
   },
@@ -25,8 +28,8 @@ const nextConfig = {
     // check that diffs invoice-fe/app/* against this array in CI; it is not done here
     // because a routing outage should not wait on a tooling change.
     //
-    // invoice-website has no app/work/ of its own, so this prefix shadows nothing.
-    const fePages = ["dashboard", "chat", "ingestion", "invoices", "trainer", "settings", "admin", "flows", "help", "history", "work"];
+    // FE Gap 713 / BE Gap 721: "documents" added so non-invoice documents list is reachable
+    const fePages = ["dashboard", "chat", "ingestion", "invoices", "trainer", "settings", "admin", "flows", "help", "history", "work", "documents"];
     // Bug fix (2026-09-05, FE Gap 469): "history" was missing. FE Gap 464 added
     // invoice-fe's app/history/page.tsx and swapped the sidebar's "Documents"
     // entry for "History", but this array was never re-diffed against
@@ -93,10 +96,10 @@ const nextConfig = {
     // exact failure the "auth" note above describes: the screen renders, the data
     // never arrives, and it reads as "the feature is broken" rather than "the request
     // never left this tier". Re-diffed against invoice-fe/app/api/ on 2026-09-19:
-    // 22 folders. Still deliberately absent -- "billing" (shadows invoice-website's
-    // own app/api/billing/), "documents", "config", "audit-history" (no page served
-    // through this proxy calls them). invoice-website has no app/api/atlas/.
-    const feApiPrefixes = ["admin", "atlas", "audit", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "email", "ingestion-history", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
+    // FE Gap 713 / BE Gap 721: "audit-history" and "documents" added. ChangeHistoryPanel calls
+    // /api/audit-history/[id] and ReconPanel/Documents list call /api/documents. Without these
+    // rewrites, requests die at website gateway and return 404.
+    const feApiPrefixes = ["admin", "atlas", "audit", "audit-history", "auth", "autopilot", "chat", "connectors", "dashboard", "docs", "documents", "email", "ingestion-history", "invoices", "outbound-audit", "outbound-dashboard", "outbound-invoices", "settings", "support", "trainer", "webhooks"];
 
     const pageRewrites = [
       ...fePages.flatMap((p) => [
