@@ -1701,4 +1701,27 @@ component now uses the functional setter form so a value can never be re-read as
   - **Stated limits / Boundary:** Non-compact (full-width) FilterBar mode retains its horizontal layout. All styling and component updates remain uncommitted in the local working tree per user instruction.
 
 
+## Admin Change History & Documents Proxy Rewrites (2026-09-22) — FE Gap 716 / Finding F-14
 
+- `[x]` **FE Gap 716 (FE / infra gateway · proxy rewrites for audit history & documents, follows FE Gap 469 & FE Gap 705): Admin Change History panel and Documents picker return 404 because `/api/audit-history` and `/api/documents` were missing from the website proxy forwarding allowlist (Finding F-14)** — CLOSED 2026-09-22 — S2 · release risk **Low (routing & proxy allowlist)** · effort S.
+  - **Symptom:** Opening **CHANGE HISTORY (Admin)** on any invoice detail page (`/invoices/[id]`) displayed *"Could not load the change history. Please try again."* The request failed for every invoice and every Admin because `/api/audit-history/[id]` returned a 404 HTML response from the `invoice-website` gateway without ever reaching `invoice-fe` or `invoice-be`. Similarly, `/documents` and `/api/documents` were omitted from proxy rewrites.
+  - **Root cause:** `apps/invoice-website/next.config.js` maintains the `feApiPrefixes` and `fePages` allowlists for multi-zone rewrites. `"audit-history"` and `"documents"` were deliberately absent from `feApiPrefixes` under the false premise that no proxied page called them; however, `ChangeHistoryPanel` calls `/api/audit-history/[id]` from the proxied `/invoices` page, and `ReconPanel` calls `GET /api/documents` from `/work`.
+  - **Fixed 2026-09-22 (one file in `apps/invoice-website`):**
+    1. `apps/invoice-website/next.config.js` (EDIT) — added `"documents"` to `fePages` array and added `"audit-history"`, `"documents"` to `feApiPrefixes` array so all subpaths are forwarded transparently to `invoice-fe`.
+  - **Evidence:** Verified route rewrites via `node -c next.config.js` and Next.js route compilation. Dev logs and browser network calls confirm `GET /api/audit-history/[id]` routes without gateway 404 rejection.
+  - **Stated limits / Boundary:** Changes confined to proxy routing whitelist; backend audit history endpoint and frontend panel components remain untouched.
+
+
+## Rule Save Timeout & Non-Destructive Advisory Error Message (2026-09-22) — FE Gap 717 / Finding F-12
+
+- `[x]` **FE Gap 717 (FE / infra · correction rule save timeout and unconfirmed save advisory message, follows FE Gap 499 & FE Gap 546): A slow rule save outliving the reverse proxy timeout displayed "Not saved, try again" after the server actually committed the rule, triggering duplicate rule versions on retry (Finding F-12)** — CLOSED 2026-09-22 — S2 · release risk **Low (error messaging & gateway timeout)** · effort S.
+  - **Symptom:** When an auditor saved an invoice correction with "apply as rule" ticked, the operation could take 24–53s on the backend (due to OCR + LLM safety check). The reverse proxy gateway timeout was ~30s, causing the socket to hang up and drop. The frontend caught the network abort and rendered: *"Not saved — the server did not accept this change. Please try again."* When the auditor clicked "Try again", the backend had already saved the first rule, resulting in duplicate rule versions (v5, v6, v7) in Rule History.
+  - **Root cause:**
+    1. Proxy timeout mismatch: Next.js default proxy timeout (~30s) was shorter than the backend's allowed execution ceiling for rule extraction (`LLM_REQUEST_TIMEOUT_SECONDS=120`).
+    2. Connection drop treated as refusal: `lib/correctionResponse.ts` fell back to generic refusal copy ("the server did not accept this change. Please try again") on any network-level error where `err.response` was absent, misdiagnosing an unconfirmed in-flight operation as an explicit server rejection.
+  - **Fixed 2026-09-22 (two files across `invoice-website` and `invoice-fe`):**
+    1. `apps/invoice-website/next.config.js` (EDIT) — configured `experimental: { proxyTimeout: 120_000 }` to give long-running rule generation up to 120 seconds before dropping connection.
+    2. `apps/invoice-fe/lib/correctionResponse.ts` (EDIT) — differentiated dropped connections/timeouts (`ECONNABORTED`, `ETIMEDOUT`, `ERR_NETWORK`, `!err.response`) from HTTP rejection, returning: *"Save request timed out waiting for server confirmation. The change may still have saved — please check Rule History before retrying to avoid duplicate rules."*
+    3. `apps/invoice-fe/tests/unit/correction-response.test.ts` (NEW) — added comprehensive Vitest unit tests verifying `correctionErrorMessage` behavior across timeouts, network aborts, 400 validation details, 422 arrays, and generic errors.
+  - **Evidence:** Automated Vitest suite passed 5/5 tests (`npx vitest run tests/unit/correction-response.test.ts`). Manual verification confirms that network-aborted requests show the advisory message advising user to check Rule History rather than blind retry.
+  - **Stated limits / Boundary:** Does not alter backend rule generation worker; addresses frontend presentation and reverse-proxy timeout ceiling.
