@@ -75,6 +75,7 @@ async def _ingest_single_file(
     context: TenantContext,
     db_session: Session,
     submitted_by_email: str | None = None,
+    original_filename: str | None = None,
 ) -> str:
     """
     Shared per-file ingestion logic (dedup check, blob upload, DB row, queue
@@ -230,6 +231,9 @@ async def _ingest_single_file(
             sa_alerts=with_alert_ids([duplicate_alert]),  # BE Gap 566
             tags=tags,
             submitted_by_email=submitter,
+            # BE Gap 464: persist the user-facing name even on duplicates so
+            # the History screen shows what the user uploaded, not a UUID.
+            original_filename=original_filename or filename,
             **copied,
         )
         db_session.add(db_invoice)
@@ -320,6 +324,8 @@ async def _ingest_single_file(
         status="PROCESSING",
         tags=tags,
         submitted_by_email=submitter,
+        # BE Gap 464: persist the user-facing name before UUID blob renaming.
+        original_filename=original_filename or filename,
     )
     db_session.add(db_invoice)
     await run_in_threadpool(db_session.commit)
@@ -423,11 +429,13 @@ async def upload_invoices(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=exc.detail,
             )
-        payloads.append((normalized.pdf_filename, normalized.pdf_bytes))
+        # BE Gap 464: keep original user-facing name alongside the normalized
+        # pdf_filename; `fname` is what the browser sent before normalization.
+        payloads.append((normalized.pdf_filename, normalized.pdf_bytes, fname))
 
     # 2. Gap 189: count billable hashes, then lock Tenant and charge that count only.
     billable = count_billable_uploads(
-        db_session, context.tenant_id, [data for _, data in payloads]
+        db_session, context.tenant_id, [data for _, data, _orig in payloads]
     )
     tenant = charge_free_quota(db_session, context.tenant_id, billable)
 
@@ -445,9 +453,10 @@ async def upload_invoices(
         flow_direction="INBOUND",
     )
     job_ids = []
-    for filename, file_bytes in payloads:
+    for filename, file_bytes, orig_name in payloads:
         job_id = await _ingest_single_file(
-            file_bytes, filename, tags, batch_id, tenant, context, db_session
+            file_bytes, filename, tags, batch_id, tenant, context, db_session,
+            original_filename=orig_name,
         )
         job_ids.append(job_id)
 
@@ -541,11 +550,11 @@ async def start_directory_watcher(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=exc.detail,
             )
-        payloads.append((normalized.pdf_filename, normalized.pdf_bytes))
+        payloads.append((normalized.pdf_filename, normalized.pdf_bytes, filename))
 
     # Gap 189: same classify → lock → charge path as /upload (shared helpers).
     billable = count_billable_uploads(
-        db_session, context.tenant_id, [data for _, data in payloads]
+        db_session, context.tenant_id, [data for _, data, _orig in payloads]
     )
     tenant = charge_free_quota(db_session, context.tenant_id, billable)
 
@@ -561,9 +570,10 @@ async def start_directory_watcher(
         flow_direction="INBOUND",
     )
     job_ids = []
-    for filename, file_bytes in payloads:
+    for filename, file_bytes, orig_name in payloads:
         job_id = await _ingest_single_file(
-            file_bytes, filename, [], batch_id, tenant, context, db_session
+            file_bytes, filename, [], batch_id, tenant, context, db_session,
+            original_filename=orig_name,
         )
         job_ids.append(job_id)
 

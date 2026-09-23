@@ -66,7 +66,7 @@ mail) and expressing that as one statement makes the tenant predicate — the on
 thing standing between two tenants' file names — much harder to see.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -405,7 +405,11 @@ def _batch_runs(
                 run_id=str(run.batch_id),
                 source=run.trigger,
                 flow_direction=run.flow_direction,
-                started_at=run.started_at,
+                # BE Gap 464: ensure UTC-aware so the frontend receives a
+                # Z-suffixed ISO string and can convert to local time correctly.
+                started_at=run.started_at.replace(tzinfo=timezone.utc)
+                if run.started_at.tzinfo is None
+                else run.started_at,
                 file_count=file_count,
                 loaded=loaded,
                 not_loaded=not_loaded,
@@ -482,7 +486,10 @@ def _autopilot_runs(
                 run_id=f"{AUTOPILOT_PREFIX}{row.batch_id}",
                 source=SOURCE_AUTOPILOT,
                 flow_direction="INBOUND",
-                started_at=row.started_at,
+                # BE Gap 464: ensure UTC-aware timestamp.
+                started_at=row.started_at.replace(tzinfo=timezone.utc)
+                if row.started_at and row.started_at.tzinfo is None
+                else (row.started_at or datetime.now(timezone.utc)),
                 file_count=file_count,
                 loaded=loaded,
                 not_loaded=not_loaded,
@@ -545,7 +552,10 @@ def _dropped_email_runs(
                 run_id=f"{EMAIL_PREFIX}{row.id}",
                 source=SOURCE_EMAIL,
                 flow_direction=None,
-                started_at=row.created_at,
+                # BE Gap 464: ensure UTC-aware timestamp.
+                started_at=row.created_at.replace(tzinfo=timezone.utc)
+                if row.created_at and row.created_at.tzinfo is None
+                else (row.created_at or datetime.now(timezone.utc)),
                 file_count=1 if row.filename else 0,
                 loaded=0,
                 not_loaded=0,
@@ -700,9 +710,17 @@ def _document_record(row: Document) -> dict[str, Any]:
     }
 
 
-def _file_name(file_path: str | None) -> str:
-    """Last path segment of a blob/local path. The stored value is a location
-    (`azure://invoices/tenants/…/x.pdf`); a person recognises the file name."""
+def _file_name(row: object) -> str:
+    """Return the best human-readable filename for a row.
+
+    Prefers `original_filename` (the name the user gave the file, stored since
+    BE Gap 464). Falls back to the last path segment of `file_path` for rows
+    that predate the column (all those rows have NULL there).
+    """
+    name = getattr(row, "original_filename", None)
+    if name:
+        return name
+    file_path: str | None = getattr(row, "file_path", None)
     if not file_path:
         return "(unnamed file)"
     return file_path.replace("\\", "/").rstrip("/").split("/")[-1] or file_path
@@ -824,7 +842,7 @@ def get_ingestion_run_files(
             IngestionFileEntry(
                 id=str(inv.id),
                 kind="invoice",
-                file_name=_file_name(inv.file_path),
+                file_name=_file_name(inv),
                 outcome=outcome,
                 outcome_label=label,
                 status=inv.status,
@@ -848,7 +866,7 @@ def get_ingestion_run_files(
             IngestionFileEntry(
                 id=str(doc.id),
                 kind="document",
-                file_name=_file_name(doc.file_path),
+                file_name=_file_name(doc),
                 outcome=outcome,
                 outcome_label=label,
                 status=doc.status,

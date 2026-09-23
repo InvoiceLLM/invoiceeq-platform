@@ -3934,3 +3934,21 @@ match (turn 4), 4 partial, 6 miss, out of 11.
   asked for Docker to stay off on this machine. Postgres-only tests are skipped or error on
   connection, and this entry stays `[ ]` until that run exists. Spec: `feature_1.1_rbac.md`
   (withdrawal note), `feature_16_settings.md`, `feature_17_invoice_builder.md`.
+
+
+- [x] BE Gap 721 (BE, Ingestion History / models & migration): **Ingestion History screen showed UUID blob paths instead of original user file names, and naive timestamps lacked explicit UTC timezone awareness.**
+  - **Symptom:**
+    1. On the Ingestion History screen (`/history` / drawer), expanding an ingestion run listed files under their blob storage path last segment (e.g. `c7a4b891-2391-4d92-bf32-c119e830.pdf`) rather than the human-readable filename the user uploaded (e.g. `invoice_acme_corp_sept.pdf`).
+    2. Ingestion run `started_at` and `created_at` datetimes returned from `/api/v1/ingestion-history/runs` were naive datetime objects without explicit UTC timezone offsets, causing clients across different time zones to misinterpret them.
+  - **Root cause:**
+    1. Neither `Invoice` nor `Document` models possessed a dedicated column for the user-provided filename before normalization and blob renaming. When files were uploaded, `_ingest_single_file` uploaded them to blob storage under UUID paths (`tenants/<tenant>/INBOUND/<batch>/<uuid>.pdf`), and `_file_name()` in `routers/ingestion_history.py` had only `row.file_path` to read from.
+    2. Autopilot and email run aggregates in `routers/ingestion_history.py` read naive datetime columns from Postgres without attaching explicit `timezone.utc`.
+  - **Fixed 2026-09-23 (six files in `apps/invoice-be`):**
+    1. `models.py` (EDIT) — added nullable `original_filename: str | None = Field(default=None, max_length=512)` to both `Invoice` and `Document` models.
+    2. `alembic/versions/f3a4b5c6d7e8_add_original_filename_to_invoice_and_documents.py` (NEW) — added migration chained to `down_revision = "e2f3a4b5c720"`, adding nullable `original_filename` to `invoice` and `documents` tables with zero breaking changes or destructive backfills.
+    3. `routers/invoices.py` (EDIT) — updated `upload_invoices` and `start_directory_watcher` to capture user filename `fname` before normalization and pass `original_filename` into `_ingest_single_file`. Updated `Invoice` instantiation on both regular and duplicate branches to persist `original_filename`.
+    4. `queue_worker/handlers.py` (EDIT) — updated `_persist_non_invoice_document` to propagate `original_filename` from the ingestion placeholder onto the persisted `Document` row.
+    5. `routers/ingestion_history.py` (EDIT) — updated `_file_name(row)` to accept the model instance and prefer `row.original_filename` with fallback to `file_path` basename for historical records. Attached `timezone.utc` to naive timestamps across Autopilot and dropped email run queries.
+    6. `docs/be_features_tracker.md` (EDIT) — recorded BE Gap 721.
+  - **Evidence:** Verified Alembic migration chain (`e2f3a4b5c720` -> `f3a4b5c6d7e8`). Unit test suite in `tests/test_ingestion_history.py` executed cleanly. Fallback logic verified for historical rows with `original_filename IS NULL`. Coordinates with frontend FE Gap 718.
+

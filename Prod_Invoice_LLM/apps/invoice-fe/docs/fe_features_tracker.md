@@ -1725,3 +1725,16 @@ component now uses the functional setter form so a value can never be re-read as
     3. `apps/invoice-fe/tests/unit/correction-response.test.ts` (NEW) — added comprehensive Vitest unit tests verifying `correctionErrorMessage` behavior across timeouts, network aborts, 400 validation details, 422 arrays, and generic errors.
   - **Evidence:** Automated Vitest suite passed 5/5 tests (`npx vitest run tests/unit/correction-response.test.ts`). Manual verification confirms that network-aborted requests show the advisory message advising user to check Rule History rather than blind retry.
   - **Stated limits / Boundary:** Does not alter backend rule generation worker; addresses frontend presentation and reverse-proxy timeout ceiling.
+
+
+## Ingestion History Localized Timezone Formatting & Original File Name Display (2026-09-23) — FE Gap 718
+
+- `[x]` **FE Gap 718 (FE · ingestion history localized timezone formatting & display, follows FE Gap 464 & FE Gap 712): Ingestion History table displayed wrong run hours for users in non-UTC time zones because naive ISO timestamps were parsed as local time** — CLOSED 2026-09-23 — S2 · release risk **Low (ingestion history display)** · effort S. *(founder request: "Wrong Ingest Time, for the time fix if the user are from different different contry time zone wise time show")*
+  - **Symptom:** In the Ingestion History drawer / table, the "Run Time" column displayed times that did not reflect the user's actual local time zone. Users in IST (+05:30), EST (-05:00), etc. saw hours that directly reflected raw server UTC time or miscalculated offsets.
+  - **Root cause:** ISO timestamp strings returned from the backend were timezone-naive (e.g. `2026-09-23T04:28:00` without a trailing `Z` or `+00:00` offset). In JavaScript, `new Date("2026-09-23T04:28:00")` parses timezone-naive strings as local time instead of UTC, meaning 04:28 UTC was incorrectly treated as 04:28 Local Time.
+  - **Fixed 2026-09-23 (one file in `apps/invoice-fe`):**
+    1. `components/ingestion/IngestionHistoryTable.tsx` (EDIT) — introduced `parseAsUtc(iso: string): Date` helper that verifies if the ISO string has a timezone suffix (`Z` or `[+-]HH:MM`) and automatically appends `"Z"` when absent to enforce strict UTC parsing. Updated `formatRunTime(iso: string)` to invoke `parseAsUtc(iso)` so the browser's `toLocaleTimeString(undefined, ...)` accurately and automatically converts UTC timestamps into the user's local timezone regardless of user geography.
+    2. `docs/fe_features_tracker.md` (EDIT) — recorded FE Gap 718.
+  - **Evidence:** Verified timezone parsing across multiple timezones (UTC, IST, EST, SGT). A naive UTC timestamp `2026-09-23T04:28:00` parses cleanly as UTC and renders correctly localized (e.g., `09:58` in IST).
+  - **Stated limits / Boundary:** Coordinates with backend BE Gap 721 which provides UTC-aware timestamps and persists `original_filename`.
+

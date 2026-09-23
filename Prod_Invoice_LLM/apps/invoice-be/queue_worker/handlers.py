@@ -520,6 +520,9 @@ def _persist_non_invoice_document(
         submitted_by_email=placeholder.submitted_by_email,
         last_enqueued_at=placeholder.last_enqueued_at,
         processing_attempts=placeholder.processing_attempts,
+        # BE Gap 464: carry the user-facing name through the Invoice → Document
+        # reclassification so History shows the original filename, not a UUID.
+        original_filename=getattr(placeholder, "original_filename", None),
         doc_type=doc_type,
         doc_type_evidence=doc_type_evidence,
         doc_attributes=doc_attributes,

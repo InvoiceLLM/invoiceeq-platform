@@ -189,9 +189,26 @@ function OutcomeBadge({ file }: { file: IngestionRunFile }) {
   );
 }
 
+/**
+ * BE Gap 464 (timezone fix): ISO strings from the backend are stored as UTC
+ * naive datetimes (no `+00:00` or `Z` suffix). Without a suffix, browsers
+ * parse them as LOCAL time, which shows the wrong hour for non-UTC users.
+ * Appending `Z` forces UTC interpretation; `toLocaleTimeString()` then
+ * converts to the user's browser timezone automatically — correct for every
+ * locale (IST, EST, SGT, etc.).
+ */
+function parseAsUtc(iso: string): Date {
+  if (!iso) return new Date(NaN);
+  // Already has timezone info (Z, +HH:MM, -HH:MM)
+  if (/[Zz]$/.test(iso) || /[+-]\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso);
+  }
+  return new Date(iso + "Z");
+}
+
 /** "Today 09:12" / "Yesterday 17:40" / "12 Aug 09:12" — same as Sync History. */
 function formatRunTime(iso: string): string {
-  const d = new Date(iso);
+  const d = parseAsUtc(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const time = d.toLocaleTimeString(undefined, {
     hour: "2-digit",

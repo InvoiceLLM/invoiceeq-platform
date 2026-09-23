@@ -173,6 +173,16 @@ class Invoice(SQLModel, table=True):
     # Never used to email end customers from the app.
     submitted_by_email: str | None = Field(default=None, max_length=255)
 
+    # BE Gap 464 (ingest history filename fix): the original user-facing filename
+    # captured at upload time, before the file is renamed to a UUID blob path in
+    # storage. `file_path` is a blob location (e.g.
+    # `tenants/<id>/INBOUND/<batch>/<uuid>.pdf`) and is not readable by a person;
+    # this is what the user saw when they chose the file and what the History
+    # screen should display. Nullable with no backfill — historical rows show the
+    # blob path last segment (the fallback in `_file_name()`), which is the same
+    # behaviour as before.
+    original_filename: str | None = Field(default=None, max_length=512)
+
     # BE Gap 467: the free-text notes/terms/remarks block an invoice prints.
     #
     # Gap 463 shipped `BuildRequest.notes` with no column behind it and recorded
@@ -404,6 +414,12 @@ class Document(SQLModel, table=True):
     processing_attempts: int = Field(default=0)
     # Gap 125's process-complete notify target, mirrored.
     submitted_by_email: str | None = Field(default=None, max_length=255)
+
+    # BE Gap 464 (ingest history filename fix): mirrors Invoice.original_filename.
+    # The original user-facing filename at upload time, before UUID blob renaming.
+    # Nullable with no backfill — historical rows fall back to the blob path last
+    # segment exactly as before.
+    original_filename: str | None = Field(default=None, max_length=512)
 
     # BE Gap 684: extraction provenance (model, prompt version, schema version, duration)
     # Nullable with no backfill: mirrors Invoice above.
