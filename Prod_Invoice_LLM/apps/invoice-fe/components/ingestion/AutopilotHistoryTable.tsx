@@ -390,6 +390,7 @@ export default function AutopilotHistoryTable({
 
   const fetchHistory = useCallback(async () => {
     try {
+      setLoading(true);
       setError(null);
       const res = await apiClient.get<AutopilotHistoryResponse>(
         `/autopilot/history?page=${page}&page_size=${pageSize}`
@@ -402,18 +403,25 @@ export default function AutopilotHistoryTable({
     }
   }, [page]);
 
-  /** Lazily loads one run's files; a cached run (or one in flight) is a no-op. */
+  /** Lazily loads one run's files; a cached run (or one in flight) is a no-op unless force=true. */
   const loadRunFiles = useCallback(
-    async (key: string) => {
-      let alreadyLoaded = false;
-      setFilesByRun((prev) => {
-        if (prev[key]) {
-          alreadyLoaded = true;
-          return prev;
-        }
-        return { ...prev, [key]: { loading: true, error: null, items: null } };
-      });
-      if (alreadyLoaded) return;
+    async (key: string, force = false) => {
+      if (!force) {
+        let alreadyLoaded = false;
+        setFilesByRun((prev) => {
+          if (prev[key] && !prev[key].error) {
+            alreadyLoaded = true;
+            return prev;
+          }
+          return { ...prev, [key]: { loading: true, error: null, items: prev[key]?.items ?? null } };
+        });
+        if (alreadyLoaded) return;
+      } else {
+        setFilesByRun((prev) => ({
+          ...prev,
+          [key]: { loading: true, error: null, items: prev[key]?.items ?? null },
+        }));
+      }
       try {
         const res = await apiClient.get<AutopilotRunFilesResponse>(
           `/autopilot/history/${encodeURIComponent(key)}/files`
@@ -436,6 +444,13 @@ export default function AutopilotHistoryTable({
     },
     []
   );
+
+  const handleRefresh = useCallback(async () => {
+    await fetchHistory();
+    if (expanded) {
+      void loadRunFiles(expanded, true);
+    }
+  }, [fetchHistory, expanded, loadRunFiles]);
 
   const toggleRun = useCallback(
     (run: AutopilotRun) => {
@@ -574,8 +589,9 @@ export default function AutopilotHistoryTable({
         </span>
         <div className="flex items-center gap-3">
           <button
-            onClick={fetchHistory}
-            className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition-colors"
+            onClick={() => void handleRefresh()}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white disabled:opacity-60 transition-colors"
             title="Refresh history"
           >
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
@@ -596,7 +612,10 @@ export default function AutopilotHistoryTable({
 
       {/* FE Gap 434: inline confirm + action error, above the tiles. */}
       {confirmingClear && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#222D3D] bg-slate-900/40">
+        <div
+          data-testid="autopilot-clear-banner"
+          className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#222D3D] bg-slate-900/40"
+        >
           <span className="text-[11px] text-slate-300">
             Hide all {data?.total ?? runs.length}{" "}
             {(data?.total ?? runs.length) === 1 ? "run" : "runs"}? Duplicate
@@ -606,6 +625,7 @@ export default function AutopilotHistoryTable({
             <button
               onClick={() => setConfirmingClear(false)}
               disabled={clearing}
+              data-testid="autopilot-clear-cancel"
               className="px-3 py-1 text-[11px] rounded border border-[#222D3D] text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-40 transition-all"
             >
               Cancel

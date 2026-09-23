@@ -3952,3 +3952,19 @@ match (turn 4), 4 partial, 6 miss, out of 11.
     6. `docs/be_features_tracker.md` (EDIT) — recorded BE Gap 721.
   - **Evidence:** Verified Alembic migration chain (`e2f3a4b5c720` -> `f3a4b5c6d7e8`). Unit test suite in `tests/test_ingestion_history.py` executed cleanly. Fallback logic verified for historical rows with `original_filename IS NULL`. Coordinates with frontend FE Gap 718.
 
+
+- [x] BE Gap 722 (BE, Outbound & Ingestion History / models & migration): **Persist original user filename across Outbound (Sending), Email, and Connector ingestion paths, with smart fallback for UUID blob paths.**
+  - **Symptom:** In the Ingestion History screen (`/history` / drawer), filtering by "Sending" or viewing files uploaded via outbound endpoints, email, or connectors displayed raw UUID blob paths (e.g. `06e151b2-2292-4f2e-9247-9a3e9788b858.pdf`) instead of the actual invoice/document filename.
+  - **Root cause:**
+    1. Commit `5992a8b` (BE Gap 721) only updated `routers/invoices.py` (inbound). `routers/outbound_invoices.py` (`_store_and_enqueue_outbound`), `routers/email_ingestion.py` (`_ingest_outbound_email_pdf` and `_ingest_single_file`), and `queue_worker/handlers.py` (`handle_import_connector_file`) were never updated to persist `original_filename`.
+    2. In `routers/ingestion_history.py`, for any invoice where `original_filename` was `NULL`, `_file_name()` fell back to the blob path basename which was a raw UUID.
+    3. Alembic migration `f3a4b5c6d7e8` was pending on the local PostgreSQL database (was at `e2f3a4b5c720`).
+  - **Fixed 2026-09-23 (four files in `apps/invoice-be`):**
+    1. `routers/outbound_invoices.py` (EDIT) — updated `_store_and_enqueue_outbound` to accept and persist `original_filename`; updated `upload_outbound_invoice` to pass original upload filename `fname` before normalization; updated `build_outbound_invoice` to pass `f"{req.invoice_number}.pdf"`.
+    2. `routers/email_ingestion.py` (EDIT) — updated `_ingest_outbound_email_pdf` to accept and persist `original_filename`; passed `source_filename` for both outbound and inbound email ingestion calls.
+    3. `queue_worker/handlers.py` (EDIT) — updated `handle_import_connector_file` to persist `original_filename=file_name` on `Invoice`.
+    4. `routers/ingestion_history.py` (EDIT) — enhanced `_file_name(row)` to detect UUID stem in `file_path` and fall back to `row.invoice_number` (`f"{row.invoice_number}.pdf"`), `row.doc_number`, or party name, ensuring historical records render human-readable filenames.
+    5. Database migration executed: `alembic upgrade head` applied `f3a4b5c6d7e8` to PostgreSQL.
+  - **Evidence:** Executed Alembic migration `f3a4b5c6d7e8` on PostgreSQL database. Added unit test `test_h8_file_name_resolution` in `tests/test_ingestion_history.py` verifying all 5 fallback and explicit filename cases; all 8 tests passing. Coordinates with FE Gap 720.
+
+

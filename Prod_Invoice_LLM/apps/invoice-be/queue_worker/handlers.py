@@ -849,6 +849,7 @@ def handle_import_connector_file(
                 tenant_id=tenant_uuid,
                 batch_id=batch_uuid,
                 file_path=uploaded_path,
+                original_filename=file_name,
                 status="PROCESSING",
                 tags=["connector", provider],
                 flow_direction="INBOUND",

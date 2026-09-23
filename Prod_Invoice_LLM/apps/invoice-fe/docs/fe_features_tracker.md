@@ -1738,3 +1738,20 @@ component now uses the functional setter form so a value can never be re-read as
   - **Evidence:** Verified timezone parsing across multiple timezones (UTC, IST, EST, SGT). A naive UTC timestamp `2026-09-23T04:28:00` parses cleanly as UTC and renders correctly localized (e.g., `09:58` in IST).
   - **Stated limits / Boundary:** Coordinates with backend BE Gap 721 which provides UTC-aware timestamps and persists `original_filename`.
 
+
+## Ingestion History Refresh Trigger & Dual-Theme Archive Cancel Button Visibility (2026-09-23) — FE Gap 720
+
+- `[x]` **FE Gap 720 (FE · Ingestion History refresh trigger & dual-theme contrast, follows FE Gap 464 & FE Gap 718): Refresh button was not activating spinner or reloading active expanded runs, and Cancel button in Archive All banner became invisible on hover in InfiNevo light theme** — CLOSED 2026-09-23 — S2 · release risk **Low (ingestion history display & UI)** · effort S. *(founder request: "refresh button not working and the the cancel button not visible when curson on thet botton")*
+  - **Symptom:**
+    1. Clicking the "Refresh" button in Ingestion History failed to trigger the spinning animation on `RefreshCw` and did not re-fetch the files for the currently open/expanded run card.
+    2. In InfiNevo Light theme, opening the "Archive all" confirmation banner and hovering the mouse cursor over the "Cancel" button caused the button label to turn pure white (`#FFFFFF`) against a white card background, rendering the button invisible.
+  - **Root cause:**
+    1. In `components/ingestion/IngestionHistoryTable.tsx`, `fetchHistory()` never called `setLoading(true)` at invocation (only `finally { setLoading(false); }`), so `loading` was never true during user-initiated refreshes. Additionally, `loadRunFiles()` cached run file results in `filesByRun` indefinitely without a force-reload mechanism.
+    2. The Cancel button used `hover:text-white` with no theme-specific overrides for `[data-theme="infinevo"]`, causing text to turn white-on-white.
+  - **Fixed 2026-09-23 (three files in `apps/invoice-fe`):**
+    1. `components/ingestion/IngestionHistoryTable.tsx` (EDIT) — added `setLoading(true)` at start of `fetchHistory()`; introduced `force` reload parameter to `loadRunFiles()`; added `handleRefresh()` which re-fetches history and forces an update of the currently expanded run; added `data-testid="history-archive-all-cancel"` and `data-testid="history-archive-all-banner"`.
+    2. `components/ingestion/AutopilotHistoryTable.tsx` (EDIT) — mirrored `setLoading(true)` and `loadRunFiles(key, true)` force reload; added `data-testid="autopilot-clear-cancel"`.
+    3. `styles/globals.css` (EDIT) — added high-contrast InfiNevo Light theme rules for the Archive All confirmation banner, Cancel button (`#FFFFFF` bg, `#CBD5E1` border, `#334155` text; on hover `#F1F5F9` bg, `#94A3B8` border, `#0F172A` text), and Confirm button (`#0F6FC6` bg, `#FFFFFF` text).
+  - **Evidence:** Automated Playwright visual verification in `apps/invoice-fe/tests/manual/verify_history_fixes.js` passing across both Default Dark and InfiNevo Light themes. Verified refresh button triggers new API fetch and spins. Verified Cancel button hover styles in InfiNevo Light theme maintain high contrast (`rgb(15, 23, 42)` text on `rgb(241, 245, 249)` bg). Coordinates with backend BE Gap 722.
+
+

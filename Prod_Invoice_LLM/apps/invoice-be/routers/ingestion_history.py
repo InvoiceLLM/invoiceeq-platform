@@ -714,16 +714,48 @@ def _file_name(row: object) -> str:
     """Return the best human-readable filename for a row.
 
     Prefers `original_filename` (the name the user gave the file, stored since
-    BE Gap 464). Falls back to the last path segment of `file_path` for rows
-    that predate the column (all those rows have NULL there).
+    BE Gap 464). If `original_filename` is absent or NULL:
+    - If `file_path` last segment is a raw UUID blob (e.g. `06e151b2-2292-4f2e-9247-9a3e9788b858.pdf`),
+      smartly fall back to `{invoice_number}.pdf`, `{doc_number}.pdf`, or party name so historical
+      invoices render a human-readable name instead of an unreadable UUID blob.
+    - Otherwise falls back to the last path segment of `file_path`.
     """
     name = getattr(row, "original_filename", None)
-    if name:
-        return name
+    if name and str(name).strip():
+        return str(name).strip()
+
     file_path: str | None = getattr(row, "file_path", None)
-    if not file_path:
-        return "(unnamed file)"
-    return file_path.replace("\\", "/").rstrip("/").split("/")[-1] or file_path
+    base = ""
+    if file_path:
+        base = file_path.replace("\\", "/").rstrip("/").split("/")[-1] or file_path
+
+    # Check if base stem is a UUID (standard in blob storage paths)
+    stem = base[:-4] if base.lower().endswith(".pdf") else base
+    is_uuid = False
+    try:
+        UUID(stem)
+        is_uuid = True
+    except (ValueError, TypeError, AttributeError):
+        is_uuid = False
+
+    if is_uuid or not base:
+        inv_num = getattr(row, "invoice_number", None)
+        if inv_num and str(inv_num).strip():
+            return f"{str(inv_num).strip()}.pdf"
+        doc_num = getattr(row, "doc_number", None)
+        if doc_num and str(doc_num).strip():
+            return f"{str(doc_num).strip()}.pdf"
+        party = (
+            getattr(row, "vendor_name", None)
+            or getattr(row, "customer_name", None)
+            or getattr(row, "party_name", None)
+        )
+        if party and str(party).strip():
+            return f"{str(party).strip()}.pdf"
+
+    if base:
+        return base
+    return "(unnamed file)"
 
 
 @router.get("/{run_id}/files", response_model=IngestionRunFilesResponse)

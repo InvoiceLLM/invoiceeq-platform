@@ -752,7 +752,7 @@ function TrainerContent() {
         is no half-populated workspace to look at, because with no invoice there
         are no alerts and no fields.
       */}
-      <main className="flex-1 p-3 min-h-0 overflow-y-auto xl:overflow-hidden flex flex-col xl:flex-row gap-3">
+      <main className="flex-1 p-2.5 xl:p-3 min-h-0 overflow-y-auto xl:overflow-x-auto xl:overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden flex flex-col xl:flex-row gap-2.5 xl:gap-3">
         {!session && !isLoadingSession ? (
           <div className="flex-1 min-h-0 rounded-2xl border border-[#1E2D45] bg-[#070D1A]/90">
             <TrainerEntryPanel
@@ -767,7 +767,7 @@ function TrainerContent() {
         ) : (
           <>
             {/* 1. The document — always beside whatever is being corrected. */}
-            <div className="h-[420px] xl:h-full min-h-0 xl:w-[300px] xl:shrink-0">
+            <div className="h-[420px] xl:h-full min-h-0 xl:w-[250px] 2xl:w-[300px] xl:shrink-0">
               <PdfViewerPanel
                 fileName={session?.fileName}
                 pdfUrl={session?.pdfUrl}
@@ -783,7 +783,7 @@ function TrainerContent() {
             {/* 2. Extracted fields — hidden on the chat-style tab, which is
                    about answering behaviour and has nothing to do with them. */}
             {!isStyleTab && (
-              <div className="h-[280px] xl:h-full min-h-0 xl:w-[220px] xl:shrink-0">
+              <div className="h-[280px] xl:h-full min-h-0 xl:w-[180px] 2xl:w-[220px] xl:shrink-0">
                 <ExtractedFieldsPanel
                   variables={session?.variables || []}
                   selectedVariableId={selectedVariable?.id}
@@ -803,7 +803,7 @@ function TrainerContent() {
                 )}
               </div>
             ) : showQa ? (
-              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[350px]">
+              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[260px] 2xl:min-w-[350px]">
                 <QaChatPanel
                   chatHistory={session?.chatHistory || []}
                   onSendMessage={handleSendMessage}
@@ -814,7 +814,7 @@ function TrainerContent() {
                 />
               </div>
             ) : (
-              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[320px]">
+              <div className="h-[480px] xl:h-full min-h-0 xl:flex-1 xl:min-w-[260px] 2xl:min-w-[320px]">
                 <AlertListPanel
                   alerts={session?.alerts || []}
                   onTrainOnAlert={(alert) => {
@@ -835,7 +835,7 @@ function TrainerContent() {
             {/* 4. Rules rail — what this template already carries. */}
             {!isStyleTab && (
               <>
-                <div className="hidden xl:block h-full min-h-0">
+                <div className="hidden xl:block h-full min-h-0 shrink-0">
                   <RulesRail
                     activeRules={session?.activeRules || []}
                     isExpanded={isRulesRailExpanded}

@@ -61,6 +61,7 @@ from routers.ingestion_history import (
     OUTCOME_NOT_LOADED,
     OUTCOME_REJECTED,
     REJECTED_INVOICE_STATUSES,
+    _file_name,
     _invoice_outcome,
 )
 
@@ -515,3 +516,49 @@ def test_h7_every_invoice_status_maps_to_exactly_one_outcome():
     # than to a blank chip.
     assert _invoice_outcome("SOMETHING_NEW") == (OUTCOME_LOADED, "Loaded — SOMETHING_NEW")
     assert _invoice_outcome(None) == (OUTCOME_LOADED, "Loaded — UNKNOWN")
+
+
+def test_h8_file_name_resolution():
+    """Verify _file_name correctly handles explicit original_filename,
+    UUID blob fallbacks, and standard legacy paths."""
+    from types import SimpleNamespace
+
+    # 1. Explicit original_filename always wins
+    row_with_orig = SimpleNamespace(
+        original_filename="Vendor_Bill_April2026.pdf",
+        file_path="tenants/t1/06e151b2-2292-4f2e-9247-9a3e9788b858.pdf",
+        invoice_number="51109341",
+    )
+    assert _file_name(row_with_orig) == "Vendor_Bill_April2026.pdf"
+
+    # 2. Legacy UUID blob with invoice_number falls back to invoice_number.pdf
+    row_uuid_inv = SimpleNamespace(
+        original_filename=None,
+        file_path="tenants/t1/06e151b2-2292-4f2e-9247-9a3e9788b858.pdf",
+        invoice_number="51109341",
+    )
+    assert _file_name(row_uuid_inv) == "51109341.pdf"
+
+    # 3. Legacy UUID blob with doc_number falls back to doc_number.pdf
+    row_uuid_doc = SimpleNamespace(
+        original_filename=None,
+        file_path="tenants/t1/06e151b2-2292-4f2e-9247-9a3e9788b858.pdf",
+        doc_number="DN-789",
+    )
+    assert _file_name(row_uuid_doc) == "DN-789.pdf"
+
+    # 4. Legacy UUID blob with only vendor_name falls back to vendor_name.pdf
+    row_uuid_vendor = SimpleNamespace(
+        original_filename=None,
+        file_path="tenants/t1/06e151b2-2292-4f2e-9247-9a3e9788b858.pdf",
+        vendor_name="Acme Corp",
+    )
+    assert _file_name(row_uuid_vendor) == "Acme Corp.pdf"
+
+    # 5. Non-UUID legacy path returns clean basename
+    row_named_path = SimpleNamespace(
+        original_filename=None,
+        file_path="tenants/t1/invoices/custom_upload.pdf",
+    )
+    assert _file_name(row_named_path) == "custom_upload.pdf"
+

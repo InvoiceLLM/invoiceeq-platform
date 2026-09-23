@@ -2164,6 +2164,47 @@ td, .table-cell {
   color: #0F6FC6 !important;
 }
 
+/* InfiNevo: Ingestion History Archive & Autopilot Confirmation Banner & Buttons */
+[data-theme="infinevo"] #ingestion-history [data-testid="history-archive-all-banner"],
+[data-theme="infinevo"] [data-testid="autopilot-clear-banner"] {
+  background-color: #F8FAFC !important;
+  border-bottom: 1px solid #E2EDF5 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history [data-testid="history-archive-all-banner"] span,
+[data-theme="infinevo"] [data-testid="autopilot-clear-banner"] span {
+  color: #334155 !important;
+  font-weight: 500 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive-all-cancel"],
+[data-theme="infinevo"] button[data-testid="autopilot-clear-cancel"] {
+  background-color: #FFFFFF !important;
+  border: 1.5px solid #CBD5E1 !important;
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive-all-cancel"]:hover,
+[data-theme="infinevo"] button[data-testid="autopilot-clear-cancel"]:hover {
+  background-color: #F1F5F9 !important;
+  border-color: #94A3B8 !important;
+  color: #0F172A !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive-all-confirm"] {
+  background: #0F6FC6 !important;
+  border: 1px solid #0F6FC6 !important;
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+}
+
+[data-theme="infinevo"] #ingestion-history button[data-testid="history-archive-all-confirm"]:hover {
+  background: #025A8B !important;
+  border-color: #025A8B !important;
+  color: #FFFFFF !important;
+}
+
 /* Filter Bar Container & Separators */
 [data-theme="infinevo"] #ingestion-history > div:nth-child(2) {
   background-color: #FAFBFD !important;

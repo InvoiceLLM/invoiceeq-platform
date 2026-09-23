@@ -187,6 +187,7 @@ async def _ingest_outbound_email_pdf(
     db_session: Session,
     batch_id: UUID,
     submitted_by_email: str | None = None,
+    original_filename: str | None = None,
 ) -> str:
     """Mirror outbound upload path for email-submitted AR PDFs."""
     if not tenant.send_invoices_enabled:
@@ -212,6 +213,7 @@ async def _ingest_outbound_email_pdf(
         tenant_id=context.tenant_id,
         batch_id=batch_id,
         file_path=file_path,
+        original_filename=original_filename or filename,
         flow_direction="OUTBOUND",
         status="UPLOADED",
         tags=["email"],
@@ -564,6 +566,7 @@ async def email_mailintegration_webhook(
                     db_session=db_session,
                     batch_id=batch_id,
                     submitted_by_email=sender_email,
+                    original_filename=source_filename,
                 )
                 job_ids.append(job_id)
             else:
@@ -596,6 +599,7 @@ async def email_mailintegration_webhook(
                     context=context,
                     db_session=db_session,
                     submitted_by_email=sender_email,
+                    original_filename=source_filename,
                 )
                 job_ids.append(job_id)
         except HTTPException as http_exc:

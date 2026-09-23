@@ -118,6 +118,7 @@ async def _store_and_enqueue_outbound(
     pdf_bytes: bytes,
     filename: str,
     *,
+    original_filename: str | None = None,
     source_invoice_id: UUID | None = None,
     builder_intent: dict | None = None,
     notes: str | None = None,
@@ -184,6 +185,7 @@ async def _store_and_enqueue_outbound(
         tenant_id=context.tenant_id,
         batch_id=batch_id,
         file_path=file_path,
+        original_filename=original_filename or filename,
         flow_direction="OUTBOUND",
         status="UPLOADED",
         submitted_by_email=_submitter_email_from_context(db_session, context),
@@ -286,6 +288,7 @@ async def upload_outbound_invoice(
     # becomes a PDF here, so the blob write, the hash and everything downstream
     # still only ever see a PDF. Placed before the quota charge below so a
     # refused file never burns quota (Gap 343's ordering rule).
+    orig_name = fname
     try:
         normalized = normalize_upload(fname, file_bytes)
     except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
@@ -300,6 +303,7 @@ async def upload_outbound_invoice(
     # validation and stays here. Behaviour is unchanged.
     return await _store_and_enqueue_outbound(
         db_session, context, tenant, file_bytes, fname,
+        original_filename=orig_name,
     )
 
 
@@ -514,9 +518,11 @@ async def build_outbound_invoice(
 
     pdf_bytes, source, intent = await _render_build(db_session, context, req)
 
+    built_filename = f"{(req.invoice_number or 'invoice').strip()}.pdf"
     return await _store_and_enqueue_outbound(
         db_session, context, tenant, pdf_bytes,
-        f"{(req.invoice_number or 'invoice').strip()}.pdf",
+        built_filename,
+        original_filename=built_filename,
         source_invoice_id=source.id,
         builder_intent=intent,
         # BE Gap 467: onto the row's own column, not only into `builder_intent`

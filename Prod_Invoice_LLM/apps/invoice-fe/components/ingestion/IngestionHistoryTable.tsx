@@ -465,6 +465,7 @@ export default function IngestionHistoryTable() {
 
   const fetchHistory = useCallback(async () => {
     try {
+      setLoading(true);
       setError(null);
       const params = new URLSearchParams({
         page: String(page),
@@ -486,17 +487,24 @@ export default function IngestionHistoryTable() {
     }
   }, [page, trigger, direction, archivedView]);
 
-  /** Lazily loads one run's files; a cached run (or one in flight) is a no-op. */
-  const loadRunFiles = useCallback(async (runId: string) => {
-    let alreadyLoaded = false;
-    setFilesByRun((prev) => {
-      if (prev[runId]) {
-        alreadyLoaded = true;
-        return prev;
-      }
-      return { ...prev, [runId]: { loading: true, error: null, items: null } };
-    });
-    if (alreadyLoaded) return;
+  /** Lazily loads one run's files; a cached run (or one in flight) is a no-op unless force=true. */
+  const loadRunFiles = useCallback(async (runId: string, force = false) => {
+    if (!force) {
+      let alreadyLoaded = false;
+      setFilesByRun((prev) => {
+        if (prev[runId] && !prev[runId].error) {
+          alreadyLoaded = true;
+          return prev;
+        }
+        return { ...prev, [runId]: { loading: true, error: null, items: prev[runId]?.items ?? null } };
+      });
+      if (alreadyLoaded) return;
+    } else {
+      setFilesByRun((prev) => ({
+        ...prev,
+        [runId]: { loading: true, error: null, items: prev[runId]?.items ?? null },
+      }));
+    }
     try {
       const res = await apiClient.get<IngestionRunFilesResponse>(
         `/ingestion-history/${encodeURIComponent(runId)}/files`
@@ -517,6 +525,13 @@ export default function IngestionHistoryTable() {
       }));
     }
   }, []);
+
+  const handleRefresh = useCallback(async () => {
+    await fetchHistory();
+    if (expanded) {
+      void loadRunFiles(expanded, true);
+    }
+  }, [fetchHistory, expanded, loadRunFiles]);
 
   const toggleRun = useCallback(
     (runId: string) => {
@@ -628,9 +643,10 @@ export default function IngestionHistoryTable() {
         </span>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => void fetchHistory()}
+            onClick={() => void handleRefresh()}
+            disabled={loading}
             data-testid="history-refresh"
-            className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-white disabled:opacity-60 transition-colors"
             title="Refresh history"
           >
             <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
@@ -689,7 +705,10 @@ export default function IngestionHistoryTable() {
       </div>
 
       {confirmingArchiveAll && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#222D3D] bg-slate-900/40">
+        <div
+          data-testid="history-archive-all-banner"
+          className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#222D3D] bg-slate-900/40"
+        >
           <span className="text-[11px] text-slate-300">
             Archive all {data?.total ?? runs.length}{" "}
             {(data?.total ?? runs.length) === 1 ? "run" : "runs"}? This hides the
@@ -699,6 +718,7 @@ export default function IngestionHistoryTable() {
             <button
               onClick={() => setConfirmingArchiveAll(false)}
               disabled={archivingAll}
+              data-testid="history-archive-all-cancel"
               className="px-3 py-1 text-[11px] rounded border border-[#222D3D] text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-40 transition-all"
             >
               Cancel

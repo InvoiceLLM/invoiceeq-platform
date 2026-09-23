@@ -91,15 +91,15 @@ export default function TrainerControlBar({
   disabled = false,
 }: TrainerControlBarProps) {
   return (
-    <div className="px-4 py-2.5 border-b border-[#222D3D] bg-[#0D131F]/90 shrink-0">
-      <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-0 bg-[#0B1120]/60 border border-[#1E2D45] rounded-2xl px-3 py-2">
+    <div className="px-3 xl:px-4 py-2 xl:py-2.5 border-b border-[#222D3D] bg-[#0D131F]/90 shrink-0">
+      <div className="flex flex-col lg:flex-row lg:items-center gap-2.5 lg:gap-0 bg-[#0B1120]/60 border border-[#1E2D45] rounded-2xl px-2.5 xl:px-3 py-1.5 xl:py-2 min-w-0">
         {/* Step 1 — the document this session is anchored to. */}
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2 xl:gap-3 min-w-0 shrink-0">
           <StepLabel step={1} label="Document" done={hasSession} />
           {hasSession ? (
-            <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-1.5 rounded-lg text-[11px] text-emerald-300 min-w-0">
+            <div className="flex items-center gap-1.5 xl:gap-2 bg-emerald-500/10 border border-emerald-500/25 px-2 xl:px-2.5 py-1 xl:py-1.5 rounded-lg text-[11px] text-emerald-300 min-w-0">
               <FileText className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate max-w-[200px] font-semibold">
+              <span className="truncate max-w-[110px] xl:max-w-[150px] 2xl:max-w-[220px] font-semibold">
                 {vendorName || activeFileName || "Loaded invoice"}
               </span>
               {onChangeDocument && (
@@ -109,14 +109,14 @@ export default function TrainerControlBar({
                   disabled={disabled}
                   title="Choose a different document"
                   data-testid="trainer-change-document"
-                  className="text-emerald-400/60 hover:text-red-400 hover:bg-red-500/10 p-0.5 rounded transition-colors cursor-pointer disabled:opacity-40"
+                  className="text-emerald-400/60 hover:text-red-400 hover:bg-red-500/10 p-0.5 rounded transition-colors cursor-pointer disabled:opacity-40 shrink-0"
                 >
                   <X className="w-3 h-3" />
                 </button>
               )}
             </div>
           ) : (
-            <span className="text-[11px] font-medium text-slate-400 select-none">
+            <span className="text-[11px] font-medium text-slate-400 select-none truncate">
               Pick an invoice or upload a PDF
             </span>
           )}
@@ -124,35 +124,37 @@ export default function TrainerControlBar({
 
         <div
           aria-hidden="true"
-          className="lg:mx-4 h-px w-full lg:h-8 lg:w-px bg-[#1E2D45] shrink-0"
+          className="mx-2 xl:mx-3 2xl:mx-4 h-px w-full lg:h-7 lg:w-px bg-[#1E2D45] shrink-0"
         />
 
         {/* Step 2 — what you're doing with it. */}
-        <div className="flex items-center gap-3 min-w-0 lg:flex-1 flex-wrap">
-          <StepLabel step={2} label="Workspace" done={hasSession} />
+        <div className="flex items-center justify-between gap-2 xl:gap-3 min-w-0 lg:flex-1 lg:flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex items-center gap-2 xl:gap-2.5 shrink-0 min-w-0">
+            <StepLabel step={2} label="Workspace" done={hasSession} />
 
-          <div className="flex items-center gap-1">
-            {(["rules", "style"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                data-testid={`trainer-tab-${tab}`}
-                onClick={() => onPanelTabChange(tab)}
-                className={`px-3 py-1 rounded-lg text-[11px] font-medium border transition-colors ${
-                  panelTab === tab
-                    ? "bg-violet-600/20 border-violet-500/40 text-violet-200"
-                    : "border-[#222D3D] text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                {tab === "rules" ? "Extraction Rules" : "Chat Response Style"}
-              </button>
-            ))}
+            <div className="flex items-center gap-1 shrink-0">
+              {(["rules", "style"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  data-testid={`trainer-tab-${tab}`}
+                  onClick={() => onPanelTabChange(tab)}
+                  className={`px-2.5 xl:px-3 py-1 rounded-lg text-[11px] font-medium border transition-colors whitespace-nowrap shrink-0 ${
+                    panelTab === tab
+                      ? "bg-violet-600/20 border-violet-500/40 text-violet-200"
+                      : "border-[#222D3D] text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  {tab === "rules" ? "Extraction Rules" : "Chat Response Style"}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Rule creation vs. asking questions. Two modes, never one ambiguous
               text box — see QaChatPanel for why that separation is load-bearing. */}
           {hasSession && panelTab === "rules" && (
-            <div className="flex items-center gap-1 ml-auto">
+            <div className="flex items-center gap-1 shrink-0 ml-auto">
               {(["rule_creation", "qa_test"] as const).map((mode) => (
                 <button
                   key={mode}
@@ -160,7 +162,7 @@ export default function TrainerControlBar({
                   data-testid={`trainer-mode-${mode}`}
                   onClick={() => onSessionModeChange(mode)}
                   disabled={disabled}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-medium border transition-colors disabled:opacity-40 ${
+                  className={`px-2.5 xl:px-3 py-1 rounded-lg text-[11px] font-medium border transition-colors whitespace-nowrap shrink-0 disabled:opacity-40 ${
                     sessionMode === mode
                       ? "bg-blue-600/20 border-blue-500/40 text-blue-200"
                       : "border-[#222D3D] text-slate-400 hover:text-slate-200"

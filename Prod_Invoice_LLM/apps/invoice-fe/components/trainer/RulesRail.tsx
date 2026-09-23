@@ -81,10 +81,10 @@ export default function RulesRail({
   return (
     <div
       className={`h-full flex flex-col bg-[#070D1A]/90 border border-[#1E2D45] rounded-2xl overflow-hidden shadow-2xl shadow-black/30 ${
-        stacked ? "w-full" : "w-56 shrink-0"
+        stacked ? "w-full" : "w-[200px] 2xl:w-56 shrink-0"
       }`}
     >
-      <div className="px-3 py-2.5 bg-[#0B1120]/90 border-b border-[#1E2D45] flex items-center justify-between gap-2 shrink-0">
+      <div className="px-2.5 xl:px-3 py-2.5 bg-[#0B1120]/90 border-b border-[#1E2D45] flex items-center justify-between gap-1.5 shrink-0">
         <div className="flex items-center gap-1.5 min-w-0">
           <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           <h2 className="text-xs font-semibold text-white truncate">Rule Candidates</h2>
@@ -119,7 +119,7 @@ export default function RulesRail({
               className="p-2 bg-[#0B1120]/80 border border-emerald-500/20 rounded-xl flex items-start gap-1.5 hover:border-emerald-500/40 transition-colors"
             >
               <Tag className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
-              <span className="font-mono text-[10px] text-emerald-300 leading-relaxed break-words">
+              <span className="font-mono text-[10px] text-emerald-300 leading-relaxed break-words min-w-0">
                 {rule}
               </span>
             </div>
