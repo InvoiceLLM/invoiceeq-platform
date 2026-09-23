@@ -41,7 +41,7 @@ from services.invoice_deletion import (
     purge_document_stores,
     purge_invoice_stores,
 )
-from services.billing_quota import charge_free_quota, count_billable_uploads
+from services.billing_quota import charge_free_quota, count_billable_uploads, refund_free_quota
 from services.ingestion_batches import record_ingestion_batch
 from services.file_intake import (
     ACCEPTED_UPLOAD_SUFFIXES,
@@ -97,12 +97,18 @@ async def _enqueue_extraction(
             queue_client = QueueClient.from_connection_string(
                 watcher_settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
             )
+            task = (
+                "process_outbound_invoice"
+                if (db_invoice.flow_direction or "INBOUND").upper() == "OUTBOUND"
+                else "process_invoice"
+            )
             payload = {
-                "task": "process_invoice",
+                "task": task,
                 "kwargs": {
                     "batch_id": str(batch_id),
                     "file_path": file_path,
-                    "tenant_id": str(context.tenant_id)
+                    "tenant_id": str(context.tenant_id),
+                    "expected_file_hash": db_invoice.file_hash,
                 }
             }
             queue_client.send_message(json.dumps(payload))
@@ -517,6 +523,13 @@ async def upload_invoices(
                 batch_id, reported, exc.detail, len(job_ids), len(payloads),
             )
             failures.append({"filename": reported, "detail": exc.detail, "status": exc.status_code})
+        except Exception as exc:
+            reported = orig_name or filename
+            logger.error(
+                "Upload batch %s: %s failed with unexpected error (%s) -- %d of %d already stored.",
+                batch_id, reported, str(exc), len(job_ids), len(payloads),
+            )
+            failures.append({"filename": reported, "detail": f"Internal processing error: {str(exc)}", "status": 500})
 
     if failures and not job_ids:
         # Nothing landed: the caller's mental model ("this request failed") is
@@ -1263,6 +1276,12 @@ async def replace_invoice_file(
             detail="Invoice not found or access denied.",
         )
 
+    if invoice.status == "PROCESSING":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Invoice is currently being processed. Wait for processing to complete or fail before replacing the file.",
+        )
+
     if invoice.status in REPLACEABLE_BLOCKED_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1385,6 +1404,7 @@ async def replace_invoice_file(
         )
     except StorageUploadError as exc:
         logger.error("Storage upload failed replacing invoice %s: %s", invoice_id, exc)
+        refund_free_quota(db_session, context.tenant_id, billable)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="File storage is temporarily unavailable. Nothing was changed. Try again.",
@@ -1400,6 +1420,7 @@ async def replace_invoice_file(
     invoice.sa_alerts = []
     invoice.items = []
     invoice.vendor_name = None
+    invoice.customer_name = None  # Gap 3: reset counterparty for outbound invoices
     invoice.invoice_number = None
     invoice.invoice_date = None
     invoice.due_date = None
@@ -1439,6 +1460,13 @@ async def replace_invoice_file(
     )
     await run_in_threadpool(db_session.commit)
     db_session.refresh(invoice)
+
+    # Gap 5: clear old vector embeddings immediately so shorter replacement PDFs
+    # do not leave ghost pages in Chroma.
+    try:
+        await run_in_threadpool(delete_invoice_chunks, str(invoice.id), str(invoice.tenant_id))
+    except Exception as ce:
+        logger.warning("Failed to clear old Chroma chunks for invoice %s: %s", invoice.id, ce)
 
     # Re-extract. Deliberately the same dispatch the upload path uses, including
     # its failure behaviour: if the queue send fails the row stays PROCESSING

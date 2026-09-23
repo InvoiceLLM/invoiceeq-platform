@@ -416,12 +416,21 @@ function IngestionPageContent() {
         failed?: { filename: string; detail: string }[];
       };
       const failedNames = new Set((failed ?? []).map((f) => f.filename));
+      const failedStems = new Set(
+        (failed ?? []).map((f) => f.filename.replace(/\.[^/.]+$/, "").toLowerCase())
+      );
+
+      const isFailedFile = (fileName: string) => {
+        if (failedNames.has(fileName)) return true;
+        const stem = fileName.replace(/\.[^/.]+$/, "").toLowerCase();
+        return failedStems.has(stem);
+      };
 
       // Only what actually landed. Tracking a file the backend rejected gives
       // it a row that polls forever and never resolves.
       setTrackedFiles(
         files
-          .filter((f) => !failedNames.has(f.name))
+          .filter((f) => !isFailedFile(f.name))
           .map((f) => ({ name: f.name, size: f.size }))
       );
       setBatchId(batch_id);

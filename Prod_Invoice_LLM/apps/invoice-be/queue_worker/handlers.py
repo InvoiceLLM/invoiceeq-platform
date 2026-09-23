@@ -969,6 +969,7 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                 "reason": f"Invoice already in decided status '{_existing_invoice.status}'",
             }
         _invoice_id_for_log = _existing_invoice.id if _existing_invoice else None
+        _initial_file_hash = _existing_invoice.file_hash if _existing_invoice else None
 
     def on_log(message: str) -> None:
         _publish_sse_events(batch_id, {
@@ -1197,6 +1198,21 @@ def handle_process_invoice(batch_id: str, file_path: str, tenant_id: str) -> dic
                         "status": invoice.status,
                         "skipped": True,
                         "reason": f"Invoice already in decided status '{invoice.status}'",
+                    }
+
+                # Gap 2: discard stale extraction output if file was replaced mid-extraction
+                if _initial_file_hash and invoice.file_hash != _initial_file_hash:
+                    logger.warning(
+                        "Invoice %s file_hash changed from '%s' to '%s' mid-extraction; skipping overwrite (Gap 2).",
+                        invoice.id,
+                        _initial_file_hash,
+                        invoice.file_hash,
+                    )
+                    return {
+                        "invoice_id": str(invoice.id),
+                        "status": invoice.status,
+                        "skipped": True,
+                        "reason": "Invoice file was replaced during extraction",
                     }
 
                 vendor_name = extracted_data.get("vendor_name")

@@ -699,17 +699,21 @@ def post_chat_message(
             detail="Access forbidden to this chat session."
         )
 
-    # BE Gap 572 (CH-5):
-    if getattr(tenant_context, "auth_method", None) == "api_key":
-        if chat_session.user_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="API keys cannot post messages to user-owned chat sessions.",
-            )
-    elif getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+    # BE Gap 572 / Gap 726: allow API keys to post messages to their own
+    # sessions (`chat_session.user_id == API_KEY_USER_ID`), matching `get_session_messages`.
+    caller_identity = (
+        API_KEY_USER_ID
+        if getattr(tenant_context, "auth_method", None) == "api_key"
+        else tenant_context.user_id
+    )
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != caller_identity:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access forbidden to this chat session."
+            detail=(
+                "API keys cannot post messages to user-owned chat sessions."
+                if getattr(tenant_context, "auth_method", None) == "api_key"
+                else "Access forbidden to this chat session."
+            ),
         )
 
     # BE Gap 607 (CH-41): before anything is persisted or enqueued, and before the

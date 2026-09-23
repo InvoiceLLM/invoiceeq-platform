@@ -750,6 +750,12 @@ def index_invoice_document(
         name=_tenant_collection_name(tenant_id),
         metadata=_collection_metadata(),
     )
+    # Gap 5: purge any prior chunks for this invoice before upserting so shorter
+    # replacement files never leave ghost pages.
+    try:
+        collection.delete(where={"invoice_id": str(invoice_id)})
+    except Exception as de:
+        logger.debug("Failed or no-op deleting prior chunks for invoice %s: %s", invoice_id, de)
     collection.upsert(
         ids=ids,
         embeddings=embeddings,

@@ -61,6 +61,7 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                 "skipped": True,
                 "reason": f"Outbound invoice already in decided status '{existing_invoice.status}'",
             }
+        initial_file_hash = existing_invoice.file_hash if existing_invoice else None
 
     _publish_sse_events(batch_id, {"status": "PROCESSING_OCR", "message": "Extracting text from outbound invoice PDF..."})
 
@@ -106,6 +107,21 @@ def handle_process_outbound_invoice(batch_id: str, file_path: str, tenant_id: st
                         "status": invoice.status,
                         "skipped": True,
                         "reason": f"Outbound invoice already in decided status '{invoice.status}'",
+                    }
+
+                # Gap 2: discard stale extraction output if file was replaced mid-extraction
+                if initial_file_hash and invoice.file_hash != initial_file_hash:
+                    logger.warning(
+                        "Outbound invoice %s file_hash changed from '%s' to '%s' mid-extraction; skipping overwrite (Gap 2).",
+                        invoice.id,
+                        initial_file_hash,
+                        invoice.file_hash,
+                    )
+                    return {
+                        "invoice_id": str(invoice.id),
+                        "status": invoice.status,
+                        "skipped": True,
+                        "reason": "Invoice file was replaced during extraction",
                     }
 
                 customer_name = extracted_data.get("customer_name")

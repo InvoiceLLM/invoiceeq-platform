@@ -144,3 +144,25 @@ def charge_free_quota(
     db_session.commit()
     db_session.refresh(tenant)
     return tenant
+
+
+def refund_free_quota(
+    db_session: Session,
+    tenant_id: UUID,
+    billable_count: int = 1,
+) -> Tenant | None:
+    """Refunds previously charged free quota when a downstream storage or ingestion step fails."""
+    if billable_count <= 0:
+        return None
+    tenant = db_session.exec(
+        locked_tenant_select(tenant_id).execution_options(populate_existing=True)
+    ).first()
+    if not tenant:
+        return None
+    if tenant.billing_plan == "free":
+        tenant.free_invoices_remaining += billable_count
+        db_session.add(tenant)
+        db_session.commit()
+        db_session.refresh(tenant)
+    return tenant
+
