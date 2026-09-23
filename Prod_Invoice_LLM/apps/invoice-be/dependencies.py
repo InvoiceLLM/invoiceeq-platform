@@ -1372,6 +1372,50 @@ def require_permission_or_api_key(permission: str):
 require_can_load_or_api_key = require_permission_or_api_key("can_load")
 
 
+def require_can_load_and_actions_scope(
+    context: TenantContext = Depends(get_tenant_or_api_key_context),
+) -> TenantContext:
+    """Human: needs `can_load`. API key: needs `actions` scope. (BE Gap 736.)
+
+    The strictest of the three dual dependencies in this file, and the only one
+    that tightens BOTH sides at once. It exists for `POST /invoices/{id}/file`.
+
+    Why not `require_can_load_or_api_key`, the upload gate? Because that one
+    deliberately admits a key of any scope -- Strict Review is defined as
+    "read/**upload**-only", so a readonly key must be able to upload. Replacing
+    a file is not uploading one. It mutates an invoice that already exists,
+    clearing every extracted field and swapping the document underneath it, and
+    `docs/feature_25_plug_and_play_workflows.md` lists what readonly buys as a
+    closed set: upload, read, chat. This is outside it.
+
+    Why not `require_actions_scope_or_human`, then? Because that one admits a
+    human of ANY permission level, and replacing a file is ingestion work that
+    the human `can_load` gate has always governed. Loosening the human side to
+    tighten the machine side would be a trade, not a fix.
+    """
+    if context.auth_method == "api_key":
+        if context.key_scope != KEY_SCOPE_ACTIONS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "This API key is read-only and cannot replace the file on an existing "
+                    "invoice. Uploading a new invoice is allowed at this scope; changing one "
+                    "that already exists is not, because it discards values a reviewer may "
+                    "be looking at. An Admin can switch this workspace's workflow policy to "
+                    "Full Automation in Settings to allow it."
+                ),
+            )
+        return context
+    if not context.can_load:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "You do not have permission to access invoice loading. Ask an Admin to grant it."
+            ),
+        )
+    return context
+
+
 def require_actions_scope_or_human(
     context: TenantContext = Depends(get_tenant_or_api_key_context),
 ) -> TenantContext:

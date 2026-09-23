@@ -25,7 +25,14 @@ A cross-tenant id returns **404, never 403**, for the reason
 `routers/chat_attachments.py` states: confirming that another tenant's row
 exists is itself a disclosure.
 
-The auth dependency is `get_tenant_context` (Clerk session), deliberately not the
+BE Gap 725 (2026-09-23): the two READ endpoints now accept an API key as well,
+so an integration can fetch the delivery notes, purchase orders, GRNs and
+quotations this table holds -- the classification work was visible only on
+screen before. `delete_document` keeps the Clerk-only dependency: a key reads,
+it does not destroy. The paragraph below is the original reasoning, kept because
+it still explains why DELETE is gated:
+
+The auth dependency was `get_tenant_context` (Clerk session), deliberately not the
 API-key variant `get_tenant_or_api_key_context` that `routers/invoices.py`'s list
 uses. Feature 25's API-key scopes were written against the invoice lifecycle and
 no integration has ever been told this table exists; widening machine access to a
@@ -43,7 +50,12 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from chroma_client import delete_document_chunks
-from dependencies import get_db_session, get_tenant_context, TenantContext
+from dependencies import (
+    get_db_session,
+    get_tenant_context,
+    get_tenant_or_api_key_context,
+    TenantContext,
+)
 from models import Document
 from services.invoice_deletion import delete_document_rows, purge_document_stores
 
@@ -172,7 +184,12 @@ def list_documents(
     offset: int = Query(0, ge=0),
     doc_type: Optional[str] = None,
     batch_id: Optional[UUID] = None,
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    # BE Gap 725: an API key may READ documents. `get_tenant_or_api_key_context`
+    # resolves either credential to the same tenant-scoped context, so the
+    # tenant boundary below is unchanged -- this widens WHO may ask, never WHAT
+    # comes back. The delete handler further down deliberately keeps
+    # `get_tenant_context`: a key reads, it does not destroy.
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session),
 ):
     """Non-invoice documents for the requesting tenant, most recent first.
@@ -211,7 +228,12 @@ def list_documents(
 @router.get("/{document_id}", response_model=DocumentOut)
 def get_document(
     document_id: UUID,
-    tenant_context: TenantContext = Depends(get_tenant_context),
+    # BE Gap 725: an API key may READ documents. `get_tenant_or_api_key_context`
+    # resolves either credential to the same tenant-scoped context, so the
+    # tenant boundary below is unchanged -- this widens WHO may ask, never WHAT
+    # comes back. The delete handler further down deliberately keeps
+    # `get_tenant_context`: a key reads, it does not destroy.
+    tenant_context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session),
 ):
     """One document, resolved through `_require_owned_document()`."""

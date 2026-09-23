@@ -268,6 +268,14 @@ class Invoice(SQLModel, table=True):
         # BE Gap 559: the invoice queues filter tenant + direction and sort newest first
         # (read backwards for ORDER BY created_at DESC; migration c553d559e0a1).
         sa.Index("ix_invoice_tenant_flow_created_at", "tenant_id", "flow_direction", "created_at"),
+        # BE Gap 724: the incremental-sync read -- "everything in this workspace
+        # that finished after <timestamp>". An integration polls this on a
+        # schedule, so without an index every poll is a full tenant scan that
+        # grows with the customer. Deliberately NOT including flow_direction:
+        # the direction filter is optional on that query and a three-column
+        # index would be unusable for the ALL case, which is the one a sync
+        # actually wants.
+        sa.Index("ix_invoice_tenant_completed_at", "tenant_id", "completed_at"),
     )
 
 

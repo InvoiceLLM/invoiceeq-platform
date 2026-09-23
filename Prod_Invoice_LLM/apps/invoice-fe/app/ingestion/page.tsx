@@ -406,17 +406,42 @@ function IngestionPageContent() {
     try {
       const response = await apiClient.post("/invoices/upload", formData);
 
-      const { batch_id, job_ids } = response.data;
+      // FE Gap 718: `failed` arrives with a 207 (BE Gap 734) when part of the
+      // batch was stored and part was not. 207 is a 2xx, so we are on the
+      // success path with a half-failed upload in hand -- if this block is ever
+      // removed, the screen goes back to showing a green banner for it.
+      const { batch_id, job_ids, failed } = response.data as {
+        batch_id: string;
+        job_ids: string[];
+        failed?: { filename: string; detail: string }[];
+      };
+      const failedNames = new Set((failed ?? []).map((f) => f.filename));
 
-      // Track files currently uploaded
-      setTrackedFiles(files.map((f) => ({ name: f.name, size: f.size })));
+      // Only what actually landed. Tracking a file the backend rejected gives
+      // it a row that polls forever and never resolves.
+      setTrackedFiles(
+        files
+          .filter((f) => !failedNames.has(f.name))
+          .map((f) => ({ name: f.name, size: f.size }))
+      );
       setBatchId(batch_id);
       setJobIds(job_ids);
 
       // Clear input queues
       setFiles([]);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
+
+      if (failedNames.size > 0) {
+        // Named, not counted: "2 files failed" leaves the user comparing lists
+        // by hand to find out which ones to send again.
+        const names = (failed ?? []).map((f) => f.filename).join(", ");
+        setError(
+          `${job_ids.length} of ${job_ids.length + failedNames.size} files were accepted. ` +
+            `These were not stored and can be re-submitted: ${names}`
+        );
+      } else {
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 3000);
+      }
     } catch (err: any) {
       console.error("Upload failed", err);
       if (err.response?.status === 402) {

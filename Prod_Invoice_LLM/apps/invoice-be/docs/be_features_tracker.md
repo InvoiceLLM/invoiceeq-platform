@@ -3934,3 +3934,358 @@ match (turn 4), 4 partial, 6 miss, out of 11.
   asked for Docker to stay off on this machine. Postgres-only tests are skipped or error on
   connection, and this entry stays `[ ]` until that run exists. Spec: `feature_1.1_rbac.md`
   (withdrawal note), `feature_16_settings.md`, `feature_17_invoice_builder.md`.
+- [ ] BE Gap 723 (BE, Feature 25 / integration surface): **`GET /invoices` could only ever see
+  the inbound half of the ledger.** *Who:* any integration syncing InvoiceEQ into an ERP.
+  *What:* `flow_direction` (`INBOUND` default, `OUTBOUND`, `ALL`). *Where:*
+  `routers/invoices.py::list_invoices`. *Why:* the endpoint hardcoded
+  `Invoice.flow_direction == "INBOUND"`, so a customer's outbound invoices -- the same table,
+  the same tenant -- were unreachable over the API and visible only on screen. *When:* founder
+  direction 2026-09-22, "ek he api se inbound outbound dhekhna hai".
+
+  Default is `INBOUND`, so every caller that exists today gets byte-identical results; the other
+  two values are opt-in. Typed as a `Literal`, so an unknown value is FastAPI's 422 rather than
+  a string reaching the query. `ALL` omits the predicate rather than listing both values -- an
+  `IN` over the full domain filters nothing and only misleads the next reader.
+
+  **RELEASE RISK: LOW.** Additive, default unchanged. *Rollback:* revert the parameter.
+
+- [ ] BE Gap 724 (BE, Feature 25 / integration surface): **there was no way to ask "what
+  finished since I last looked".** *What:* `completed_since`, plus index
+  `ix_invoice_tenant_completed_at` (migration `f3a4b5c6d724`). *Where:*
+  `routers/invoices.py::list_invoices`, `models.py`. *Why:* an integration polling on a
+  schedule had to pull the whole list and diff it client-side.
+
+  Reads the existing `completed_at` column -- no new column and no new writer. Deliberately
+  **not** a general `updated_since`: `completed_at` is written once, when processing finishes,
+  and a later human decision is announced by webhook instead. `>=`, not `>`, so a caller
+  re-sending its last watermark gets the boundary row again rather than silently losing
+  anything that completed in the same microsecond.
+
+  The index is `(tenant_id, completed_at)`: tenant first because every query on this table is
+  tenant-scoped, `completed_at` second because it is the range predicate. Not `CONCURRENTLY` --
+  it cannot run inside Alembic's transaction and the table is small at current volumes; revisit
+  past a few million rows.
+
+  **RELEASE RISK: MEDIUM** (schema change). *Rollback:* `downgrade()` drops the index; the
+  parameter is a clean code revert. **Migration not applied to any database** -- Docker is off
+  on this machine at the founder's instruction. `alembic heads` is single (`f3a4b5c6d724`,
+  chained onto `e2f3a4b5c720`), verified by loading the graph through `ScriptDirectory`.
+
+- [ ] BE Gap 725 (BE, Feature 27 / documents): **an API key could not read the `documents`
+  table at all.** *What:* the two READ endpoints accept a key; `delete_document` stays
+  Clerk-only. *Where:* `routers/documents.py`. *Why:* Feature 27 moved delivery notes, POs,
+  GRNs and quotations out of `invoice` into their own table, and no integration was ever told
+  that table exists -- classification work the customer pays for was visible only on screen.
+
+  `get_tenant_or_api_key_context` resolves either credential to the same tenant-scoped context,
+  so this widens **who may ask, never what comes back**. A cross-tenant id is still 404, never
+  403. Delete keeps the Clerk-only dependency: a key reads, it does not destroy.
+
+  **RELEASE RISK: LOW.** *Rollback:* restore `get_tenant_context` on the two readers.
+
+- [ ] BE Gap 726 (BE, Feature 25 / chat): **a key could write a chat thread and never read it
+  back.** *What:* a key-created session is stamped `API_KEY_USER_ID`; `list_sessions` and
+  `get_session_messages` admit a key **for its own sessions only**. *Where:* `routers/chat.py`.
+  *Why:* both reads returned 403 outright, so an integration could ask a question and had no
+  way to fetch the answer.
+
+  **The load-bearing detail:** key sessions used to be stored with `user_id = NULL`, and NULL
+  was already doing a second job -- "made by a human before Gap 572 existed". Letting a key read
+  its own NULL sessions would therefore have handed it every legacy human thread. A distinct
+  marker is what makes the read safe. Sessions a key created *before* this change keep their
+  NULL and stay invisible to it: fail closed, no backfill. Rename, delete and feedback still
+  refuse keys. `tests/test_gap572_user_chat_isolation.py` rewritten for the narrowed rule.
+
+  **Known limitation:** one tenant has one API key today (`Tenant.api_key_hash` is singular), so
+  `API_KEY_USER_ID` identifies it unambiguously. If multiple keys per tenant are ever added,
+  they would share one chat identity and see each other's threads -- revisit this line then.
+
+  **RELEASE RISK: MEDIUM** (it changes who can read chat history). *Rollback:* restore the two
+  403s; stamped rows are harmless if the reads are closed again.
+
+- [ ] BE Gap 727 (BE, Feature 15 / webhook docs): **`invoice.processing` and
+  `invoice.duplicate` were delivered but undocumented.** *Where:* `routers/webhook_docs.py`.
+  *Why:* a subscriber reading the Docs Hub built a handler that silently ignored them.
+  **RELEASE RISK: LOW** -- documentation only; `app.webhooks` mounts nothing callable.
+
+- [ ] BE Gap 728 (BE, Feature 25 / integration surface): **`flow_direction=ALL` combined with
+  `status`/`status_in`/`vendor_name` returned a mixture that reads as one set and is not.**
+  *Where:* `routers/invoices.py::list_invoices`. *Why:* `PAID` inbound means we paid a
+  supplier; `PAID` outbound means a customer paid us. `vendor_name` inbound is the supplier;
+  outbound it carries the issuer, which is the tenant itself (Gap 467). A caller asking for
+  ALL+PAID gets money facing both ways in one list with no field in the row saying which.
+
+  Refused with a 400 that explains, rather than documented and silently believed: a wrong
+  number in someone's ledger is worse than an error they read once. Both filters stay fully
+  available per direction.
+
+  **Found while testing, not while writing:** the refusal was first written as
+  `status.HTTP_400_BAD_REQUEST` and inside this handler `status` is the query **parameter**,
+  which shadows fastapi's `status` module -- so the line raised `AttributeError` on `None` and
+  the caller got a 500 for a plainly explainable 400. Now the literal `400`, with a comment
+  saying why. `routers/` was swept for the same shape: the only other hits
+  (`outbound_dashboard.py`) call string methods on the parameter and are correct.
+
+  **RELEASE RISK: LOW.** New combination only; nothing that worked before now fails.
+
+- [~] BE Gap 729 (BE, Feature 25 / integration surface): **WITHDRAWN 2026-09-23 -- built on a
+  premise that stopped being true on 2026-09-08.** *What was built:* `include_deleted` =
+  `false` / `true` / `only` on `GET /invoices`. *What was wrong with it:* it filters on
+  `Invoice.deleted_at`, and **nothing writes that column.** BE Gap 460 (2026-09-08) made
+  deletion a HARD delete on the founder's rule that a deleted record is gone from every store,
+  and `services/invoice_deletion.py` says so in its own header -- *"nothing sets them any more,
+  so every existing filter is inert rather than wrong."* So `include_deleted=only` could only
+  ever return an empty list, and the feature's **intent** -- letting an integration read deleted
+  invoices back -- ran against that ruling rather than serving it.
+
+  **How it got through, recorded so the next one does not.** The column existed,
+  `invoice_not_deleted()` existed, and every read path filtered on it; from that I inferred soft
+  delete was live. I checked the column's **readers and never its writers** -- one grep would
+  have settled it. The tracker entry above (now replaced) cited `invoice_deletion.py` as
+  evidence *without the file having been opened*; the contradiction is in its first 35 lines.
+  And all four tests passed because each one **set `deleted_at` by hand**, which no code path
+  does -- a test that manufactures its own precondition can never falsify the premise that the
+  precondition occurs.
+
+  **Removed, not left inert.** The parameter is gone and `invoice_not_deleted()` is
+  unconditional again, byte-identical to master. Three tests replace the four withdrawn ones:
+  the unconditional rule, a guard that fails if `include_deleted` is re-added, and
+  `test_nothing_in_the_codebase_writes_invoice_deleted_at`, which asserts **the premise itself**
+  across `routers/`, `services/`, `queue_worker/`, `agents/`, `utils/` and says in its failure
+  message what must be re-checked if soft delete ever returns. Its regex was falsified against
+  six hand-written cases (real writer, aliased writer, `Document` writer, two reads, a model
+  declaration) rather than trusted because it was green.
+
+  **The question is still worth answering, just not this way.** `delete_invoice_rows()` writes
+  one `DELETE_INVOICE` audit row, kept deliberately by BE Gap 550. A read over those rows would
+  tell a syncing customer exactly what was removed **without resurrecting anything**. Build that
+  if an integration asks; do not revive this.
+
+  **RELEASE RISK: NONE** (nothing ships).
+
+- [ ] BE Gap 730 (BE, Feature 25 / integration surface): **an offset-bearing `completed_since`
+  gave two different answers depending on the database.** *Where:*
+  `routers/invoices.py::list_invoices`. *Why:* stored timestamps are naive `datetime.utcnow()`
+  values. An offset-aware bound raised inside the comparison on Postgres and silently shifted
+  the window by the offset on SQLite. One query, two answers, by backend -- the worst of the
+  available failures. Offset-aware values are now converted to UTC and made naive; naive values
+  are taken as UTC already, and that rule is written down at the parameter.
+  **RELEASE RISK: LOW.**
+
+- [ ] BE Gap 731 (BE, Feature 25 / integration surface): **`GET /invoices/status/{id}` could
+  not distinguish "being worked on" from "never queued".** *What:* the response gains `queued`,
+  `queued_at` and `processing_attempts`. *Where:* `routers/invoices.py::get_invoice_status`.
+  *Why:* a failed queue send leaves the invoice at `PROCESSING`, and a polling integration saw
+  `PROCESSING` either way and waited forever.
+
+  **What was deliberately NOT done:** marking the invoice `FAILED` on a failed enqueue. That was
+  the first plan and it is wrong -- `services/invoice_reconciliation.py` sweeps exactly these
+  statuses, re-enqueues them and gives up only after repeated attempts, so failing the row here
+  would abandon a file that is safely stored and would otherwise have been recovered. `queued`
+  is the missing *fact*, read from the same column the sweep keys on: no new state, no new
+  writer.
+
+  **RELEASE RISK: LOW.** Additive fields on an existing response.
+
+- [ ] BE Gap 732 (BE, Feature 25 / integration surface): **a wrongly uploaded invoice could not
+  be corrected through the API at all.** *What:* `POST /invoices/{id}/file`
+  (`replace_invoice_file`). *Where:* `routers/invoices.py`, proxied by
+  `app/api/invoices/[id]/file/route.ts`. *When:* founder, 2026-09-22 -- "agar use galti se ek
+  invoice bhejdeta hai aur use usko ab replace karna hai to api se invoice pdf update nhi
+  karskta agr vo approve se phle ho to".
+
+  *Why:* there is no PUT/PATCH on `/invoices` and delete is browser-only. Uploading the right
+  file created a **second** invoice and left the wrong one in the queue forever, with an id the
+  customer's ERP has never seen. The nearest workaround -- marking it `REJECTED` -- wrote a
+  false reason into the audit trail and fired `invoice.rejected` at every subscriber, telling
+  other systems a vendor had been refused when the only mistake was the attached page.
+
+  Keeps the invoice id, so nothing on the customer's side has to be re-linked. Clears every
+  extracted field, the alerts and the line items -- all of which describe the OLD document --
+  and resets to `PROCESSING`; `created_at`, tags, batch and the audit trail survive, because
+  the invoice's history is real and only its contents were wrong. Writes a
+  `REPLACE_INVOICE_FILE` audit row carrying the previous status and both file hashes. Re-sending
+  the identical file is a no-op, not an error, so a retry costs nothing. A storage failure is a
+  503 that changes nothing. 409 on `PAID`/`REJECTED`/`SENT`/`REVIEW_LATER`/
+  `NEEDS_RESUBMISSION`/`CANCELLED`: once somebody has acted, the row is evidence of a decision
+  and the document underneath it must not change silently. `COMPLETED` and `AUDIT_REQUIRED`
+  remain replaceable on purpose -- fixing the mistake *before* anyone decides is the point.
+
+  The queue dispatch was lifted out of `_ingest_single_file` into `_enqueue_extraction()` so
+  both doors share one path; two copies of a queue send is how one of them quietly loses the
+  `last_enqueued_at` stamp the reconciliation sweep keys on.
+
+  **RELEASE RISK: MEDIUM** -- a new write endpoint that discards extracted values. Mitigated by
+  the blocked-status list, the audit row and Gap 736's scope gate. *Rollback:* remove the route
+  and the proxy; no data migration.
+
+- [ ] BE Gap 733 (FE-side of Feature 27 / documents): **`GET /documents/{id}` reached no route
+  handler.** *Where:* `app/api/documents/[id]/route.ts` (new). *Why:* invoice-be's ingress is
+  `external: false`, so a missing proxy is a missing **endpoint**, not a missing shortcut. The
+  list was proxied from the day the screen needed it; the single-document read never was,
+  which was invisible while the only caller was a page that already had the row in hand. Gap
+  725 opened the backend endpoint to a key, and an integration does the opposite of the screen:
+  it lists ids and fetches each one. Without this file Next answers with its own 404 HTML page,
+  which a caller reasonably reads as "the document does not exist".
+
+  DELETE is deliberately not proxied -- the backend keeps it Clerk-only, so it would travel
+  there purely to be refused. **RELEASE RISK: LOW.**
+
+- [ ] BE Gap 734 (BE, Feature 25 / ingestion): **a partly successful upload was reported as a
+  total failure.** *What:* `POST /invoices/upload` answers **207 Multi-Status** with `job_ids`
+  and `failed[]` when some files land and others do not. *Where:*
+  `routers/invoices.py::upload_invoices`. *Why:* the per-file loop is not atomic -- file 3
+  hitting a storage outage after files 1 and 2 were stored and queued raised 503 out of the
+  handler, so the caller was told the whole request failed while two invoices were quietly
+  live. The customer's next move is to retry, which dedups the first two, but the response was
+  a lie either way.
+
+  207 is deliberate: a 2xx says "some of this worked, read the body", which is the truth, and a
+  caller that only checks `response.ok` still gets the ids it needs instead of discarding a
+  successful half. When **nothing** lands the original error is re-raised unchanged -- the
+  caller's mental model is accurate then, and a 207 reporting an empty success would be worse.
+
+  **Known limitation, NOT fixed:** quota is charged up-front for the whole batch, so a partial
+  failure leaves the tenant charged for files that were never stored. This predates the change
+  (the old 503 path charged identically) and `services/billing_quota.py` has no refund
+  primitive; refunding `len(failed)` would over-refund whenever a failed file was a duplicate
+  and therefore never billable, which is a worse bug than the one it fixes. Filed here rather
+  than patched hastily.
+
+  **RELEASE RISK: MEDIUM** -- an existing endpoint gains a new status code. Every caller in
+  this repo was checked: the only one is `app/ingestion/page.tsx`, fixed as FE Gap 711.
+
+- [ ] BE Gap 735 (BE, Feature 11 / billing): **the replace-file endpoint was a free, unmetered
+  extraction and a hole straight through the 402.** *Where:*
+  `routers/invoices.py::replace_invoice_file`. *Found:* reviewing Gap 732 for production
+  readiness, not by a test failing.
+
+  *Why it matters:* the endpoint re-runs Document Intelligence and a full LLM extraction on the
+  new file. Uncharged, that is not merely lost revenue -- `charge_free_quota()` is the **only**
+  thing enforcing the free-plan limit and it is called from the upload doors alone, so a tenant
+  at zero remaining could spend their last credit on one invoice and then process unlimited
+  unrelated documents through it, forever, by replacing the file.
+
+  *Fix:* `count_billable_uploads()` + `charge_free_quota()`, the same two calls the upload path
+  makes, so new bytes are billable exactly once and re-attaching a file the tenant already paid
+  for is free. Charged **before** the blob write, matching `_ingest_files`: that ordering trades
+  a possible stale charge for a possible orphaned blob, and keeping both doors in one order
+  matters more than the choice between them. The identical-hash no-op returns before the meter.
+
+  **RELEASE RISK: LOW** (it closes a hole; nothing that legitimately worked stops working).
+
+- [ ] BE Gap 736 (BE, Feature 25 / scopes): **a `readonly` key could replace the file on an
+  invoice a human was reviewing.** *What:* new `require_can_load_and_actions_scope` in
+  `dependencies.py`, used by `replace_invoice_file`. *Found:* reviewing Gap 732, as above.
+
+  *Why:* the route was gated on `require_can_load_or_api_key`, which is the **upload** gate,
+  and that dependency admits a key of any scope on purpose -- the founder's Strict Review policy
+  is written as "read/**upload**-only". Replacing is not uploading.
+  `docs/feature_25_plug_and_play_workflows.md` states what `readonly` buys as a closed list:
+  "Upload invoices, read invoices/PDFs/status, use chat." A Strict Review tenant is one whose
+  humans finalise every invoice in the web UI; under the old gate their readonly integration
+  could swap the document under an invoice sitting in the audit queue, wiping the values the
+  auditor was reading, seconds before they approved. The blocked-status list does not stop that,
+  because `AUDIT_REQUIRED` and `COMPLETED` are replaceable by design.
+
+  The new dependency tightens the **machine** side only: a human still needs `can_load`, which
+  is what has always governed ingestion. `require_actions_scope_or_human` was not reused because
+  it admits a human of any permission level -- loosening the human side to tighten the machine
+  side is a trade, not a fix. The 403 names the Settings toggle, because the reader is an
+  integrator looking at JSON.
+
+  **RELEASE RISK: LOW.** The endpoint is new in this same branch, so no integration has ever
+  depended on the looser gate.
+
+- [ ] BE Gap 737 (BE, Feature 15 / webhook docs): **the Docs Hub described an envelope and a
+  signature header that no longer matched what is delivered.** *Where:*
+  `routers/webhook_docs.py`, `tests/test_webhook_docs_match_reality.py` (new). *Found:*
+  reviewing the webhook surface for production readiness.
+
+  Four separate drifts, all in the same direction -- the page was frozen while the wire format
+  moved:
+  1. **`invoice.reopened` was undocumented** (added by Gap 558). The one event that *undoes*
+     another one was invisible, so a subscriber that had already posted an approval into its own
+     ledger had no documented way to learn it must reverse it.
+  2. **`event_id` and `occurred_at` were undocumented** (added by Gap 555). Delivery is
+     at-least-once, so an integrator with no documented de-duplication key books the same
+     invoice twice on a retry.
+  3. **`currency`, `reject_reason`, `due_date`, `days_overdue` were undocumented** (Gaps 215,
+     557, 558, Task 15.6).
+  4. **The page told integrators to verify `X-Webhook-Signature`** -- the body-only, replayable
+     header -- when Gap 564 added `X-Webhook-Signature-V2`, which binds the signature to
+     `X-Webhook-Timestamp` precisely to stop replay. Out-of-date advice here is a **security
+     instruction the customer follows**; anyone who followed the page built a verifier that
+     accepts an intercepted body replayed back at them later. The note now leads with V2 and
+     names V1 as the compatibility header it has become.
+
+  *The actual fix is the test.* `webhook_docs.py` is a hand-written copy of two things it does
+  not import, so it will drift again. `tests/test_webhook_docs_match_reality.py` (18 tests)
+  compares it against the **real** `ALLOWED_EVENT_TYPES` and the **real** `build_delivery_body()`
+  output -- both directions, so a documented-but-never-sent event fails too -- rather than
+  against a third hand-written list, which would be one more thing to forget.
+
+  **RELEASE RISK: LOW** -- documentation only; `app.webhooks` mounts nothing callable.
+- [ ] BE Gap 738 (BE, Feature 27 / ingestion dedup): **the replace-file endpoint bypassed the
+  duplicate check every other door performs.** *Where:*
+  `routers/invoices.py::replace_invoice_file`. *Found:* reviewing Gap 732 for production
+  readiness, not by a test failing.
+
+  *Why it matters:* every other ingestion door hashes the incoming file and checks it against the
+  tenant's invoices **and** documents, turning a match into a `DUPLICATE` row with an alert
+  pointing at the original. Replace did none of that. So a customer correcting invoice A could
+  attach a PDF they had already uploaded as invoice B and end up holding **two live invoices,
+  different ids, one document, no alert on either** -- which is the shape in which the same bill
+  gets paid twice.
+
+  *Fix:* 409 naming the invoice (or document) it collides with; nothing changed and nothing
+  charged. **Refused rather than marked**, deliberately: upload is *creating* a record, so a
+  `DUPLICATE` row is a truthful account of what arrived, whereas replace is *mutating* a record
+  that already exists and there is no coherent way to stamp an existing invoice as a duplicate of
+  another without destroying whatever it legitimately was.
+
+  The lookup is the same union, in the same order, with the tenant predicate **inside each side**,
+  as `_ingest_single_file` and `services/billing_quota.py::count_billable_uploads` -- an unscoped
+  union would let one tenant's replacement collide with another tenant's file, which is a
+  cross-tenant disclosure through the error text. `Invoice.id != invoice_id` excludes the row's
+  own current file, without which the identical-file no-op path would be unreachable and a retry
+  would 409 instead of returning quietly.
+
+  **RELEASE RISK: LOW.** The endpoint is new in this same branch, so nothing has ever depended on
+  the missing check. *Rollback:* remove the guard.
+- [ ] BE Gap 739 (BE, Feature 25 / integration surface): **`REPLACEABLE_BLOCKED_STATUSES` named
+  a status this system does not have.** *Where:* `routers/invoices.py`. *Found:* the premise
+  sweep that followed Gap 729, not a failing test.
+
+  `CANCELLED` was in the frozenset and appears **nowhere** in the codebase -- nothing assigns
+  it, so the entry matched nothing. Inert, but not harmless: it tells the next reader such a
+  status exists, and the next person writing a status check copies the list.
+
+  Every remaining name was then checked against what the code actually writes, in both of the
+  two ways a status is set: `PAID`/`REJECTED`/`SENT` are assigned as literals, and
+  `REVIEW_LATER`/`NEEDS_RESUBMISSION` arrive through `routers/audit.py:662`'s
+  `invoice.status = target_status`, validated against `_FINALIZABLE_FROM_STATUSES` -- which is
+  why a literal-only grep finds neither and they are nonetheless real. Covered by
+  `test_every_blocked_status_is_one_this_system_actually_sets`, which harvests both sources from
+  the real files rather than restating the list.
+
+  **RELEASE RISK: LOW.** *Rollback:* re-add the word.
+
+- [ ] BE Gap 740 (BE, Feature 25 / integration surface): **replacing a DUPLICATE invoice's file
+  left its pointer to the original behind.** *Where:*
+  `routers/invoices.py::replace_invoice_file`. *Found:* same sweep.
+
+  The replace path clears every field that describes the OLD document -- vendor, number, dates,
+  totals, currency, line items, alerts -- and `duplicate_of_invoice_id` was the one left behind.
+  A DUPLICATE row whose file is replaced now holds a genuinely different document, so *"I am a
+  copy of invoice X"* stops being true the moment the bytes change.
+
+  Not cosmetic: Gap 195 added that column precisely so subscribers and the alert UI could
+  **dereference** it, which means a stale value is followed, not ignored -- it would point a
+  reader at an unrelated invoice. The prose half of the same fact (the `duplicate` alert) was
+  already dropped by the existing `sa_alerts = []`; this is its structured half, and the two
+  disagreeing was the bug. Covered by
+  `test_replacing_a_duplicates_file_clears_its_pointer_to_the_original`, which also asserts the
+  invoice it used to point at is untouched.
+
+  **RELEASE RISK: LOW.** *Rollback:* remove the one line.

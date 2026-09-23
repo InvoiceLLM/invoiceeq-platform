@@ -23,6 +23,7 @@ from sqlalchemy.pool import StaticPool
 from main import app
 from models import ChatSession, ChatMessage, Tenant
 from dependencies import (
+    API_KEY_USER_ID,
     get_db_session,
     get_tenant_or_api_key_context,
     get_tenant_context,
@@ -274,7 +275,16 @@ def test_admin_has_full_visibility(db_session):
 
 
 def test_api_keys_forbidden_from_listing_and_reading_history(db_session):
-    """API key callers get 403 on GET /chat/sessions and GET /chat/sessions/{id}."""
+    """A key never reaches a HUMAN's thread -- listing it, reading it, renaming
+    it or deleting it.
+
+    BE Gap 726 narrowed this from the blanket refusal Gap 572 shipped: a key may
+    now list and read the sessions IT created, because refusing that left an
+    integration able to ask a question and unable to fetch the answer. What Gap
+    572 was actually protecting -- one caller's threads staying out of another's
+    reach -- is unchanged, and is what this test now pins. The key context below
+    is deliberately NOT stamped with `API_KEY_USER_ID`, so it owns nothing here
+    and must see nothing."""
     s_alice = ChatSession(
         id=uuid4(), tenant_id=TENANT_ID, user_id=USER_ALICE, title="Alice Thread"
     )
@@ -288,15 +298,14 @@ def test_api_keys_forbidden_from_listing_and_reading_history(db_session):
         key_scope="readonly",
     )
 
-    # 1. Listing is forbidden
+    # 1. Listing never includes a session this caller does not own.
     res_list = client.get("/api/v1/chat/sessions")
-    assert res_list.status_code == 403
-    assert "API key callers are not permitted to list" in res_list.json()["detail"]
+    assert res_list.status_code == 200
+    assert res_list.json() == []
 
-    # 2. Reading history is forbidden
+    # 2. Reading someone else's history is still forbidden outright.
     res_read = client.get(f"/api/v1/chat/sessions/{s_alice.id}")
     assert res_read.status_code == 403
-    assert "API key callers are not permitted to read" in res_read.json()["detail"]
 
     # 3. Modifying session is forbidden
     res_put = client.put(f"/api/v1/chat/sessions/{s_alice.id}", json={"title": "Hacked"})
@@ -307,8 +316,13 @@ def test_api_keys_forbidden_from_listing_and_reading_history(db_session):
     assert res_del.status_code == 403
 
 
-def test_api_key_can_create_unowned_session_and_is_blocked_from_user_sessions(db_session):
-    """API keys can create unowned sessions (user_id=None) but cannot post to user-owned sessions."""
+def test_api_key_can_create_its_own_session_and_is_blocked_from_user_sessions(db_session):
+    """A key's session carries an owner, and the key still cannot touch a human's.
+
+    BE Gap 726: the session is stamped `API_KEY_USER_ID` rather than left NULL.
+    NULL was doing two jobs -- "made by a key" and "made by a human before Gap
+    572 existed" -- and letting a key read its own NULL rows would have handed
+    it every legacy human thread with them."""
     app.dependency_overrides[get_tenant_or_api_key_context] = lambda: make_context(
         user_id="api_key_service",
         role="Viewer",
@@ -320,7 +334,7 @@ def test_api_key_can_create_unowned_session_and_is_blocked_from_user_sessions(db
     res = client.post("/api/v1/chat/sessions", json={"title": "API Key Thread"})
     assert res.status_code == 201
     created = res.json()
-    assert created["user_id"] is None
+    assert created["user_id"] == API_KEY_USER_ID
 
     # Verify cannot post to Alice's session
     s_alice = ChatSession(

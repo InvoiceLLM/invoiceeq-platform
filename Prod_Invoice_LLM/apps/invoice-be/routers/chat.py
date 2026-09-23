@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 
 import telemetry
 from dependencies import (
+    API_KEY_USER_ID,
     get_db_session,
     get_tenant_context,
     require_can_train,
@@ -393,18 +394,20 @@ def list_sessions(
     """List all previous chat sessions belonging to the requesting tenant.
 
     BE Gap 572 (CH-5): Enforce user-level isolation.
-    - API keys cannot list chat sessions (returns 403 Forbidden).
     - Non-admin users only see sessions they created (user_id == caller.user_id).
     - Admins see all sessions in the tenant, including legacy unowned sessions.
-    """
-    if getattr(tenant_context, "auth_method", None) == "api_key":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="API key callers are not permitted to list chat sessions.",
-        )
 
+    BE Gap 726: an API key sees the sessions IT created, and nothing else. It
+    was refused outright before, which left it able to write a thread and never
+    read it back -- an integration could ask a question and not fetch the
+    answer. The isolation Gap 572 built is untouched: a key is matched on
+    `API_KEY_USER_ID`, so it never reaches a human's thread, and never reaches a
+    legacy NULL-owner thread either (those stay Admin-only).
+    """
     statement = select(ChatSession).where(ChatSession.tenant_id == tenant_context.tenant_id)
-    if getattr(tenant_context, "role", None) != "Admin":
+    if getattr(tenant_context, "auth_method", None) == "api_key":
+        statement = statement.where(ChatSession.user_id == API_KEY_USER_ID)
+    elif getattr(tenant_context, "role", None) != "Admin":
         statement = statement.where(ChatSession.user_id == tenant_context.user_id)
     statement = statement.order_by(ChatSession.created_at.desc())
     results = db_session.exec(statement).all()
@@ -419,11 +422,20 @@ def create_session(
     """Create a new chat session.
 
     BE Gap 572 (CH-5): Record user_id on created sessions when called by a
-    signed-in user. API key sessions remain unowned (user_id=None).
+    signed-in user.
+
+    BE Gap 726: a key's session is now stamped with `API_KEY_USER_ID` instead of
+    being left NULL. NULL was doing two jobs -- "made by a key" and "made by a
+    human before Gap 572 existed" -- and those must not share a value, because
+    letting a key read its own NULL sessions would have handed it every legacy
+    human thread as well. A distinct marker is what makes the read in
+    `list_sessions` safe. Sessions a key created BEFORE this change keep their
+    NULL and stay invisible to it: fail closed, no backfill.
     """
     title = payload.title or f"Chat Session - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
     session_id = uuid4()
-    user_id = tenant_context.user_id if getattr(tenant_context, "auth_method", None) != "api_key" else None
+    is_api_key = getattr(tenant_context, "auth_method", None) == "api_key"
+    user_id = API_KEY_USER_ID if is_api_key else tenant_context.user_id
     
     db_session_obj = ChatSession(
         id=session_id,
@@ -589,16 +601,16 @@ def get_session_messages(
     """Retrieve all historical messages for a chat session, validating tenant and user ownership.
 
     BE Gap 572 (CH-5):
-    - API keys cannot read session history (returns 403 Forbidden).
     - Non-admin users can only read their own sessions.
     - Legacy sessions (user_id is None) are visible only to Admins.
-    """
-    if getattr(tenant_context, "auth_method", None) == "api_key":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="API key callers are not permitted to read chat session history.",
-        )
 
+    BE Gap 726: an API key may read a session IT created. It was refused
+    outright before, which left an integration able to ask a question and unable
+    to fetch the answer. The ownership check below does the gating: a key's
+    identity is `API_KEY_USER_ID`, so a human's thread -- and a legacy
+    NULL-owner thread -- fails that comparison exactly as it would for the wrong
+    human. A key is never an Admin, so it never takes the Admin bypass.
+    """
     # 1. Fetch and assert session exists and belongs to requesting tenant
     session_statement = select(ChatSession).where(ChatSession.id == session_id)
     chat_session = db_session.exec(session_statement).first()
@@ -615,7 +627,12 @@ def get_session_messages(
             detail="Access forbidden to this chat session."
         )
 
-    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+    caller_identity = (
+        API_KEY_USER_ID
+        if getattr(tenant_context, "auth_method", None) == "api_key"
+        else tenant_context.user_id
+    )
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != caller_identity:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat session."
