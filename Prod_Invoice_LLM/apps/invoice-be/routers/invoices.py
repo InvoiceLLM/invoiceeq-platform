@@ -3,10 +3,11 @@ import json
 import os
 import hashlib
 import asyncio
+from typing import Literal
 from uuid import uuid4, UUID
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Query, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import func
@@ -24,6 +25,9 @@ from dependencies import (
     # upload is ingestion, not one of the actions `actions` scope governs.
     get_tenant_or_api_key_context,
     require_can_load_or_api_key,
+    # BE Gap 736: the replace route's gate. Stricter than the upload gate
+    # above on the key side -- see the dependency's docstring.
+    require_can_load_and_actions_scope,
     TenantContext,
 )
 from chroma_client import delete_document_chunks, delete_invoice_chunks
@@ -64,6 +68,74 @@ def _submitter_email_from_context(db_session: Session, context: TenantContext) -
     if not user or not user.email:
         return None
     return str(user.email).strip().lower() or None
+
+
+async def _enqueue_extraction(
+    db_invoice: Invoice,
+    batch_id: UUID,
+    file_path: str,
+    context: TenantContext,
+    db_session: Session,
+) -> bool:
+    """Put one extraction task on the queue. Returns whether it went.
+
+    BE Gap 732 lifted this out of `_ingest_single_file` so the replace-file
+    route dispatches through the same code rather than a second copy of it --
+    two copies of a queue send is how one of them quietly loses the
+    `last_enqueued_at` stamp the reconciliation sweep keys on.
+
+    Failure is deliberately NOT raised. The invoice is already stored and
+    committed; leaving it at PROCESSING is what lets
+    `services/invoice_reconciliation.py` find and re-enqueue it, and
+    `GET /status/{id}` reports `queued: false` until it does (BE Gap 731).
+    Raising here would hand the caller a 5xx for a file we successfully kept.
+    """
+    invoice_id = db_invoice.id
+    try:
+        watcher_settings = get_settings()
+        if watcher_settings.AZURE_STORAGE_CONNECTION_STRING:
+            queue_client = QueueClient.from_connection_string(
+                watcher_settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
+            )
+            payload = {
+                "task": "process_invoice",
+                "kwargs": {
+                    "batch_id": str(batch_id),
+                    "file_path": file_path,
+                    "tenant_id": str(context.tenant_id)
+                }
+            }
+            queue_client.send_message(json.dumps(payload))
+            # Gap 81: stamp when the message actually went on the queue. The
+            # reconciliation sweep measures staleness from this, not from
+            # created_at, so it can tell "uploaded 20 minutes ago and never
+            # picked up" from "re-enqueued 20 seconds ago".
+            db_invoice.last_enqueued_at = datetime.utcnow()
+            db_invoice.processing_attempts = (db_invoice.processing_attempts or 0) + 1
+            db_session.add(db_invoice)
+            await run_in_threadpool(db_session.commit)
+            print(f"SUCCESS: Dispatched Azure Storage Queue task for invoice {invoice_id}", flush=True)
+            return True
+
+        print("WARNING: AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.", flush=True)
+        logger.error(
+            "AZURE_STORAGE_CONNECTION_STRING missing -- invoice %s was stored but never queued "
+            "and will sit at PROCESSING until the reconciliation sweep re-enqueues it.",
+            invoice_id,
+        )
+        return False
+    except Exception as e:
+        print(f"ERROR: Failed to dispatch Azure Storage Queue task: {str(e)}", flush=True)
+        # Gap 81 (third fix implication): this used to be logger.warning, which
+        # is exactly the "swallowed signal nobody watches" the gap called out --
+        # a failed enqueue leaves a real invoice permanently stuck, so it is an
+        # error, and the message names that consequence explicitly.
+        logger.error(
+            "Failed to dispatch extraction queue task for invoice %s -- it will remain at "
+            "PROCESSING until the reconciliation sweep re-enqueues it: %s",
+            invoice_id, e,
+        )
+        return False
 
 
 async def _ingest_single_file(
@@ -331,48 +403,7 @@ async def _ingest_single_file(
     await run_in_threadpool(db_session.commit)
     db_session.refresh(db_invoice)
 
-    try:
-        watcher_settings = get_settings()
-        if watcher_settings.AZURE_STORAGE_CONNECTION_STRING:
-            queue_client = QueueClient.from_connection_string(
-                watcher_settings.AZURE_STORAGE_CONNECTION_STRING, "extraction-tasks-queue"
-            )
-            payload = {
-                "task": "process_invoice",
-                "kwargs": {
-                    "batch_id": str(batch_id),
-                    "file_path": file_path,
-                    "tenant_id": str(context.tenant_id)
-                }
-            }
-            queue_client.send_message(json.dumps(payload))
-            # Gap 81: stamp when the message actually went on the queue. The
-            # reconciliation sweep measures staleness from this, not from
-            # created_at, so it can tell "uploaded 20 minutes ago and never
-            # picked up" from "re-enqueued 20 seconds ago".
-            db_invoice.last_enqueued_at = datetime.utcnow()
-            db_invoice.processing_attempts = 1
-            db_session.add(db_invoice)
-            await run_in_threadpool(db_session.commit)
-            print(f"SUCCESS: Dispatched Azure Storage Queue task for invoice {invoice_id}", flush=True)
-        else:
-            print("WARNING: AZURE_STORAGE_CONNECTION_STRING missing, skipped queueing.", flush=True)
-            logger.error(
-                "AZURE_STORAGE_CONNECTION_STRING missing -- invoice %s was stored but never queued "
-                "and will sit at PROCESSING until the reconciliation sweep re-enqueues it.",
-                invoice_id,
-            )
-    except Exception as e:
-        print(f"ERROR: Failed to dispatch Azure Storage Queue task: {str(e)}", flush=True)
-        # Gap 81 (third fix implication): this used to be logger.warning, which
-        # is exactly the "swallowed signal nobody watches" the gap called out --
-        # a failed enqueue leaves a real invoice permanently stuck, so it is an
-        # error, and the message names that consequence explicitly.
-        logger.error(
-            "Failed to dispatch extraction queue task for invoice %s -- it will remain at "
-            "PROCESSING until the reconciliation sweep re-enqueues it: %s",
-            invoice_id, e,
-        )
+    await _enqueue_extraction(db_invoice, batch_id, file_path, context, db_session)
 
     return str(invoice_id)
 
@@ -452,13 +483,47 @@ async def upload_invoices(
         file_count=len(payloads),
         flow_direction="INBOUND",
     )
+    # BE Gap 734: a multi-file upload is validated all-or-nothing ABOVE (the
+    # loop that reads and normalises raises before a single byte is charged or
+    # stored), but the ingest loop below is not atomic: file 3 hitting a storage
+    # outage after files 1 and 2 are stored and queued used to raise 503 out of
+    # this handler, and the caller was told the whole request failed while two
+    # invoices were quietly live -- and the quota had been charged for all
+    # three. The customer's next move is to retry, which dedups files 1 and 2
+    # but makes the response a lie either way.
+    #
+    # Now the failure is reported WITH what actually landed. 207 is deliberate:
+    # a 2xx says "some of this worked, read the body", which is exactly the
+    # truth, and a caller that only checks `response.ok` still gets the ids it
+    # needs rather than throwing away a successful half.
     job_ids = []
+    failures: list[dict] = []
     for filename, file_bytes, orig_name in payloads:
-        job_id = await _ingest_single_file(
-            file_bytes, filename, tags, batch_id, tenant, context, db_session,
-            original_filename=orig_name,
-        )
-        job_ids.append(job_id)
+        try:
+            job_id = await _ingest_single_file(
+                file_bytes, filename, tags, batch_id, tenant, context, db_session,
+                original_filename=orig_name,
+            )
+            job_ids.append(job_id)
+        except HTTPException as exc:
+            # BE Gap 721/722 landed `orig_name` while this was in flight, and it
+            # is the right name to report: `filename` is the normalised one this
+            # pipeline invented, and telling a customer that "a3f9c1.pdf" failed
+            # when they uploaded "ACME-Invoice-0042.pdf" is not a report they can
+            # act on.
+            reported = orig_name or filename
+            logger.error(
+                "Upload batch %s: %s failed to ingest (%s) -- %d of %d already stored.",
+                batch_id, reported, exc.detail, len(job_ids), len(payloads),
+            )
+            failures.append({"filename": reported, "detail": exc.detail, "status": exc.status_code})
+
+    if failures and not job_ids:
+        # Nothing landed: the caller's mental model ("this request failed") is
+        # accurate, so keep the original error rather than inventing a 207 that
+        # reports an empty success.
+        first = failures[0]
+        raise HTTPException(status_code=first["status"], detail=first["detail"])
 
     # BE Gap 577 (CH-10): Invalidate cached chat answers on ingestion write
     try:
@@ -466,6 +531,20 @@ async def upload_invoices(
         bump_tenant_data_version(context.tenant_id)
     except Exception as e:
         logger.debug("Failed to bump chat data version on invoice upload: %s", e)
+
+    if failures:
+        return JSONResponse(
+            status_code=status.HTTP_207_MULTI_STATUS,
+            content={
+                "batch_id": str(batch_id),
+                "job_ids": [str(j) for j in job_ids],
+                "failed": failures,
+                "detail": (
+                    f"{len(job_ids)} of {len(payloads)} files were accepted. "
+                    "The rest are listed in `failed` and were NOT stored; retry those only."
+                ),
+            },
+        )
 
     return {
         "batch_id": batch_id,
@@ -728,6 +807,16 @@ async def get_invoice_status(
     invoice = db_session.exec(statement).first()
     if not invoice:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found or access denied.")
+    # BE Gap 731: a file whose enqueue failed sits at PROCESSING and is
+    # recovered by services/invoice_reconciliation.py, which retries it and only
+    # gives up after MAX attempts. That design is right and is NOT changed here:
+    # marking the invoice FAILED at the first failed send would abandon a file
+    # that is safely stored and would otherwise have been picked up.
+    #
+    # What was wrong is that the caller could not tell the difference. An
+    # integration polling this endpoint saw PROCESSING either way and waited
+    # forever. `queued` is that missing fact, read from the same column the
+    # sweep keys on -- no new state, no new writer.
     return {
         "id": invoice.id,
         "status": invoice.status,
@@ -736,7 +825,10 @@ async def get_invoice_status(
         # FE Gap 183: this endpoint hand-builds its dict, so the ingestion
         # status ledger had no currency to render and hardcoded "$".
         "currency": invoice.currency,
-        "alerts": invoice.sa_alerts
+        "alerts": invoice.sa_alerts,
+        "queued": invoice.last_enqueued_at is not None,
+        "queued_at": invoice.last_enqueued_at,
+        "processing_attempts": invoice.processing_attempts,
     }
 
 
@@ -752,6 +844,26 @@ async def list_invoices(
     tag: str | None = None,
     vendor_name: str | None = None,
     batch_id: UUID | None = None,
+    # BE Gap 723: which side of the ledger. Default INBOUND -- every caller that
+    # exists today (this app's Invoices screen, and any integration written
+    # against the old behaviour) gets exactly what it got before. OUTBOUND and
+    # ALL are opt-in. Typed as a Literal so an unknown value is a 422 from
+    # FastAPI rather than a string reaching the query.
+    flow_direction: Literal["INBOUND", "OUTBOUND", "ALL"] = "INBOUND",
+    # BE Gap 724: "what finished since I last looked". Reads the EXISTING
+    # `completed_at` column -- no new column, no trigger, no migration for the
+    # data itself. Deliberately NOT a general "updated_since": completed_at is
+    # written once, when processing finishes, and a later human decision
+    # (approve/reject) is announced by webhook instead. Documented as such, so
+    # nobody builds a sync on a promise this filter does not make.
+    #
+    # BE Gap 730: timestamps are UTC. A value carrying an offset is converted to
+    # UTC before it is compared; a value without one is taken as UTC already.
+    # Stored timestamps are naive `datetime.utcnow()` values, so an offset-aware
+    # bound would otherwise raise inside the comparison on Postgres and silently
+    # shift the window by the offset on SQLite -- the same query giving two
+    # different answers per backend is the worst of the available failures.
+    completed_since: datetime | None = None,
     # Feature 25 (Gap 335): readonly-scope API key or Clerk session.
     context: TenantContext = Depends(get_tenant_or_api_key_context),
     db_session: Session = Depends(get_db_session)
@@ -761,11 +873,51 @@ async def list_invoices(
     first. Supports pagination, date ranges, status/vendor filters, search
     tags, and batch_id.
     """
+    # BE Gap 728: `status` and `vendor_name` do not mean the same thing on the
+    # two sides of the ledger, so combining either with ALL returns a mixture
+    # that reads as one set and is not.
+    #   status   PAID inbound = we paid a supplier.
+    #            PAID outbound = a customer paid us.
+    #   vendor_name  inbound = the supplier. Outbound it carries the ISSUER,
+    #            which on the tenant's own invoice is the tenant (BE Gap 467).
+    # A caller asking for ALL+PAID gets money facing both ways in one list and
+    # no field in the row that says which. Refused rather than documented: a
+    # silent wrong number in someone's ledger is worse than a 400 they read
+    # once. Both filters stay fully available per direction.
+    if flow_direction == "ALL" and (status or status_in or vendor_name):
+        raise HTTPException(
+            # The literal, not `status.HTTP_400_BAD_REQUEST`: inside THIS handler
+            # `status` is the query parameter declared above, which shadows
+            # fastapi's `status` module. Written the usual way this line raised
+            # AttributeError on None and the caller got a 500 for what is a
+            # plainly explainable 400. The parameter name is part of the
+            # published API and cannot be renamed to free the word.
+            status_code=400,
+            detail=(
+                "status, status_in and vendor_name mean different things for INBOUND and "
+                "OUTBOUND invoices, so they cannot be combined with flow_direction=ALL. "
+                "Ask for one direction at a time, or drop the filter."
+            ),
+        )
+
     conditions = [
         Invoice.tenant_id == context.tenant_id,
-        Invoice.flow_direction == "INBOUND",
-        invoice_not_deleted(),
     ]
+    # BE Gap 723. ALL omits the predicate entirely rather than listing both
+    # values: the tenant+flow+created_at index is still usable on a tenant-only
+    # prefix, and an IN over the full domain would only mislead a reader into
+    # thinking it filters something.
+    if flow_direction != "ALL":
+        conditions.append(Invoice.flow_direction == flow_direction)
+    # BE Gap 724: `>=`, not `>`. A caller re-sending its last watermark gets the
+    # boundary row again, which is safe (ids are stable, the row is identical);
+    # `>` would silently drop anything that completed inside the same
+    # microsecond as the watermark.
+    if completed_since:
+        # BE Gap 730, see the parameter. `utcoffset()` is None for a naive value.
+        if completed_since.utcoffset() is not None:
+            completed_since = completed_since.astimezone(timezone.utc).replace(tzinfo=None)
+        conditions.append(Invoice.completed_at >= completed_since)
     if batch_id:
         conditions.append(Invoice.batch_id == batch_id)
     if start_date:
@@ -778,6 +930,19 @@ async def list_invoices(
         conditions.append(Invoice.status.in_([s.strip() for s in status_in.split(",") if s.strip()]))
     if vendor_name:
         conditions.append(Invoice.vendor_name == vendor_name)
+
+    # BE Gap 729 WITHDRAWN 2026-09-23. An `include_deleted` parameter was added
+    # here to let an integration read deleted invoices back. It could never
+    # return a row: Gap 460 (2026-09-08) made deletion a HARD delete on the
+    # founder's rule that a deleted record is gone from every store, and
+    # `services/invoice_deletion.py` states that nothing writes `deleted_at` any
+    # more. The filter below is therefore inert rather than wrong, and stays
+    # unconditional exactly as it was.
+    #
+    # "Which invoices were removed?" is answered by the `DELETE_INVOICE` audit
+    # row that `delete_invoice_rows()` writes and BE Gap 550 deliberately keeps
+    # -- build that read if an integration asks, rather than reviving this.
+    conditions.append(invoice_not_deleted())
 
     query = select(Invoice).where(*conditions)
     if tag:
@@ -1037,6 +1202,256 @@ async def get_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename={invoice_id}.pdf"}
     )
+
+
+# BE Gap 732: the statuses at which a file may no longer be swapped. The test is
+# "has anyone acted on it", not "has extraction finished" -- COMPLETED and
+# AUDIT_REQUIRED are both still replaceable, because nobody has decided anything
+# yet and the whole point is to fix the mistake before they do. PROCESSING is
+# allowed too: a wrong file noticed while it is still extracting is the most
+# common case of all, and re-enqueueing simply supersedes the running job.
+# BE Gap 739: "CANCELLED" was in this set and is not a status this system has
+# -- nothing anywhere assigns it, so the entry matched nothing and only told the
+# next reader that such a status exists. Every name below was checked against
+# what the code actually writes: PAID/REJECTED/SENT are assigned as literals;
+# REVIEW_LATER and NEEDS_RESUBMISSION arrive through `routers/audit.py`'s
+# `invoice.status = target_status`, validated against `_FINALIZABLE_FROM_STATUSES`.
+REPLACEABLE_BLOCKED_STATUSES = frozenset(
+    {"PAID", "REJECTED", "SENT", "REVIEW_LATER", "NEEDS_RESUBMISSION"}
+)
+
+
+@router.post("/{invoice_id}/file", status_code=status.HTTP_200_OK)
+async def replace_invoice_file(
+    invoice_id: UUID,
+    file: UploadFile = File(...),
+    # BE Gap 736: NOT the upload gate. That one admits a readonly key by
+    # design, and replacing a file is not uploading one -- it destroys the
+    # extracted state of an invoice a reviewer may be mid-way through.
+    context: TenantContext = Depends(require_can_load_and_actions_scope),
+    db_session: Session = Depends(get_db_session),
+):
+    """Attach a corrected PDF to an existing invoice and extract it again.
+
+    WHY THE INVOICE ID IS KEPT. Uploading the right file as a NEW invoice is
+    what a caller has to do today, and it leaves two rows: the wrong one sitting
+    in the queue forever (a key cannot delete it) and a new one whose id the
+    customer's ERP has never seen. Replacing in place keeps the id the customer
+    already stored, so nothing on their side has to be re-linked, and leaves one
+    row where there is one invoice.
+
+    WHAT IT DOES NOT DO. It does not touch a decided invoice. Once somebody has
+    approved, rejected or sent it, the record is evidence of a decision and the
+    document underneath it must not change silently -- that needs an Admin
+    reopen, in the app, where the consequence is visible.
+
+    WHAT IT CLEARS. Every extracted field, the alerts and the line items, all of
+    which describe the OLD document. Leaving them would mean a row whose numbers
+    came from one file and whose PDF is another -- the exact confusion this gap
+    exists to remove. `created_at`, tags, batch and the audit trail survive: the
+    invoice's history is real, only its contents were wrong.
+    """
+    statement = select(Invoice).where(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == context.tenant_id,
+        invoice_not_deleted(),
+    )
+    invoice = db_session.exec(statement).first()
+    if not invoice:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found or access denied.",
+        )
+
+    if invoice.status in REPLACEABLE_BLOCKED_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This invoice is {invoice.status} and its file can no longer be replaced. "
+                "An Admin can reopen it in the app first."
+            ),
+        )
+
+    fname = (file.filename or "invoice.pdf").strip() or "invoice.pdf"
+    try:
+        raw = await file.read()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read file {fname}: {exc}",
+        )
+
+    # Same door as the upload route: sniffed, page-capped, image-converted.
+    try:
+        normalized = normalize_upload(fname, raw)
+    except (UnsupportedUploadError, ImageTooLargeError, PdfTooManyPagesError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail)
+
+    new_bytes = normalized.pdf_bytes
+    new_hash = hashlib.sha256(new_bytes).hexdigest()
+
+    # Re-sending the file that is already attached is a no-op, not an error: a
+    # retried request must not cost a second extraction.
+    if new_hash == invoice.file_hash:
+        return {
+            "id": invoice.id,
+            "status": invoice.status,
+            "replaced": False,
+            "detail": "The uploaded file is identical to the one already attached.",
+        }
+
+    # BE Gap 738: the file must not already be in this tenant's system.
+    #
+    # Every other door checks the incoming hash against invoices AND documents
+    # and turns a match into a DUPLICATE row. This one did not, so a customer
+    # correcting invoice A could attach a PDF they had already uploaded as
+    # invoice B and end up holding two live invoices, different ids, same
+    # document, no alert on either -- which is how one bill gets paid twice.
+    #
+    # Refused rather than marked. Upload is CREATING a record, so a DUPLICATE
+    # row is a truthful account of what arrived; replace is MUTATING a record
+    # that already exists, and there is no coherent way to stamp an existing
+    # invoice as a duplicate of another without destroying whatever it
+    # legitimately was. Nothing is changed and nothing is charged.
+    #
+    # Same union, same order, tenant predicate inside each side, as
+    # `_ingest_single_file` and `services/billing_quota.py`. Three copies of one
+    # rule already disagreed once (BE Gap 385); keeping the shape identical is
+    # what makes the next divergence visible.
+    clashing_invoice = db_session.exec(
+        select(Invoice).where(
+            Invoice.tenant_id == context.tenant_id,
+            Invoice.file_hash == new_hash,
+            Invoice.id != invoice_id,
+        )
+    ).first()
+    clashing_document = None
+    if not clashing_invoice:
+        clashing_document = db_session.exec(
+            select(Document).where(
+                Document.tenant_id == context.tenant_id,
+                Document.file_hash == new_hash,
+            )
+        ).first()
+
+    if clashing_invoice or clashing_document:
+        if clashing_invoice:
+            where = (
+                f"invoice {clashing_invoice.invoice_number or clashing_invoice.id} "
+                f"(ID: {clashing_invoice.id})"
+            )
+        else:
+            doc_type = (clashing_document.doc_type or "document").replace("_", " ").lower()
+            where = f"a {doc_type} already on file (document ID: {clashing_document.id})"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"That file is already in this workspace as {where}. Nothing was changed. "
+                "Attaching it here as well would leave two records for one document."
+            ),
+        )
+
+    # BE Gap 735: a replacement is a billable event, on the same rule and
+    # through the same function as an upload.
+    #
+    # This endpoint re-runs Document Intelligence and a full LLM extraction on
+    # the new file. Left uncharged it was not merely lost revenue, it was a way
+    # around the 402 entirely: `charge_free_quota()` is the only thing stopping
+    # a free-plan tenant at zero remaining, and it is called from the upload
+    # doors alone. A tenant could spend their last credit on one invoice and
+    # then process unlimited unrelated documents through it by replacing the
+    # file over and over.
+    #
+    # `count_billable_uploads()` carries the rule rather than a second copy of
+    # it: new bytes the tenant has never had processed are billable once, and
+    # re-attaching a file they already paid for is free -- the same answer the
+    # upload path gives for the same file. The identical-hash case returned
+    # above, so a retried request still costs nothing.
+    #
+    # Charged BEFORE the blob write, matching `_ingest_files`. The alternative
+    # ordering trades a possible stale charge for a possible orphaned blob;
+    # keeping both doors in one order matters more than the choice between them,
+    # because a billing rule that depends on which endpoint you came through is
+    # the kind of thing nobody can reason about later.
+    billable = count_billable_uploads(db_session, context.tenant_id, [new_bytes])
+    charge_free_quota(db_session, context.tenant_id, billable)
+
+    # The blob is written BEFORE the row changes, exactly as the upload path
+    # does it: a storage failure must leave the invoice as it was, still
+    # pointing at a file that exists.
+    try:
+        new_path = await run_in_threadpool(
+            upload_pdf_to_blob_storage, new_bytes, str(context.tenant_id), str(invoice_id)
+        )
+    except StorageUploadError as exc:
+        logger.error("Storage upload failed replacing invoice %s: %s", invoice_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="File storage is temporarily unavailable. Nothing was changed. Try again.",
+        )
+
+    previous_status = invoice.status
+    previous_hash = invoice.file_hash
+
+    invoice.file_path = new_path
+    invoice.file_hash = new_hash
+    invoice.status = "PROCESSING"
+    invoice.completed_at = None
+    invoice.sa_alerts = []
+    invoice.items = []
+    invoice.vendor_name = None
+    invoice.invoice_number = None
+    invoice.invoice_date = None
+    invoice.due_date = None
+    invoice.grand_total = None
+    invoice.tax_amount = None
+    invoice.currency = None
+    invoice.po_number = None
+    # BE Gap 740: this pointer describes the OLD document, exactly like every
+    # extracted field above it, and was the one that got left behind. A
+    # DUPLICATE row whose file is replaced keeps a genuinely different document
+    # now, so "I am a copy of invoice X" stops being true the moment the bytes
+    # change -- and Gap 195 added this column precisely so subscribers and the
+    # alert UI could dereference it, which means a stale value is followed, not
+    # ignored. The matching `duplicate` alert is already dropped by the
+    # `sa_alerts = []` above; this is its structured half.
+    invoice.duplicate_of_invoice_id = None
+    invoice.processing_attempts = 0
+    invoice.last_enqueued_at = None
+
+    db_session.add(invoice)
+    db_session.add(
+        AuditLog(
+            tenant_id=invoice.tenant_id,
+            invoice_id=invoice.id,
+            actor_user_id=context.db_user_id,
+            actor_role=context.role,
+            action="REPLACE_INVOICE_FILE",
+            details={
+                "previous_status": previous_status,
+                "previous_file_hash": previous_hash,
+                "new_file_hash": new_hash,
+                "filename": normalized.pdf_filename,
+                **context.trail_identity(),
+            },
+            timestamp=datetime.utcnow(),
+        )
+    )
+    await run_in_threadpool(db_session.commit)
+    db_session.refresh(invoice)
+
+    # Re-extract. Deliberately the same dispatch the upload path uses, including
+    # its failure behaviour: if the queue send fails the row stays PROCESSING
+    # and the reconciliation sweep picks it up, and `GET /status/{id}` reports
+    # `queued: false` in the meantime (BE Gap 731).
+    await _enqueue_extraction(invoice, invoice.batch_id, invoice.file_path, context, db_session)
+
+    return {
+        "id": invoice.id,
+        "status": invoice.status,
+        "replaced": True,
+        "previous_status": previous_status,
+    }
 
 
 @router.delete("/{invoice_id}")
