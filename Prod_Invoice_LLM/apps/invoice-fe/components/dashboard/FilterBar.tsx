@@ -145,7 +145,7 @@ export default function FilterBar({
       className={
         compact
           ? "flex items-center gap-2"
-          : "glass-panel p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4"
+          : "glass-panel p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 lg:gap-4"
       }
     >
       {/* Title / Controls Header -- omitted in compact mode: the dropdowns
@@ -153,7 +153,7 @@ export default function FilterBar({
           and compact mode shares a row with the page title, where a second
           "Filters" label would be redundant. */}
       {!compact && (
-        <div className="flex items-center gap-2 text-white">
+        <div className="flex items-center gap-2 text-white shrink-0">
           <SlidersHorizontal className="w-5 h-5 text-accent-blue" />
           <span className="font-semibold text-sm tracking-wide">Filters</span>
         </div>
@@ -261,13 +261,13 @@ export default function FilterBar({
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3 flex-1 justify-end">
+        <div className="flex items-center gap-2 lg:gap-2.5 xl:gap-3 flex-1 justify-end min-w-0 flex-nowrap">
           {/* Vendor Selector */}
-          <div className="flex flex-col gap-1 min-w-[140px]">
+          <div className="flex flex-col gap-1 min-w-[110px] xl:min-w-[130px] flex-1 max-w-[180px]">
             <select
               value={filters.vendorName}
               onChange={(e) => handleChange("vendorName", e.target.value)}
-              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+              className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
             >
               <option value="">{partyLabel}</option>
               {filters.vendorName && !availableVendors.includes(filters.vendorName) && (
@@ -282,11 +282,11 @@ export default function FilterBar({
           </div>
 
           {/* Date Range Selector */}
-          <div className="flex flex-col gap-1 min-w-[130px]">
+          <div className="flex flex-col gap-1 min-w-[100px] xl:min-w-[120px] shrink-0">
             <select
               value={filters.dateRange}
               onChange={(e) => handleChange("dateRange", e.target.value)}
-              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+              className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
             >
               {DATE_RANGES.map((range) => (
                 <option key={range.value} value={range.value}>
@@ -297,11 +297,11 @@ export default function FilterBar({
           </div>
 
           {/* Tag Selector */}
-          <div className="flex flex-col gap-1 min-w-[120px]">
+          <div className="flex flex-col gap-1 min-w-[95px] xl:min-w-[110px] shrink-0">
             <select
               value={filters.tag}
               onChange={(e) => handleChange("tag", e.target.value)}
-              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
+              className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer"
             >
               <option value="">All Tags</option>
               {filters.tag && !availableTags.includes(filters.tag) && (
@@ -316,13 +316,13 @@ export default function FilterBar({
           </div>
 
           {/* Status Selector */}
-          <div className="flex flex-col gap-1 min-w-[130px]">
+          <div className="flex flex-col gap-1 min-w-[105px] xl:min-w-[125px] shrink-0">
             <select
               value={filters.status}
               onChange={(e) => handleChange("status", e.target.value)}
               disabled={statusFilterDisabled}
               title={statusFilterDisabled ? "Status is already set by the selected tab above" : undefined}
-              className="w-full bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
+              className="w-full truncate bg-[#1A2230] border border-[#222D3D] hover:border-[#3B82F6]/50 rounded-lg py-2 px-3 text-xs text-slate-300 focus:outline-none focus:border-[#3B82F6] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#222D3D]"
             >
               {statusOptions.map((status) => (
                 <option key={status.value} value={status.value}>
@@ -335,7 +335,7 @@ export default function FilterBar({
           {/* Save Button */}
           <button
             onClick={handleSaveFilters}
-            className={`flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border ${
+            className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1.5 px-3.5 xl:px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border ${
               isSaved
                 ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
                 : "bg-accent-blue/15 hover:bg-accent-blue/25 border-accent-blue/30 hover:border-accent-blue/50 text-[#3B82F6]"
