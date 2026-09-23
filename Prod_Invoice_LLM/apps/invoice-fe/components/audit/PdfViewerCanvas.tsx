@@ -1,7 +1,7 @@
 "use client";
 
 import { ZoomIn, ZoomOut, RotateCw, Maximize2, X } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 interface PdfViewerCanvasProps {
   /** Stored invoice to display. Omit when passing `srcUrl` instead. */
@@ -33,7 +33,45 @@ export default function PdfViewerCanvas({
   const [modalZoom, setModalZoom] = useState(100);
   const [modalRotation, setModalRotation] = useState(0);
 
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(480);
+
+  const modalContainerRef = useRef<HTMLDivElement>(null);
+  const [modalContainerWidth, setModalContainerWidth] = useState(800);
+  const [modalContainerHeight, setModalContainerHeight] = useState(600);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = entry.contentRect.width;
+        if (w > 0) {
+          setContainerWidth(Math.floor(w));
+        }
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    const el = modalContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0) setModalContainerWidth(Math.floor(width));
+        if (height > 0) setModalContainerHeight(Math.floor(height));
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isModalOpen]);
+
   const isRotated = rotation % 180 !== 0;
+  const isModalRotated = modalRotation % 180 !== 0;
   const pdfUrl = srcUrl ?? `/api/invoices/${invoiceId}/pdf`;
 
   const statusBadge: Record<string, string> = {
@@ -67,6 +105,13 @@ export default function PdfViewerCanvas({
     setModalZoom(100);
     setModalRotation(0);
   };
+
+  // Base canvas dimensions
+  const BASE_HEIGHT = 760;
+  const effectiveWidth = Math.max(containerWidth - 32, 280);
+
+  const modalBaseHeight = Math.max(modalContainerHeight - 40, 500);
+  const modalBaseWidth = Math.max(Math.min(modalContainerWidth - 40, modalBaseHeight * 0.75), 320);
 
   return (
     <div className="flex h-full min-h-[500px] xl:min-h-0 flex-col rounded-xl border border-[#222D3D] bg-[#0F172A]">
@@ -142,29 +187,76 @@ export default function PdfViewerCanvas({
       </div>
 
       {/* PDF + Overlay Container */}
-      <div className="relative flex-1 overflow-auto bg-[#08101A] p-4 flex items-start justify-center">
-        <div
-          className="relative transition-all duration-200"
-          style={{
-            width: `${zoom}%`,
-            minWidth: "100%",
-            transform: `rotate(${rotation}deg)`,
-            transformOrigin: "center top",
-          }}
-        >
-          {/* PDF iframe - hidden when expand modal is open to avoid rendering two PDFs */}
-          {!isModalOpen ? (
-            <iframe
-              src={pdfUrl}
-              className="h-[800px] w-full rounded-md border border-[#222D3D] bg-white shadow-xl"
-              title="Invoice PDF"
-            />
-          ) : (
-            <div className="h-[800px] w-full rounded-md border border-[#222D3D] bg-[#0F172A] flex items-center justify-center text-xs text-slate-500 italic">
-              PDF expanded in modal view
-            </div>
-          )}
-        </div>
+      <div
+        ref={containerRef}
+        className="relative flex-1 overflow-auto bg-[#08101A] p-2 sm:p-4 flex min-h-[400px]"
+      >
+        {!isRotated ? (
+          <div
+            className="m-auto transition-all duration-200 shrink-0"
+            style={{
+              width: `${zoom}%`,
+              minWidth: "100%",
+              height: `${BASE_HEIGHT}px`,
+              transform: rotation === 180 ? "rotate(180deg)" : undefined,
+              transformOrigin: "center center",
+            }}
+          >
+            {!isModalOpen ? (
+              <iframe
+                src={pdfUrl}
+                className="h-full w-full rounded-md border border-[#222D3D] bg-white shadow-xl"
+                title="Invoice PDF"
+              />
+            ) : (
+              <div className="h-full w-full rounded-md border border-[#222D3D] bg-[#0F172A] flex items-center justify-center text-xs text-slate-500 italic">
+                PDF expanded in modal view
+              </div>
+            )}
+          </div>
+        ) : (
+          <div
+            className="m-auto relative transition-all duration-200 shrink-0"
+            style={{
+              width: `${BASE_HEIGHT * (zoom / 100)}px`,
+              height: `${effectiveWidth * (zoom / 100)}px`,
+              minWidth: `${BASE_HEIGHT * (zoom / 100)}px`,
+              minHeight: `${effectiveWidth * (zoom / 100)}px`,
+            }}
+          >
+            {!isModalOpen ? (
+              <iframe
+                src={pdfUrl}
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  width: `${effectiveWidth}px`,
+                  height: `${BASE_HEIGHT}px`,
+                  transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(${zoom / 100})`,
+                  transformOrigin: "center center",
+                }}
+                className="rounded-md border border-[#222D3D] bg-white shadow-xl"
+                title="Invoice PDF"
+              />
+            ) : (
+              <div
+                style={{
+                  position: "absolute",
+                  left: "50%",
+                  top: "50%",
+                  width: `${effectiveWidth}px`,
+                  height: `${BASE_HEIGHT}px`,
+                  transform: `translate(-50%, -50%) rotate(${rotation}deg) scale(${zoom / 100})`,
+                  transformOrigin: "center center",
+                }}
+                className="rounded-md border border-[#222D3D] bg-[#0F172A] flex items-center justify-center text-xs text-slate-500 italic"
+              >
+                PDF expanded in modal view
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Gap 154/155: Lightbox Modal Pop-out — with isolated zoom/rotation state */}
@@ -214,26 +306,56 @@ export default function PdfViewerCanvas({
               </button>
             </div>
           </div>
-          <div className="flex-1 overflow-auto flex items-center justify-center p-4">
-            {/* Gap 154: apply transform to the wrapper div, not the iframe itself,
-                so the full PDF (including scrollable content) scales and rotates correctly. */}
-            <div
-              style={{
-                width: `${modalZoom}%`,
-                minWidth: "300px",
-                maxWidth: "100%",
-                transform: `rotate(${modalRotation}deg)`,
-                transformOrigin: "center center",
-                transition: "transform 0.2s ease, width 0.2s ease",
-              }}
-              className="h-full"
-            >
-              <iframe
-                src={pdfUrl}
-                className="h-full w-full min-h-[70vh] rounded-xl border border-slate-800 bg-white shadow-2xl"
-                title="Expanded Invoice PDF"
-              />
-            </div>
+          <div
+            ref={modalContainerRef}
+            className="flex-1 overflow-auto flex p-4"
+          >
+            {!isModalRotated ? (
+              <div
+                style={{
+                  width: `${modalZoom}%`,
+                  minWidth: "300px",
+                  maxWidth: "100%",
+                  transform: modalRotation === 180 ? "rotate(180deg)" : undefined,
+                  transformOrigin: "center center",
+                  transition: "transform 0.2s ease, width 0.2s ease",
+                }}
+                className="h-full m-auto"
+              >
+                <iframe
+                  src={pdfUrl}
+                  className="h-full w-full min-h-[70vh] rounded-xl border border-slate-800 bg-white shadow-2xl"
+                  title="Expanded Invoice PDF"
+                />
+              </div>
+            ) : (
+              <div
+                style={{
+                  width: `${modalBaseHeight * (modalZoom / 100)}px`,
+                  height: `${modalBaseWidth * (modalZoom / 100)}px`,
+                  minWidth: `${modalBaseHeight * (modalZoom / 100)}px`,
+                  minHeight: `${modalBaseWidth * (modalZoom / 100)}px`,
+                  position: "relative",
+                  margin: "auto",
+                }}
+                className="shrink-0"
+              >
+                <iframe
+                  src={pdfUrl}
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    top: "50%",
+                    width: `${modalBaseWidth}px`,
+                    height: `${modalBaseHeight}px`,
+                    transform: `translate(-50%, -50%) rotate(${modalRotation}deg) scale(${modalZoom / 100})`,
+                    transformOrigin: "center center",
+                  }}
+                  className="rounded-xl border border-slate-800 bg-white shadow-2xl"
+                  title="Expanded Invoice PDF"
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
