@@ -613,7 +613,7 @@ export default function AuditorReviewPage() {
   const hasUnsavedCorrections = Object.keys(corrections).length > 0;
 
   return (
-    <div className="flex h-full flex-col gap-4 p-6 overflow-y-auto custom-scrollbar">
+    <div className="-m-8 p-3.5 xl:p-4 flex h-full flex-col gap-3.5 overflow-y-auto custom-scrollbar">
         {/* FE Gap 110: title/subtitle/Back all moved into the shared header
             above; the live status badge rides up there too rather than holding
             a row down here.
@@ -821,8 +821,8 @@ export default function AuditorReviewPage() {
 
 
 
-        {/* 3-COLUMN SPLIT LAYOUT: PDF (40%) | Extracted Fields (30%) | Line Items & Alerts (30%) */}
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)_minmax(0,1fr)] flex-1">
+        {/* 3-COLUMN SPLIT LAYOUT: PDF | Extracted Fields | Line Items & Alerts */}
+        <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.75fr)_minmax(0,1.25fr)] flex-1 min-h-0">
           {/* COLUMN 1 (40% width) — PDF Viewer */}
           <PdfViewerCanvas
             invoiceId={invoice.id}
@@ -1173,30 +1173,30 @@ export default function AuditorReviewPage() {
 
             <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar p-3">
               {isEditingItems ? (
-                <table className="w-full min-w-[460px] border-collapse text-left">
+                <table className="w-full border-collapse text-left">
                   <thead>
                     <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                      <th className="pb-2 pr-2 font-medium w-6">#</th>
-                      <th className="pb-2 pr-2 font-medium">Description</th>
-                      <th className="pb-2 pr-2 text-right font-medium w-14">Qty</th>
-                      <th className="pb-2 pr-2 text-right font-medium w-20">Unit Price</th>
-                      <th className="pb-2 text-right font-medium w-20">Total</th>
-                      <th className="pb-2 text-center font-medium w-8">Del</th>
+                      <th className="pb-2 px-1 text-center font-medium w-5">#</th>
+                      <th className="pb-2 px-1.5 font-medium min-w-[80px]">Description</th>
+                      <th className="pb-2 px-1 text-right font-medium w-10 sm:w-12 whitespace-nowrap">Qty</th>
+                      <th className="pb-2 px-1 text-right font-medium w-16 sm:w-18 whitespace-nowrap">Unit Price</th>
+                      <th className="pb-2 px-1 text-right font-medium w-16 sm:w-18 whitespace-nowrap">Total</th>
+                      <th className="pb-2 px-1 text-center font-medium w-6">Del</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#222D3D]/60">
                     {editedItems.map((item, idx) => (
                       <tr key={idx} className="text-xs text-slate-300">
-                        <td className="py-2 pr-2 text-slate-500 align-middle">{idx + 1}</td>
-                        <td className="py-2 pr-2 align-middle">
+                        <td className="py-2 px-1 text-center text-slate-500 text-[11px] align-middle">{idx + 1}</td>
+                        <td className="py-2 px-1.5 align-middle min-w-[80px]">
                           <input
                             type="text"
                             value={item.description}
                             onChange={(e) => updateItemField(idx, "description", e.target.value)}
-                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 focus:border-blue-500 outline-none"
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-1.5 py-1 text-xs text-slate-200 focus:border-blue-500 outline-none"
                           />
                         </td>
-                        <td className="py-2 pr-2 align-middle">
+                        <td className="py-2 px-1 align-middle">
                           <input
                             type="number"
                             value={item.quantity ?? ""}
@@ -1204,10 +1204,10 @@ export default function AuditorReviewPage() {
                               const qty = e.target.value === "" ? undefined : Number(e.target.value);
                               updateItemField(idx, "quantity", qty);
                             }}
-                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-1 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
                           />
                         </td>
-                        <td className="py-2 pr-2 align-middle">
+                        <td className="py-2 px-1 align-middle">
                           <input
                             type="number"
                             step="0.01"
@@ -1216,24 +1216,24 @@ export default function AuditorReviewPage() {
                               const price = e.target.value === "" ? undefined : Number(e.target.value);
                               updateItemField(idx, "unit_price", price);
                             }}
-                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-1 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
                           />
                         </td>
-                        <td className="py-2 align-middle text-right">
+                        <td className="py-2 px-1 align-middle text-right">
                           <input
                             type="number"
                             step="0.01"
                             value={item.amount}
                             onChange={(e) => updateItemField(idx, "amount", Number(e.target.value))}
-                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-2 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
+                            className="w-full rounded border border-[#222D3D] bg-[#1E293B] px-1 py-1 text-xs text-slate-200 text-right focus:border-blue-500 outline-none"
                           />
                         </td>
-                        <td className="py-2 text-center align-middle">
+                        <td className="py-2 px-1 text-center align-middle">
                           <button
                             onClick={() => deleteLineItem(idx)}
-                            className="text-rose-500 hover:text-rose-400 p-1 transition-colors"
+                            className="text-rose-500 hover:text-rose-400 p-0.5 transition-colors"
                           >
-                            <X size={14} />
+                            <X size={13} />
                           </button>
                         </td>
                       </tr>
@@ -1263,28 +1263,28 @@ export default function AuditorReviewPage() {
                 </table>
               ) : (
                 invoice.items && invoice.items.length > 0 ? (
-                  <table className="w-full min-w-[460px] border-collapse text-left">
+                  <table className="w-full border-collapse text-left">
                     <thead>
                       <tr className="border-b border-[#222D3D] text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="pb-2 pr-2 font-medium w-6">#</th>
-                        <th className="pb-2 pr-2 font-medium">Description</th>
-                        <th className="pb-2 pr-2 text-right font-medium w-16">Qty</th>
-                        <th className="pb-2 pr-2 text-right font-medium w-24">Unit Price</th>
-                        <th className="pb-2 text-right font-medium w-24">Total</th>
+                        <th className="pb-2 px-1 text-center font-medium w-5">#</th>
+                        <th className="pb-2 px-1.5 font-medium min-w-[90px]">Description</th>
+                        <th className="pb-2 px-1 text-right font-medium w-10 sm:w-12 whitespace-nowrap">Qty</th>
+                        <th className="pb-2 px-1 text-right font-medium w-18 sm:w-20 whitespace-nowrap">Unit Price</th>
+                        <th className="pb-2 pl-1 pr-1.5 text-right font-medium w-18 sm:w-20 whitespace-nowrap">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#222D3D]/60">
                       {invoice.items.map((item, idx) => (
                         <tr key={idx} className="text-xs text-slate-300">
-                          <td className="py-2 pr-2 text-slate-500">{idx + 1}</td>
-                          <td className="py-2 pr-2 break-words max-w-[200px]">{item.description}</td>
-                          <td className="py-2 pr-2 text-right text-slate-400">
+                          <td className="py-2 px-1 text-center text-slate-500 text-[11px]">{idx + 1}</td>
+                          <td className="py-2 px-1.5 break-words min-w-[90px] text-slate-200">{item.description}</td>
+                          <td className="py-2 px-1 text-right text-slate-400 whitespace-nowrap">
                             {item.quantity ?? "—"}
                           </td>
-                          <td className="py-2 pr-2 text-right text-slate-400">
+                          <td className="py-2 px-1 text-right text-slate-400 whitespace-nowrap">
                             {item.unit_price != null ? fmt(item.unit_price, invoice.currency) : "—"}
                           </td>
-                          <td className="py-2 text-right font-medium text-slate-200">
+                          <td className="py-2 pl-1 pr-1.5 text-right font-medium text-slate-200 whitespace-nowrap">
                             {fmt(item.amount, invoice.currency)}
                           </td>
                         </tr>
@@ -1295,7 +1295,7 @@ export default function AuditorReviewPage() {
                         <td colSpan={4} className="pt-2 text-xs text-slate-500">
                           Subtotal
                         </td>
-                        <td className="pt-2 text-right text-xs font-medium text-slate-300">
+                        <td className="pt-2 pl-1 pr-1.5 text-right text-xs font-medium text-slate-300">
                           {fmt(invoice.items.reduce((s, i) => s + (i.amount ?? 0), 0), invoice.currency)}
                         </td>
                       </tr>
