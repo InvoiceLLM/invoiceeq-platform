@@ -31,7 +31,7 @@ from dependencies import (
     require_can_load_and_actions_scope,
 )
 from main import app
-from models import ChatSession, Invoice, Tenant
+from models import ChatMessage, ChatSession, Invoice, Tenant
 from routers.chat import MessageCreate, post_chat_message
 from services.billing_quota import refund_free_quota
 from services.storage import StorageUploadError
@@ -167,6 +167,96 @@ def test_gap1_api_key_cannot_post_to_human_session(db_session):
         )
     assert exc_info.value.status_code == 403
     assert "user-owned" in exc_info.value.detail
+
+
+def test_gap1_api_key_polls_own_chat_job_status_200(db_session):
+    """An API key polling its own chat job receives 200 OK."""
+    session = ChatSession(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        user_id=API_KEY_USER_ID,
+        title="Integration Chat",
+    )
+    db_session.add(session)
+    db_session.commit()
+
+    msg = ChatMessage(
+        id=uuid4(),
+        session_id=session.id,
+        role="user",
+        content="What is total?",
+        job_id="job_own_123",
+        status="completed",
+    )
+    db_session.add(msg)
+    db_session.commit()
+
+    _as_api_key("actions")
+    with patch("services.chat_queue.ChatQueueService.get_job_status") as mock_status:
+        mock_status.return_value = {
+            "job_id": "job_own_123",
+            "status": "completed",
+            "result": {"content": "Answer"},
+        }
+        resp = client.get("/api/v1/chat/jobs/job_own_123/status")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "completed"
+
+
+def test_gap1_api_key_polls_human_chat_job_status_403(db_session):
+    """An API key polling a human user's chat job receives 403 Forbidden."""
+    session = ChatSession(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        user_id="human_user_999",
+        title="Human Chat",
+    )
+    db_session.add(session)
+    db_session.commit()
+
+    msg = ChatMessage(
+        id=uuid4(),
+        session_id=session.id,
+        role="user",
+        content="Human query",
+        job_id="job_human_123",
+        status="completed",
+    )
+    db_session.add(msg)
+    db_session.commit()
+
+    _as_api_key("actions")
+    resp = client.get("/api/v1/chat/jobs/job_human_123/status")
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Access forbidden to this chat job."
+
+
+def test_gap1_api_key_polls_legacy_unowned_chat_job_status_403(db_session):
+    """An API key polling a legacy unowned (user_id=None) chat job receives 403 Forbidden."""
+    session = ChatSession(
+        id=uuid4(),
+        tenant_id=MOCK_TENANT_ID,
+        user_id=None,
+        title="Legacy Unowned Chat",
+    )
+    db_session.add(session)
+    db_session.commit()
+
+    msg = ChatMessage(
+        id=uuid4(),
+        session_id=session.id,
+        role="user",
+        content="Legacy query",
+        job_id="job_legacy_123",
+        status="completed",
+    )
+    db_session.add(msg)
+    db_session.commit()
+
+    _as_api_key("actions")
+    resp = client.get("/api/v1/chat/jobs/job_legacy_123/status")
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Access forbidden to this chat job."
 
 
 # ═══════════════════════════════════════════════════════════════════════════

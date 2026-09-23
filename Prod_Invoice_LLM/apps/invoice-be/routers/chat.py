@@ -1180,13 +1180,12 @@ def _require_owned_chat_job(
             detail="Access forbidden to this chat job.",
         )
 
-    if getattr(tenant_context, "auth_method", None) == "api_key":
-        if chat_session.user_id is not None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access forbidden to this chat job.",
-            )
-    elif getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != tenant_context.user_id:
+    caller_identity = (
+        API_KEY_USER_ID
+        if getattr(tenant_context, "auth_method", None) == "api_key"
+        else tenant_context.user_id
+    )
+    if getattr(tenant_context, "role", None) != "Admin" and chat_session.user_id != caller_identity:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access forbidden to this chat job.",
