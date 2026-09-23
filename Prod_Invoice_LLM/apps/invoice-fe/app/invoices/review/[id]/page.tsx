@@ -695,7 +695,7 @@ export default function AuditorReviewPage() {
                   window.alert(err?.message || "Failed to reopen invoice. Please try again.");
                 }
               }}
-              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30 shrink-0"
+              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-amber-500/50 bg-amber-600/10 px-2 sm:px-2.5 2xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-amber-300 transition hover:bg-amber-600/30 shrink-0"
             >
               <Undo2 size={13} />
               <span><span className="hidden 2xl:inline">Reopen </span>Audit</span>
@@ -713,7 +713,7 @@ export default function AuditorReviewPage() {
               disabled={!!actionLoading}
               title="Defer a decision on this invoice without finalizing it (Review Later)"
               aria-label="Review Later"
-              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-sky-500/50 bg-sky-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-sky-300 transition hover:bg-sky-600/30 disabled:opacity-50 shrink-0"
+              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-sky-500/50 bg-sky-600/10 px-2 sm:px-2.5 2xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-sky-300 transition hover:bg-sky-600/30 disabled:opacity-50 shrink-0"
             >
               {actionLoading === "review_later" ? (
                 <Loader2 size={13} className="animate-spin" />
@@ -729,7 +729,7 @@ export default function AuditorReviewPage() {
               disabled={!!actionLoading}
               title="Flag as disputed and queue for vendor correction / resubmission (Needs Resubmission)"
               aria-label="Needs Resubmission"
-              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50 shrink-0"
+              className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-orange-500/50 bg-orange-600/10 px-2 sm:px-2.5 2xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50 shrink-0"
             >
               {actionLoading === "needs_resubmission" ? (
                 <Loader2 size={13} className="animate-spin" />
@@ -746,7 +746,7 @@ export default function AuditorReviewPage() {
                 disabled={!!actionLoading}
                 title="Reject invoice"
                 aria-label="Reject invoice"
-                className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-red-500/50 bg-red-600/10 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-red-300 transition hover:bg-red-600/30 disabled:opacity-50 shrink-0"
+                className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-red-500/50 bg-red-600/10 px-2 sm:px-2.5 2xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-red-300 transition hover:bg-red-600/30 disabled:opacity-50 shrink-0"
               >
                 {actionLoading === "rejected" ? (
                   <Loader2 size={13} className="animate-spin" />
@@ -760,7 +760,7 @@ export default function AuditorReviewPage() {
                 disabled={!!actionLoading}
                 title="Approve invoice"
                 aria-label="Approve invoice"
-                className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-2.5 xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50 shrink-0"
+                className="flex items-center gap-1 sm:gap-1.5 whitespace-nowrap rounded-lg border border-emerald-500/50 bg-emerald-600/20 px-2 sm:px-2.5 2xl:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-semibold text-emerald-300 transition hover:bg-emerald-600/40 disabled:opacity-50 shrink-0"
               >
                 {actionLoading === "paid" ? (
                   <Loader2 size={13} className="animate-spin" />

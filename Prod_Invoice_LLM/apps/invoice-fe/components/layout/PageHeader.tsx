@@ -46,7 +46,7 @@ export default function PageHeader({
 
       <div className="min-w-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <h1 className="text-sm sm:text-base xl:text-lg font-semibold text-white tracking-wide truncate">
+          <h1 className="text-sm sm:text-base 2xl:text-lg font-semibold text-white tracking-normal truncate">
             {title}
           </h1>
           {agentName && (

@@ -1795,4 +1795,22 @@ component now uses the functional setter form so a value can never be re-read as
   - **Stated limits / Boundary:** All changes kept strictly uncommitted in working tree per user instruction (`dont commit`). No visual images committed or pushed to GitHub (`dont show visual img on github`).
 
 
+## Auditor Review Console Header Options & Title Visibility at 100% Screen Size (2026-09-23) — FE Gap 726
+
+- `[x]` **FE Gap 726 (FE, layout & responsiveness · auditor review console header, follows FE Gap 725): Auditor Review Console header title truncated to "Auditor Review Co..." and right review action controls cramped at 100% screen size** — CLOSED 2026-09-23 — S2 · release risk **Low (header padding & font responsiveness)** · effort S. *(founder request: "when the screen size is 90 % heder option are visible properly but when the screen size 100% heder option for this page not proper showing fix don't chnage other thing don't commit.")*
+  - **Symptom:** On the Auditor Review Console (`/invoices/review/[id]`), at 90% browser zoom, the header title and all action options rendered cleanly. At 100% browser zoom (1280px screen width with the 256px sidebar uncollapsed, leaving 1024px of usable header width), the page title truncated to `"Auditor Review Co..."` and the right-hand review action buttons (`AUDIT REQUIRED`, `Later`, `Resubmit`, `Reject`, `Approve`) pressed up against the right utilities (bell, workspace toggle, theme toggle).
+  - **Root cause:**
+    1. In `components/layout/Header.tsx`, Tailwind's `xl` breakpoint (1280px) triggered an expansion of horizontal padding to `xl:px-6` (48px total), right-side gap to `xl:gap-4` (16px), and actions gap to `xl:gap-2.5` (10px).
+    2. In `components/layout/PageHeader.tsx`, the title `<h1>` scaled to `xl:text-lg` (18px) with `tracking-wide`, consuming ~205px.
+    3. In `app/invoices/review/[id]/page.tsx`, the five review action buttons expanded horizontally with `xl:px-3` (24px horizontal padding each).
+    4. With the sidebar open, effective screen width is 1024px, not 1280px. The expanded right action controls consumed ~783px, leaving only ~133px for the title container and forcing the CSS ellipsis truncation.
+  - **Fixed 2026-09-23 (three files in `apps/invoice-fe`):**
+    1. `components/layout/Header.tsx` (EDIT) — calibrated horizontal padding to `px-3 sm:px-4 xl:px-4 2xl:px-8`; guaranteed minimum title container width `min-w-[190px] xl:min-w-[210px]`; calibrated right controls container gap to `gap-1.5 sm:gap-2 xl:gap-2.5 2xl:gap-4` and action button portal gap to `gap-1 sm:gap-1.5 2xl:gap-2.5`.
+    2. `components/layout/PageHeader.tsx` (EDIT) — scaled `h1` to `text-sm sm:text-base 2xl:text-lg font-semibold text-white tracking-normal truncate` so it remains a readable, compact 16px at 1280px with default letter-spacing, reserving `text-lg` for large `2xl:` viewports (>1536px).
+    3. `app/invoices/review/[id]/page.tsx` (EDIT) — calibrated horizontal padding on review action buttons (`Reopen Audit`, `Review Later`, `Needs Resubmission`, `Reject`, `Approve`) from `xl:px-3` to `2xl:px-3`, retaining compact `px-2 sm:px-2.5` at 1280px.
+  - **Evidence:** Automated Playwright measurements on 1280x800 viewport with uncollapsed sidebar confirmed `isTruncated: false` across both Default Dark and InfiNevo themes. Visual verification screenshots captured: `header_infinevo_100pct_zoom_verified.png` and `header_dark_100pct_zoom_fixed.png`. Full title `"Auditor Review Console"` is completely visible alongside all action buttons and utility icons.
+  - **Stated limits / Boundary:** Isolated to header spacing and button padding; all underlying audit action logic, API calls, and review page cards remain unchanged.
+
+
+
 
