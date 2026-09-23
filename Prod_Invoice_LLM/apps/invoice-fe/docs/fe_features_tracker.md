@@ -1755,3 +1755,18 @@ component now uses the functional setter form so a value can never be re-read as
   - **Evidence:** Automated Playwright visual verification in `apps/invoice-fe/tests/manual/verify_history_fixes.js` passing across both Default Dark and InfiNevo Light themes. Verified refresh button triggers new API fetch and spins. Verified Cancel button hover styles in InfiNevo Light theme maintain high contrast (`rgb(15, 23, 42)` text on `rgb(241, 245, 249)` bg). Coordinates with backend BE Gap 722.
 
 
+## Audit Queue FilterBar Horizontal Alignment at 100% Zoom (2026-09-23) — FE Gap 724
+
+- `[x]` **FE Gap 724 (FE, layout & responsiveness · audit queue filters, follows FE Gap 713): Audit Queue FilterBar "Save Filter" button wrapped to a second line at 100% screen size when sidebar was uncollapsed** — CLOSED 2026-09-23 — S2 · release risk **Low (filter bar responsiveness & alignment)** · effort S. *(founder request: "in this page filter option save filter button showing down side on 100% sceen size and 90% shoing properly but for 100% not showing , and when collapes sidebat shoing good but uncollapes and screen size 100% then its showing in down side dont chnage other thing give visual img .fix it dont commit.")*
+  - **Symptom:** On the Audit Queue screen (`/invoices`), at standard 100% screen size (1280px / 1200px viewport) with the 256px sidebar uncollapsed, the "Save Filter" button wrapped down into an isolated, right-aligned second line below the four filter dropdowns. At 90% browser zoom or when the sidebar was collapsed (`w-[76px]`), the button fit on the same line as the filters.
+  - **Root cause:**
+    1. In `components/dashboard/FilterBar.tsx`, the non-compact controls container used `flex flex-wrap items-center gap-3 flex-1 justify-end`.
+    2. The 4 dropdown selectors (`Vendor`, `Date Range`, `Tag`, `Status`) had rigid minimum widths (`min-w-[140px]`, `min-w-[130px]`, `min-w-[120px]`, `min-w-[130px]`) and lacked `truncate` on the `<select>` tags, expanding to the character length of the longest option (e.g. `Needs Resubmission`, `TechVision Distributors Pvt Ltd`).
+    3. The sum of the 4 dropdowns + 48px gap + button width (~115px) exceeded the ~814px available space within a 1280px viewport when the 256px sidebar and vertical scrollbars were present, forcing `flex-wrap` to break the button onto line 2.
+  - **Fixed 2026-09-23 (one file in `apps/invoice-fe`):**
+    1. `components/dashboard/FilterBar.tsx` (EDIT) — replaced `flex-wrap` with `flex-nowrap` and responsive gaps (`gap-2 lg:gap-2.5 xl:gap-3 flex-1 justify-end min-w-0 flex-nowrap`); added `truncate` to all 4 `<select>` elements; established responsive minimum widths (`min-w-[110px] xl:min-w-[130px]`, `min-w-[100px] xl:min-w-[120px]`, `min-w-[95px] xl:min-w-[110px]`, `min-w-[105px] xl:min-w-[125px]`); added `shrink-0 whitespace-nowrap` to the Save Filter button; and added `shrink-0` to the left-side "Filters" title cluster.
+  - **Evidence:** Automated Playwright measurements across 1280px and 1200px viewports with uncollapsed sidebar confirmed `isSaveButtonWrapped: false` (Save Button top aligns with selects at top 113–114px) across both InfiNevo and Default Dark themes. Visual screenshots captured and verified.
+  - **Stated limits / Boundary:** Compact FilterBar mode (used on Dashboard) remains byte-for-byte unchanged. All changes kept uncommitted in the local working tree per user instruction.
+
+
+
