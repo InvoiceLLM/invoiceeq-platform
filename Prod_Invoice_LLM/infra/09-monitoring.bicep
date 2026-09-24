@@ -214,7 +214,7 @@ module alertRules './modules/monitoring/alert-rules.bicep' = {
   name: 'alert-rules-deploy'
   params: {
     criticalActionGroupId: actionGroup.outputs.criticalActionGroupId
-    infoActionGroupId: actionGroup.outputs.infoActionGroupId
+    infoActionGroupId: 'none' // Dashboard only: routine metrics do not send email
     backendAppName: backendAppName
     workerAppName: workerAppName
     frontendAppName: frontendAppName

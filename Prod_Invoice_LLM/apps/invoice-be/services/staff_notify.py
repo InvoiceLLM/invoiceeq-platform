@@ -12,6 +12,7 @@ from typing import Sequence
 
 from sqlmodel import Session, select
 
+from config import get_settings
 from models import Invoice, TenantEmailSender
 from services.outbound_email import send_email, sendgrid_configured
 
@@ -80,9 +81,28 @@ def _alert_summary(invoice: Invoice, limit: int = 5) -> str:
 
 def notify_processing_complete(session: Session, invoice: Invoice) -> dict | None:
     """Notify #1 after extraction settles. Soft-fails if SendGrid missing."""
+    settings = get_settings()
+    if not getattr(settings, "ENABLE_STAFF_PROCESSING_EMAILS", True):
+        logger.info("Skip process-complete notify for %s — ENABLE_STAFF_PROCESSING_EMAILS is disabled", invoice.id)
+        return {"sent": False, "reason": "disabled_by_config"}
+
     if not sendgrid_configured():
         logger.info("Skip process-complete notify for %s — SENDGRID_API_KEY not set", invoice.id)
         return None
+
+    status = (invoice.status or "").upper()
+    submitter = (invoice.submitted_by_email or "").strip()
+    min_sev = getattr(settings, "STAFF_NOTIFY_MIN_SEVERITY", "AUDIT_REQUIRED").upper()
+
+    # Routine completed invoices are visible on the dashboard without sending email,
+    # unless an explicit submitter is waiting for automated confirmation.
+    if min_sev == "AUDIT_REQUIRED" and not submitter and status not in ("AUDIT_REQUIRED", "NEEDS_REVIEW"):
+        logger.info(
+            "Skip process-complete notify for %s — status '%s' is visible on dashboard without email",
+            invoice.id,
+            status,
+        )
+        return {"sent": False, "reason": "visible_on_dashboard", "status": status}
 
     recipients = _recipients_for_processing(session, invoice)
     if not recipients:

@@ -168,7 +168,7 @@
       "value": 85
     },
     "http5xxThreshold": {
-      "value": 10
+      "value": 25
     },
     "postgresConnectionsThreshold": {
       "value": 340

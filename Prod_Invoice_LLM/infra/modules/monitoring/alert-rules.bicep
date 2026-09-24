@@ -11,7 +11,15 @@ param location string = 'global'
 // criticalActionGroupId → Sev 0/1: email + Teams + Slack (immediate on-call)
 // infoActionGroupId    → Sev 2/3: email only (trends, informational)
 param criticalActionGroupId string
-param infoActionGroupId string
+param infoActionGroupId string = ''
+
+// ---- Info Action Routing: Dashboard / Portal Only (Zero Email Noise) ----
+// Informational alerts (CPU, Memory, Redis load, OpenAI throttle) remain 100% active,
+// evaluated, and visible on Azure Portal Alerts and Workbooks for monitoring.
+// Actions array is kept empty by default so no email notifications are triggered for self-healing metrics.
+var infoActions = !empty(infoActionGroupId) && infoActionGroupId != 'none' ? [
+  { actionGroupId: infoActionGroupId }
+] : []
 
 @description('Log Analytics workspace resource id. Required for the Gap 257 log-based DLQ alert.')
 param logAnalyticsWorkspaceId string
@@ -161,9 +169,7 @@ resource cpuAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in co
         }
       ]
     }
-    actions: [
-      { actionGroupId: infoActionGroupId }  // email only — auto-scale handles transient spikes
-    ]
+    actions: infoActions  // visible in portal/dashboard; no email (auto-scale handles transient spikes)
   }
 }]
 
@@ -203,9 +209,7 @@ resource memoryAlerts 'Microsoft.Insights/metricAlerts@2018-03-01' = [for app in
         }
       ]
     }
-    actions: [
-      { actionGroupId: infoActionGroupId }  // email only — transient extraction bursts
-    ]
+    actions: infoActions  // visible in portal/dashboard; no email (transient bursts resolve automatically)
   }
 }]
 
@@ -221,7 +225,7 @@ resource backend5xxAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
       resourceId('Microsoft.App/containerApps', backendAppName)
     ]
     evaluationFrequency: 'PT5M'
-    windowSize: 'PT5M'
+    windowSize: 'PT15M'  // extended to 15m: eliminates 5-10m transient deploy/restart blips
     criteria: {
       'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
       allOf: [
@@ -259,7 +263,7 @@ resource website5xxAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = if (!emp
       resourceId('Microsoft.App/containerApps', websiteAppName)
     ]
     evaluationFrequency: 'PT5M'
-    windowSize: 'PT5M'
+    windowSize: 'PT15M'  // extended to 15m: eliminates 5-10m transient deploy/restart blips
     criteria: {
       'odata.type': 'Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria'
       allOf: [
@@ -303,7 +307,7 @@ resource postgresCpuAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
         { name: 'cpu_percent', metricName: 'cpu_percent', operator: 'GreaterThan', threshold: 85, timeAggregation: 'Average', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 
@@ -344,7 +348,7 @@ resource postgresConnectionsAlert 'Microsoft.Insights/metricAlerts@2018-03-01' =
         { name: 'active_connections', metricName: 'active_connections', operator: 'GreaterThan', threshold: postgresConnectionsThreshold, timeAggregation: 'Average', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 
@@ -365,7 +369,7 @@ resource redisLoadAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
         { name: 'server_load', metricName: 'server_load', operator: 'GreaterThan', threshold: 85, timeAggregation: 'Average', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 
@@ -387,7 +391,7 @@ resource storageAvailabilityAlert 'Microsoft.Insights/metricAlerts@2018-03-01' =
         { name: 'Availability', metricName: 'Availability', operator: 'LessThan', threshold: 99, timeAggregation: 'Average', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 
@@ -408,7 +412,7 @@ resource storageEgressAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
         { name: 'Egress', metricName: 'Egress', operator: 'GreaterThan', threshold: storageEgressThresholdBytes, timeAggregation: 'Total', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 
@@ -475,7 +479,7 @@ resource openaiThrottleAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
         { name: 'ClientErrors', metricName: 'ClientErrors', operator: 'GreaterThan', threshold: aiClientErrorThreshold, timeAggregation: 'Total', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 
@@ -494,7 +498,7 @@ resource docIntelThrottleAlert 'Microsoft.Insights/metricAlerts@2018-03-01' = {
         { name: 'ClientErrors', metricName: 'ClientErrors', operator: 'GreaterThan', threshold: aiClientErrorThreshold, timeAggregation: 'Total', criterionType: 'StaticThresholdCriterion' }
       ]
     }
-    actions: [ { actionGroupId: infoActionGroupId } ]
+    actions: infoActions
   }
 }
 

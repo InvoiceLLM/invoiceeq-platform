@@ -849,9 +849,11 @@ class Settings(BaseSettings):
     # is computed from the document's structure rather than its vocabulary.
     COMPLEX_DI_CONFIDENCE_FLOOR: float = 0.70
 
-    # BE Gap 682 rollback switch. True restores the pre-Gap-682 field-presence and
-    # tax-keyword triggers without a deploy, if the narrowed classifier misbehaves.
-    USE_LEGACY_COMPLEXITY_CLASSIFIER: bool = False
+    # Alert & Notification Governance:
+    # Routine completed invoices are visible on the web dashboard and do not spam staff email.
+    # Email notifications are reserved for actionable items (AUDIT_REQUIRED / NEEDS_REVIEW).
+    ENABLE_STAFF_PROCESSING_EMAILS: bool = True
+    STAFF_NOTIFY_MIN_SEVERITY: str = "AUDIT_REQUIRED"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

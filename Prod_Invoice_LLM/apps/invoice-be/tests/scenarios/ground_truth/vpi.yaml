@@ -1,0 +1,121 @@
+# VPI business ground truth — transcribed by hand from the demo files, never from a system run.
+#
+# Sources (both hand-computed from the PDFs in showcase/vpi_demo/):
+#   showcase/vpi_demo/README.md                     §3 tables
+#   apps/invoice-be/docs/atlas_vpi_scenario_day1_30.md  §0 marking, §2 arithmetic
+#
+# Rule (CONVENTIONS + the scenario doc): if the product disagrees with a value here,
+# the product is wrong until the arithmetic here is shown to be wrong. Never edit a
+# number to match an output.
+
+tenant:
+  name: Vishwa Precision Industries Pvt Ltd
+  city: Pune
+  state: Maharashtra
+  currency: INR
+  fiscal_year: FY2026-27            # 1-Apr-2026 -> 31-Mar-2027
+  gst_inbound: CGST 9% + SGST 9%
+  as_of: 2026-09-15                 # the day the §9 questions are asked
+
+# Discover fires on the 10th completed extraction (ANALYST_ONBOARD_MIN_DOCS=10),
+# so the Day-1 profile is built from 10 invoices; SHR-2005 arrives after it.
+upload_order_inbound:
+  - BHA-2002
+  - BHA-2003
+  - GBP-2011
+  - NAT-2006
+  - NAT-2007
+  - "OM -2000"
+  - "OM -2001"
+  - RAJ-2008
+  - RAJ-2009
+  - SHR-2004          # <- 10th, Discover fires here
+  - SHR-2005
+
+inbound:
+  - doc: BHA-2002
+    vendor: Bharat Hardware & Fasteners
+    date: 2026-07-09
+    due: 2026-08-08
+    total: 103191.00
+    paid_on: 2026-08-06
+  - doc: BHA-2003
+    vendor: Bharat Hardware & Fasteners
+    date: 2026-08-17
+    due: 2026-09-15
+    total: 103191.00
+  - doc: GBP-2011
+    vendor: Ganesh Bearings Pvt Ltd
+    date: 2026-08-19
+    due: 2026-09-18
+    total: 68676.00
+    note: new vendor
+  - doc: NAT-2006
+    vendor: National MRO Traders
+    date: 2026-08-19
+    due: 2026-09-15
+    total: 79956.80
+  - doc: NAT-2007
+    vendor: National MRO Traders
+    date: 2026-08-19
+    due: 2026-09-15
+    total: 79956.80
+    duplicate_of: NAT-2006          # same number+vendor shape -> duplicate_invoice alert
+  - doc: "OM -2000"
+    vendor: Om Stationery Mart
+    date: 2026-07-09
+    due: 2026-08-08
+    total: 41654.00
+    paid_on: 2026-08-05
+  - doc: "OM -2001"
+    vendor: Om Stationery Mart
+    date: 2026-08-16
+    due: 2026-09-15
+    total: 41654.00
+  - doc: RAJ-2008
+    vendor: Rajesh Steel Corporation
+    date: 2026-08-20
+    due: 2026-09-15
+    total: 437190.00
+  - doc: RAJ-2009
+    vendor: Rajesh Steel Corporation
+    date: 2026-08-20
+    due: 2026-09-15
+    total: 437190.00
+    duplicate_of: RAJ-2008          # re-issue: same vendor/date/total, different number
+  - doc: SHR-2004
+    vendor: Shree Packaging Industries
+    date: 2026-07-09
+    due: 2026-08-08
+    total: 121894.00
+    paid_on: 2026-08-07
+  - doc: SHR-2005
+    vendor: Shree Packaging Industries
+    date: 2026-08-18
+    due: 2026-09-15
+    total: 121894.00
+
+totals:
+  inbound_all_11: 1636447.60
+  inbound_excluding_duplicates: 1119300.80
+  unpaid_after_marking_paid: 852561.80     # BHA-2003, GBP-2011, NAT-2006, OM -2001, RAJ-2008, SHR-2005
+
+spend_by_vendor_no_duplicates:
+  Rajesh Steel Corporation: 437190.00
+  Shree Packaging Industries: 243788.00
+  Bharat Hardware & Fasteners: 206382.00
+  Om Stationery Mart: 83308.00
+  National MRO Traders: 79956.80
+  Ganesh Bearings Pvt Ltd: 68676.00
+
+marked_paid_in_step_c:
+  - BHA-2002
+  - "OM -2000"
+  - SHR-2004
+  - VPI-OUT-2012
+  - VPI-OUT-2015
+
+invariants:
+  # README §3: every inbound line passes qty x rate = amount and subtotal + CGST + SGST = total.
+  no_inbound_math_error: true
+  currency_symbol: "₹"

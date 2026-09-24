@@ -1,0 +1,5206 @@
+{
+  "info": {
+    "name": "InvoiceEQ \u2014 Full API Collection (No Webhooks)",
+    "_postman_id": "invoiceeq-full-api-collection-v1",
+    "description": "Complete REST API Collection for InvoiceEQ (AP/AR Automation, ATLAS Intelligence, Chat, Trainer, Settings, Admin, Support, Billing, Connectors).\n\n### How to Use:\n1. Set `base_url` variable (`https://invoicellm.admsofttech.com` or `http://localhost:8000`).\n2. Set `api_key` variable with your live key `inv_live_...` (from Settings -> Security).\n3. Test `GET /api/settings/security/api-key/verify` in folder 02 to confirm your connection & permissions!\n4. Run collection or test individual folders one by one.\n\n*Note: On the live cloud domain (https://invoicellm.admsofttech.com), all routes go through the public gateway at `/api/...` (or `/api/v1/...` on localhost).*",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://invoicellm.admsofttech.com",
+      "type": "string",
+      "description": "Base URL (production: https://invoicellm.admsofttech.com, local backend: http://localhost:8000)"
+    },
+    {
+      "key": "api_prefix",
+      "value": "/api",
+      "type": "string",
+      "description": "API path prefix ('/api' for cloud domain https://invoicellm.admsofttech.com, '/api/v1' for direct backend localhost:8000)"
+    },
+    {
+      "key": "api_key",
+      "value": "inv_live_YOUR_KEY_HERE",
+      "type": "string",
+      "description": "Tenant API Key (inv_live_... for production, inv_test_... for sandbox)"
+    },
+    {
+      "key": "clerk_jwt",
+      "value": "YOUR_CLERK_SESSION_JWT_HERE",
+      "type": "string",
+      "description": "Clerk session JWT (for browser-only routes: /auth/me, /auth/provision, /sandbox/claim)"
+    },
+    {
+      "key": "widget_token",
+      "value": "inv_widget_YOUR_TOKEN_HERE",
+      "type": "string",
+      "description": "Chat widget public token (for POST /widget/chat/message)"
+    },
+    {
+      "key": "sandbox_key",
+      "value": "inv_test_YOUR_KEY_HERE",
+      "type": "string",
+      "description": "Sandbox API key (auto-populated by POST /sandbox/keys)"
+    },
+    {
+      "key": "invoice_id",
+      "value": "00000000-0000-0000-0000-000000000001",
+      "type": "string",
+      "description": "Inbound Invoice UUID (auto-populated by GET/POST invoices)"
+    },
+    {
+      "key": "outbound_invoice_id",
+      "value": "00000000-0000-0000-0000-000000000002",
+      "type": "string",
+      "description": "Outbound Invoice UUID (auto-populated by GET/POST outbound invoices)"
+    },
+    {
+      "key": "batch_id",
+      "value": "00000000-0000-0000-0000-000000000003",
+      "type": "string",
+      "description": "Invoice Batch UUID (auto-populated by upload / batches list)"
+    },
+    {
+      "key": "job_id",
+      "value": "00000000-0000-0000-0000-000000000004",
+      "type": "string",
+      "description": "Background Job UUID (auto-populated by invoice upload or chat)"
+    },
+    {
+      "key": "session_id",
+      "value": "00000000-0000-0000-0000-000000000005",
+      "type": "string",
+      "description": "Chat Session UUID (auto-populated by POST /chat/sessions)"
+    },
+    {
+      "key": "message_id",
+      "value": "00000000-0000-0000-0000-000000000006",
+      "type": "string",
+      "description": "Chat Message UUID (auto-populated by chat session messages)"
+    },
+    {
+      "key": "trainer_session_id",
+      "value": "00000000-0000-0000-0000-000000000007",
+      "type": "string",
+      "description": "Trainer Session UUID (auto-populated by trainer session creation)"
+    },
+    {
+      "key": "recommendation_id",
+      "value": "00000000-0000-0000-0000-000000000008",
+      "type": "string",
+      "description": "ATLAS Line / Recommendation UUID (auto-populated by GET /atlas/lines)"
+    },
+    {
+      "key": "rule_id",
+      "value": "00000000-0000-0000-0000-000000000009",
+      "type": "string",
+      "description": "Rule / Memory UUID (auto-populated by chat rules or ATLAS memory)"
+    },
+    {
+      "key": "insight_id",
+      "value": "00000000-0000-0000-0000-000000000010",
+      "type": "string",
+      "description": "Dashboard / Chat Insight UUID"
+    },
+    {
+      "key": "attachment_id",
+      "value": "00000000-0000-0000-0000-000000000011",
+      "type": "string",
+      "description": "Chat Attachment UUID"
+    },
+    {
+      "key": "document_id",
+      "value": "00000000-0000-0000-0000-000000000012",
+      "type": "string",
+      "description": "Document UUID (auto-populated by GET /documents)"
+    },
+    {
+      "key": "sender_id",
+      "value": "00000000-0000-0000-0000-000000000013",
+      "type": "string",
+      "description": "Authorized Email Sender UUID"
+    },
+    {
+      "key": "widget_token_id",
+      "value": "00000000-0000-0000-0000-000000000014",
+      "type": "string",
+      "description": "Widget Token record UUID"
+    },
+    {
+      "key": "user_ref",
+      "value": "user_2abc123",
+      "type": "string",
+      "description": "User ID / Clerk User Ref (for Admin user management)"
+    },
+    {
+      "key": "ingestion_run_id",
+      "value": "00000000-0000-0000-0000-000000000015",
+      "type": "string",
+      "description": "Ingestion Run UUID"
+    },
+    {
+      "key": "template_id",
+      "value": "00000000-0000-0000-0000-000000000016",
+      "type": "string",
+      "description": "Extraction Template UUID"
+    },
+    {
+      "key": "template_version",
+      "value": "1",
+      "type": "string",
+      "description": "Template Version number"
+    },
+    {
+      "key": "correction_id",
+      "value": "00000000-0000-0000-0000-000000000017",
+      "type": "string",
+      "description": "Chat Correction UUID"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{api_key}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "01. Authentication & Identity (START HERE)",
+      "description": "API Key verification, key rotation, and user session management.",
+      "item": [
+        {
+          "name": "GET /settings/security/api-key/verify (Verify Key & Permissions - START HERE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/security/api-key/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "security",
+                "api-key",
+                "verify"
+              ]
+            },
+            "description": "Verifies the API key against the platform, returning your tenant_id, role, and permissions."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"API Key verified successfully\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var data = pm.response.json();",
+                  "    pm.expect(data.tenant_id).to.be.a('string');",
+                  "    console.log(\"Tenant ID:\", data.tenant_id);",
+                  "    console.log(\"Role:\", data.role);",
+                  "    console.log(\"Can Audit:\", data.can_audit);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /settings/security/api-key (API Key Status)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/security/api-key",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "security",
+                "api-key"
+              ]
+            },
+            "description": "Returns masked key prefix, rotation date, and last used timestamp."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /settings/security/api-key/rotate (Rotate API Key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/security/api-key/rotate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "security",
+                "api-key",
+                "rotate"
+              ]
+            },
+            "description": "Rotates the API key. WARNING: Store the newly generated key immediately.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.api_key) {",
+                  "        console.log(\"New API Key generated:\", data.api_key);",
+                  "        // pm.collectionVariables.set(\"api_key\", data.api_key);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /auth/me (Current User Identity - Clerk JWT)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Returns TenantContext for the active Clerk browser session.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clerk_jwt}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /auth/provision (Provision Tenant - Clerk JWT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/provision",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "provision"
+              ]
+            },
+            "description": "Provisions a new tenant workspace during Clerk onboarding.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clerk_jwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clerk_org_id\": \"org_2demo_tenant\",\n  \"org_name\": \"Demo Organization\",\n  \"admin_email\": \"admin@example.com\",\n  \"clerk_user_id\": \"user_2demo_admin\",\n  \"first_name\": \"Admin\",\n  \"last_name\": \"User\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /auth/logout (Logout Session)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Server-side session audit logging on logout.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clerk_user_id\": \"user_2demo_admin\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02. Invoices (Inbound AP)",
+      "description": "Upload, list, retrieve, stream, and delete inbound invoices and batches.",
+      "item": [
+        {
+          "name": "GET /invoices (List Inbound Invoices)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices?skip=0&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices"
+              ],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Paginated list of all inbound invoices."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "var data = pm.response.json();",
+                  "var list = data.invoices || data;",
+                  "if (Array.isArray(list) && list.length > 0) {",
+                  "    pm.collectionVariables.set(\"invoice_id\", list[0].id);",
+                  "    console.log(\"Active invoice_id set to:\", list[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /invoices/upload (Upload Inbound Invoice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/upload",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "upload"
+              ]
+            },
+            "description": "Uploads one or more invoice files for OCR and AI extraction pipeline.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "value": null,
+                  "description": "Attach PDF or image invoice file here"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 202) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.batch_id) pm.collectionVariables.set(\"batch_id\", data.batch_id);",
+                  "    if (data.job_id) pm.collectionVariables.set(\"job_id\", data.job_id);",
+                  "    if (data.invoices && data.invoices.length > 0) {",
+                  "        pm.collectionVariables.set(\"invoice_id\", data.invoices[0].id || data.invoices[0].invoice_id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /invoices/{invoice_id} (Get Inbound Invoice)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/{{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "{{invoice_id}}"
+              ]
+            },
+            "description": "Retrieves full extracted metadata, confidence scores, and line items for an invoice."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 or 404', function () { pm.expect(pm.response.code).to.be.oneOf([200, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /invoices/{invoice_id}/pdf (Download Invoice PDF)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/{{invoice_id}}/pdf",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "{{invoice_id}}",
+                "pdf"
+              ]
+            },
+            "description": "Fetches raw PDF or image bytes from Azure Blob Storage."
+          }
+        },
+        {
+          "name": "GET /invoices/batches (List Upload Batches)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/batches",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "batches"
+              ]
+            },
+            "description": "Lists all batch uploads with processing counts."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"batch_id\", data[0].id || data[0].batch_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /invoices/stream/{batch_id} (Stream Batch Progress SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/stream/{{batch_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "stream",
+                "{{batch_id}}"
+              ]
+            },
+            "description": "Server-Sent Events (SSE) live progress stream for batch extraction."
+          }
+        },
+        {
+          "name": "GET /invoices/status/{job_id} (Job Status)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/status/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "status",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Polling endpoint for async invoice processing job status."
+          }
+        },
+        {
+          "name": "POST /invoices/watcher/start (Start Directory Watcher)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/watcher/start",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "watcher",
+                "start"
+              ]
+            },
+            "description": "Triggers local directory watcher scan for newly dropped invoice files.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "DELETE /invoices/{invoice_id} (Delete Inbound Invoice)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/{{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "{{invoice_id}}"
+              ]
+            },
+            "description": "Soft-deletes or purges an inbound invoice."
+          }
+        },
+        {
+          "name": "DELETE /invoices/batches/{batch_id} (Delete Inbound Batch)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/invoices/batches/{{batch_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "invoices",
+                "batches",
+                "{{batch_id}}"
+              ]
+            },
+            "description": "Deletes all invoices associated with a batch."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03. Audit & Resolution (AP)",
+      "description": "Human-in-the-loop review, field correction, approval, and audit history.",
+      "item": [
+        {
+          "name": "GET /audit (List Invoices for Audit)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/audit?skip=0&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "audit"
+              ],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Returns invoices pending human audit / resolution (requires actions scope)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "var data = pm.response.json();",
+                  "var list = data.invoices || data;",
+                  "if (Array.isArray(list) && list.length > 0) {",
+                  "    pm.collectionVariables.set(\"invoice_id\", list[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /audit/resolve/{invoice_id} (Resolve / Approve / Reject Invoice)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/audit/resolve/{{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "audit",
+                "resolve",
+                "{{invoice_id}}"
+              ]
+            },
+            "description": "Approves, rejects, or applies field corrections to an inbound invoice.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\",\n  \"notes\": \"Verified against PO-9876\",\n  \"corrections\": {}\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Resolve status', function () { pm.expect(pm.response.code).to.be.oneOf([200, 400, 404]); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /audit-history (Invoice Change History)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/audit-history?invoice_id={{invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "audit-history"
+              ],
+              "query": [
+                {
+                  "key": "invoice_id",
+                  "value": "{{invoice_id}}"
+                }
+              ]
+            },
+            "description": "Admin-only immutable log of edits, resolutions, and state transitions."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04. ATLAS Intelligence & Work Screen",
+      "description": "Feature 34: Priority lines, reconciliation, AI memory rules, daily briefing.",
+      "item": [
+        {
+          "name": "GET /atlas/lines (ATLAS Work Screen Recommendations)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/lines?skip=0&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "lines"
+              ],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Returns prioritized AI recommendation lines on the AP work screen."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Status 200\", function () { pm.response.to.have.status(200); });",
+                  "var data = pm.response.json();",
+                  "if (data.lines && data.lines.length > 0) {",
+                  "    pm.collectionVariables.set(\"recommendation_id\", data.lines[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /atlas/recon (Run ATLAS Reconciliation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/recon",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "recon"
+              ]
+            },
+            "description": "Runs AI 2-way/3-way matching and discrepancy reasoning on selected invoices.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoice_ids\": [\n    \"{{invoice_id}}\"\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /atlas/lines/{recommendation_id}/act (Accept Recommendation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/lines/{{recommendation_id}}/act",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "lines",
+                "{{recommendation_id}}",
+                "act"
+              ]
+            },
+            "description": "Executes the suggested action on an ATLAS recommendation line.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /atlas/lines/{recommendation_id}/dismiss (Dismiss Recommendation)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/lines/{{recommendation_id}}/dismiss",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "lines",
+                "{{recommendation_id}}",
+                "dismiss"
+              ]
+            },
+            "description": "Dismisses an ATLAS recommendation line with feedback.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Already handled offline\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /atlas/briefing (Daily AP Briefing)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/briefing",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "briefing"
+              ]
+            },
+            "description": "Generates personalized executive AP briefing summarizing workload and risks."
+          }
+        },
+        {
+          "name": "GET /atlas/orientation (AP Workspace Orientation)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/orientation",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "orientation"
+              ]
+            },
+            "description": "Overview statistics of unapproved invoices, pending matches, and flags."
+          }
+        },
+        {
+          "name": "GET /atlas/actions (ATLAS Action Log)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/actions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "actions"
+              ]
+            },
+            "description": "Audit history of actions executed through ATLAS."
+          }
+        },
+        {
+          "name": "GET /atlas/actions/kinds (Supported Action Kinds)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/actions/kinds",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "actions",
+                "kinds"
+              ]
+            },
+            "description": "Enumeration of valid action types in ATLAS."
+          }
+        },
+        {
+          "name": "GET /atlas/memory (List Memory Rules)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/memory",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "memory"
+              ]
+            },
+            "description": "Tenant-specific learned business rules and vendor memory."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"rule_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /atlas/memory (Create Memory Rule)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/memory",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "memory"
+              ]
+            },
+            "description": "Creates a natural-language business policy rule.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule\": \"Always require secondary approval for invoices over $10,000 from ACME Corp.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id) pm.collectionVariables.set(\"rule_id\", data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /atlas/memory/{rule_id} (Update Memory Rule)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/memory/{{rule_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "memory",
+                "{{rule_id}}"
+              ]
+            },
+            "description": "Updates an existing learned memory rule.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rule\": \"Always require secondary approval for invoices over $5,000 from ACME Corp.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "DELETE /atlas/memory/{rule_id} (Delete Memory Rule)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/memory/{{rule_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "memory",
+                "{{rule_id}}"
+              ]
+            },
+            "description": "Deletes a memory rule."
+          }
+        },
+        {
+          "name": "POST /atlas/missed (Report Missed Detection / Alert)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/atlas/missed",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "atlas",
+                "missed"
+              ]
+            },
+            "description": "Submits feedback on a missed anomaly for model fine-tuning.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoice_id\": \"{{invoice_id}}\",\n  \"issue_description\": \"Price discrepancy between PO line 2 and invoice was missed.\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05. Dashboard & Analytics",
+      "description": "KPIs, processing accuracy metrics, quality rollups, and insight cards.",
+      "item": [
+        {
+          "name": "GET /dashboard/metrics (AP Dashboard Metrics)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/dashboard/metrics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "dashboard",
+                "metrics"
+              ]
+            },
+            "description": "Key AP performance indicators: throughput, straight-through-processing rate, average cycle time."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Metrics 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /dashboard/trainer-impact (Trainer Accuracy Impact)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/dashboard/trainer-impact",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "dashboard",
+                "trainer-impact"
+              ]
+            },
+            "description": "Measures accuracy improvement achieved via custom template training."
+          }
+        },
+        {
+          "name": "GET /dashboard/insights (Actionable AP Insights)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/dashboard/insights",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "dashboard",
+                "insights"
+              ]
+            },
+            "description": "AI-generated operational observations and cost-saving recommendations."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"insight_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /dashboard/insights/dismiss (Dismiss Dashboard Insight)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/dashboard/insights/dismiss",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "dashboard",
+                "insights",
+                "dismiss"
+              ]
+            },
+            "description": "Dismisses an operational insight card.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"insight_id\": \"{{insight_id}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /dashboard/quality-rollup (Extraction Quality Score Rollup)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/dashboard/quality-rollup",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "dashboard",
+                "quality-rollup"
+              ]
+            },
+            "description": "Aggregate OCR quality, confidence distributions, and error rates."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06. AI Chat & Copilot",
+      "description": "Natural language RAG chat, SQL tools, custom business rules, triage, and aliases.",
+      "item": [
+        {
+          "name": "POST /chat/sessions (Create Chat Session)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions"
+              ]
+            },
+            "description": "Creates a new AI Assistant chat conversation session.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Invoice Reconciliation Inquiry\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id) pm.collectionVariables.set(\"session_id\", data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /chat/sessions (List Chat Sessions)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions"
+              ]
+            },
+            "description": "Retrieves chat history session headers."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"session_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /chat/sessions/{session_id} (Get Session Messages)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions/{{session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions",
+                "{{session_id}}"
+              ]
+            },
+            "description": "Loads chronological message thread for a chat session."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"message_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /chat/sessions/{session_id}/message (Send Message to AI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions/{{session_id}}/message",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions",
+                "{{session_id}}",
+                "message"
+              ]
+            },
+            "description": "Sends prompt to RAG Chat Agent with SQL tool execution and invoice analysis.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Show me all invoices from Acme Corp due this month.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 202) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.job_id) pm.collectionVariables.set(\"job_id\", data.job_id);",
+                  "    if (data.message_id) pm.collectionVariables.set(\"message_id\", data.message_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /chat/jobs/{job_id}/status (Chat Job Status)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/jobs/{{job_id}}/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "jobs",
+                "{{job_id}}",
+                "status"
+              ]
+            },
+            "description": "Polls execution status of background LLM reasoning job."
+          }
+        },
+        {
+          "name": "GET /chat/jobs/{job_id}/stream (Chat Streaming SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/jobs/{{job_id}}/stream",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "jobs",
+                "{{job_id}}",
+                "stream"
+              ]
+            },
+            "description": "Real-time SSE token stream for AI responses."
+          }
+        },
+        {
+          "name": "PUT /chat/sessions/{session_id} (Rename Chat Session)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions/{{session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions",
+                "{{session_id}}"
+              ]
+            },
+            "description": "Renames chat session title.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Vendor Spend Analysis 2026\"\n}"
+            }
+          }
+        },
+        {
+          "name": "PUT /chat/messages/{message_id}/feedback (Rate Chat Message)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/messages/{{message_id}}/feedback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "messages",
+                "{{message_id}}",
+                "feedback"
+              ]
+            },
+            "description": "Submits user rating on AI response accuracy.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": \"thumbs_up\",\n  \"comment\": \"Accurate calculation.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "DELETE /chat/messages/{message_id}/feedback (Remove Feedback)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/messages/{{message_id}}/feedback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "messages",
+                "{{message_id}}",
+                "feedback"
+              ]
+            },
+            "description": "Removes rating on a chat message."
+          }
+        },
+        {
+          "name": "POST /chat/messages/{message_id}/triage (Triage Invoice from Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/messages/{{message_id}}/triage",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "messages",
+                "{{message_id}}",
+                "triage"
+              ]
+            },
+            "description": "Performs quick action (e.g. approve) proposed inside a chat message.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /chat/messages/{message_id}/triage/source-verdict (Source Citation Verdict)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/messages/{{message_id}}/triage/source-verdict",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "messages",
+                "{{message_id}}",
+                "triage",
+                "source-verdict"
+              ]
+            },
+            "description": "Confirms correctness of retrieved source invoice citation.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verdict\": \"correct\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /chat/messages/{message_id}/insight-feedback (Insight Feedback)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/messages/{{message_id}}/insight-feedback",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "messages",
+                "{{message_id}}",
+                "insight-feedback"
+              ]
+            },
+            "description": "Rates an insight generated during chat.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"feedback\": \"useful\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /chat/rules/categories (Rule Categories)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/rules/categories",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "rules",
+                "categories"
+              ]
+            },
+            "description": "Lists rule categories supported by Chat agent."
+          }
+        },
+        {
+          "name": "POST /chat/rules/preview (Preview Rule Match)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/rules/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "rules",
+                "preview"
+              ]
+            },
+            "description": "Tests a proposed rule against existing invoice history.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"DUPLICATE\",\n  \"description\": \"Flag duplicate invoice numbers across different vendors\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /chat/rules/commit (Commit Rule from Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/rules/commit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "rules",
+                "commit"
+              ]
+            },
+            "description": "Persists validated business rule.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"DUPLICATE\",\n  \"description\": \"Flag duplicate invoice numbers across different vendors\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id) pm.collectionVariables.set(\"rule_id\", data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /chat/rules (List Chat Rules)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/rules",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "rules"
+              ]
+            },
+            "description": "Returns all active user-created rules."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"rule_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /chat/rules/{rule_id} (Delete Chat Rule)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/rules/{{rule_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "rules",
+                "{{rule_id}}"
+              ]
+            },
+            "description": "Removes a chat-created business rule."
+          }
+        },
+        {
+          "name": "GET /chat/insights (Chat Insights)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/insights",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "insights"
+              ]
+            },
+            "description": "Returns insights generated in chat."
+          }
+        },
+        {
+          "name": "POST /chat/insights/{insight_id}/transition (Transition Insight State)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/insights/{{insight_id}}/transition",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "insights",
+                "{{insight_id}}",
+                "transition"
+              ]
+            },
+            "description": "Accepts or rejects a chat insight.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"target_state\": \"accepted\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /chat/insights/{insight_id}/discuss (Open Insight Discussion)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/insights/{{insight_id}}/discuss",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "insights",
+                "{{insight_id}}",
+                "discuss"
+              ]
+            },
+            "description": "Opens dedicated conversation around an insight."
+          }
+        },
+        {
+          "name": "POST /chat/vendors/aliases/confirm (Confirm Vendor Aliases)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/vendors/aliases/confirm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "vendors",
+                "aliases",
+                "confirm"
+              ]
+            },
+            "description": "Maps vendor name aliases to canonical vendor entity.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"canonical_name\": \"ACME Industrial Corp\",\n  \"aliases\": [\n    \"ACME\",\n    \"Acme Corp\",\n    \"ACME Ind\"\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /chat/corrections/{correction_id}/promote (Promote Correction to Global)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/corrections/{{correction_id}}/promote",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "corrections",
+                "{{correction_id}}",
+                "promote"
+              ]
+            },
+            "description": "Promotes single correction into global extraction rule.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "GET /chat/corrections/stats (Correction Statistics)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/corrections/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "corrections",
+                "stats"
+              ]
+            },
+            "description": "Summary of user corrections applied across chats."
+          }
+        },
+        {
+          "name": "DELETE /chat/sessions/{session_id} (Delete Chat Session)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions/{{session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions",
+                "{{session_id}}"
+              ]
+            },
+            "description": "Permanently deletes chat session thread."
+          }
+        }
+      ]
+    },
+    {
+      "name": "07. Chat Attachments",
+      "description": "Purchase orders and quotes attached to chat for 3-way matching.",
+      "item": [
+        {
+          "name": "POST /chat/sessions/{session_id}/attachments (Upload Attachment to Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/sessions/{{session_id}}/attachments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "sessions",
+                "{{session_id}}",
+                "attachments"
+              ]
+            },
+            "description": "Uploads supporting PO/quote document to be cited in chat session.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "value": null,
+                  "description": "Attach Purchase Order or Quote document"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id) pm.collectionVariables.set(\"attachment_id\", data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /chat/attachments/{attachment_id} (Get Attachment Details)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/attachments/{{attachment_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "attachments",
+                "{{attachment_id}}"
+              ]
+            },
+            "description": "Fetches metadata and parsed text of chat attachment."
+          }
+        },
+        {
+          "name": "GET /chat/attachments/{attachment_id}/links (Get Document Links)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/attachments/{{attachment_id}}/links",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "attachments",
+                "{{attachment_id}}",
+                "links"
+              ]
+            },
+            "description": "Lists invoices linked to this attachment."
+          }
+        },
+        {
+          "name": "POST /chat/attachments/{attachment_id}/confirm-matches (Confirm Linked Invoices)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/attachments/{{attachment_id}}/confirm-matches",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "attachments",
+                "{{attachment_id}}",
+                "confirm-matches"
+              ]
+            },
+            "description": "Confirms 3-way matching between attachment and invoices.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confirmed_invoice_ids\": [\n    \"{{invoice_id}}\"\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /chat/attachments/{attachment_id}/links/confirm (Confirm Document Linkage)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/chat/attachments/{{attachment_id}}/links/confirm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "chat",
+                "attachments",
+                "{{attachment_id}}",
+                "links",
+                "confirm"
+              ]
+            },
+            "description": "Associates document links with invoice records.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confirmed_invoice_ids\": [\n    \"{{invoice_id}}\"\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08. Documents Repository",
+      "description": "General reference documents, contracts, and supporting PDFs.",
+      "item": [
+        {
+          "name": "GET /documents (List General Documents)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/documents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "documents"
+              ]
+            },
+            "description": "Lists reference documents, contracts, and supporting PDFs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"document_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /documents/{document_id} (Get Document Metadata)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/documents/{{document_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "documents",
+                "{{document_id}}"
+              ]
+            },
+            "description": "Retrieves metadata for single document."
+          }
+        },
+        {
+          "name": "DELETE /documents/{document_id} (Delete Document)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/documents/{{document_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "documents",
+                "{{document_id}}"
+              ]
+            },
+            "description": "Removes document from tenant repository."
+          }
+        }
+      ]
+    },
+    {
+      "name": "09. Ingestion History",
+      "description": "Durable log and archive management for automated file ingestion.",
+      "item": [
+        {
+          "name": "GET /ingestion-history (List Ingestion Runs)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/ingestion-history?skip=0&limit=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "ingestion-history"
+              ],
+              "query": [
+                {
+                  "key": "skip",
+                  "value": "0"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Audit log of automated ingestion runs (Email, Google Drive, OneDrive)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "var list = data.runs || data;",
+                  "if (Array.isArray(list) && list.length > 0) {",
+                  "    pm.collectionVariables.set(\"ingestion_run_id\", list[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /ingestion-history/{run_id}/files (Files in Ingestion Run)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/ingestion-history/{{ingestion_run_id}}/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "ingestion-history",
+                "{{ingestion_run_id}}",
+                "files"
+              ]
+            },
+            "description": "Details of individual files processed during a specific ingestion run."
+          }
+        },
+        {
+          "name": "POST /ingestion-history/{run_id}/archive (Archive Ingestion Run)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/ingestion-history/{{ingestion_run_id}}/archive",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "ingestion-history",
+                "{{ingestion_run_id}}",
+                "archive"
+              ]
+            },
+            "description": "Hides/archives an ingestion run from default view.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "POST /ingestion-history/{run_id}/unarchive (Unarchive Ingestion Run)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/ingestion-history/{{ingestion_run_id}}/unarchive",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "ingestion-history",
+                "{{ingestion_run_id}}",
+                "unarchive"
+              ]
+            },
+            "description": "Restores archived ingestion run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "POST /ingestion-history/archive-all (Archive All Ingestion Runs)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/ingestion-history/archive-all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "ingestion-history",
+                "archive-all"
+              ]
+            },
+            "description": "Bulk-archives entire ingestion history log.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Cloud Connectors",
+      "description": "OAuth integration with Google Drive, OneDrive, and cloud storage.",
+      "item": [
+        {
+          "name": "GET /connectors/status (List Connector Statuses)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/connectors/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "connectors",
+                "status"
+              ]
+            },
+            "description": "Checks active OAuth connections for Google Drive, OneDrive, etc."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Connectors 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /connectors/auth-url/{provider} (Get OAuth Auth URL)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/connectors/auth-url/google",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "connectors",
+                "auth-url",
+                "google"
+              ]
+            },
+            "description": "Returns OAuth consent screen URL for cloud storage integration."
+          }
+        },
+        {
+          "name": "GET /connectors/callback/{provider} (OAuth Callback Handler)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/connectors/callback/google?code=DEMO_OAUTH_CODE&state=DEMO_STATE",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "connectors",
+                "callback",
+                "google"
+              ],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "DEMO_OAUTH_CODE"
+                },
+                {
+                  "key": "state",
+                  "value": "DEMO_STATE"
+                }
+              ]
+            },
+            "description": "OAuth code exchange callback endpoint."
+          }
+        },
+        {
+          "name": "GET /connectors/files/{provider} (List Remote Cloud Files)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/connectors/files/google",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "connectors",
+                "files",
+                "google"
+              ]
+            },
+            "description": "Browses remote cloud folders to select invoice files for import."
+          }
+        },
+        {
+          "name": "POST /connectors/import/{provider} (Import Remote Files)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/connectors/import/google",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "connectors",
+                "import",
+                "google"
+              ]
+            },
+            "description": "Triggers async download and ingestion of selected cloud files.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"file_ids\": [\n    \"1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms\"\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "DELETE /connectors/{provider} (Disconnect Cloud Provider)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/connectors/google",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "connectors",
+                "google"
+              ]
+            },
+            "description": "Revokes OAuth tokens and disconnects provider."
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Trainer (Extraction Calibration)",
+      "description": "Visual bounding box calibration, confidence thresholds, and template versioning.",
+      "item": [
+        {
+          "name": "POST /trainer/upload (Upload Sample for Training)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/upload",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "upload"
+              ]
+            },
+            "description": "Uploads sample invoice document to start a visual template training session.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "value": null,
+                  "description": "Sample invoice PDF for training"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.session_id) pm.collectionVariables.set(\"trainer_session_id\", data.session_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /trainer/sessions/from-invoice (Start Training from Inbound Invoice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/from-invoice",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "from-invoice"
+              ]
+            },
+            "description": "Launches template trainer session directly from an existing inbound invoice.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"invoice_id\": \"{{invoice_id}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201 || pm.response.code === 200) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.session_id || data.id) pm.collectionVariables.set(\"trainer_session_id\", data.session_id || data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /trainer/sessions/{session_id}/pdf (Get Training PDF)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/pdf",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "pdf"
+              ]
+            },
+            "description": "Fetches PDF content for bounding-box overlay in trainer UI."
+          }
+        },
+        {
+          "name": "GET /trainer/alert-types (Trainer Alert Types)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/alert-types",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "alert-types"
+              ]
+            },
+            "description": "Lists alert types that can be calibrated in trainer."
+          }
+        },
+        {
+          "name": "GET /trainer/vendors (Trainer Known Vendors)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/vendors",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "vendors"
+              ]
+            },
+            "description": "Lists vendors with existing trained extraction templates."
+          }
+        },
+        {
+          "name": "GET /trainer/chat-style (Trainer Chat Style Config)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/chat-style",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "chat-style"
+              ]
+            },
+            "description": "Configuration for interactive AI training assistant."
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/chat (Chat with Trainer Agent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "chat"
+              ]
+            },
+            "description": "Interactive prompt to train model on tricky invoice formats.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Extract the line item table headers from page 1.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "PUT /trainer/sessions/{session_id}/mode (Set Trainer Mode)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/mode",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "mode"
+              ]
+            },
+            "description": "Switches trainer session between manual bounding box and AI auto mode.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"manual\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/corrections/tolerance (Set Extraction Tolerance)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/corrections/tolerance",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "corrections",
+                "tolerance"
+              ]
+            },
+            "description": "Configures numeric tolerance for matching amounts and tax rates.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tolerance\": 0.05\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/corrections/confidence-threshold (Set Confidence Gate)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/corrections/confidence-threshold",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "corrections",
+                "confidence-threshold"
+              ]
+            },
+            "description": "Sets minimum confidence threshold for auto-approval.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"confidence_threshold\": 0.85\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/corrections/alert-override (Override Alert Rule)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/corrections/alert-override",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "corrections",
+                "alert-override"
+              ]
+            },
+            "description": "Overrides default alert triggering for this vendor format.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alert_type\": \"AMOUNT_MISMATCH\",\n  \"override\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/corrections/missed-alert (Report Missed Alert in Trainer)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/corrections/missed-alert",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "corrections",
+                "missed-alert"
+              ]
+            },
+            "description": "Trains detector on subtle missing alert pattern.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"alert_type\": \"DUPLICATE\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/preview (Preview Extraction Result)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "preview"
+              ]
+            },
+            "description": "Simulates extraction pipeline using newly calibrated template weights.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/commit (Commit Template Version)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/commit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "commit"
+              ]
+            },
+            "description": "Publishes new extraction template version into production pipeline.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "POST /trainer/sessions/{session_id}/commit-behavior (Commit Auto Behavior)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/sessions/{{trainer_session_id}}/commit-behavior",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "sessions",
+                "{{trainer_session_id}}",
+                "commit-behavior"
+              ]
+            },
+            "description": "Sets vendor-level auto-acceptance policy.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"behavior\": \"accept_all\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /trainer/templates/history (Template Version History)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/templates/history",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "templates",
+                "history"
+              ]
+            },
+            "description": "Audit trail of all published template versions."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"template_id\", data[0].template_id || data[0].id);",
+                  "    pm.collectionVariables.set(\"template_version\", data[0].version || \"1\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /trainer/templates/{template_id}/rollback/{version} (Rollback Template)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/trainer/templates/{{template_id}}/rollback/{{template_version}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "trainer",
+                "templates",
+                "{{template_id}}",
+                "rollback",
+                "{{template_version}}"
+              ]
+            },
+            "description": "Rolls back extraction template to prior stable version.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "12. Settings & Workflow Config",
+      "description": "Vendor flow automation policies, API key scope (Strict vs Full Auto), and widget tokens.",
+      "item": [
+        {
+          "name": "GET /settings/vendor-flow (Get Vendor Flow Settings)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/vendor-flow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "vendor-flow"
+              ]
+            },
+            "description": "Returns vendor-specific auto-approval and routing rules."
+          }
+        },
+        {
+          "name": "PUT /settings/vendor-flow (Update Vendor Flow Settings)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/vendor-flow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "vendor-flow"
+              ]
+            },
+            "description": "Updates tenant-wide vendor processing rules.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"auto_approve\": false,\n  \"require_po\": true,\n  \"strict_matching\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /settings/workflow (Get API Key Workflow Scope)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/workflow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "workflow"
+              ]
+            },
+            "description": "Returns current API key scope: 'readonly' (Strict Review) or 'actions' (Full Automation)."
+          }
+        },
+        {
+          "name": "PUT /settings/workflow (Update API Key Workflow Scope)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/workflow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "workflow"
+              ]
+            },
+            "description": "Toggles API key permissions between 'readonly' and 'actions' (Full Automation).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"api_key_scope\": \"actions\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /settings/security/widget-tokens (List Chat Widget Tokens)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/security/widget-tokens",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "security",
+                "widget-tokens"
+              ]
+            },
+            "description": "Lists public tokens provisioned for embedded website chat widget."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"widget_token_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /settings/security/widget-tokens (Create Widget Token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/security/widget-tokens",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "security",
+                "widget-tokens"
+              ]
+            },
+            "description": "Issues a restricted token for embedding the AI chat widget on external websites.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Corporate Portal Widget\",\n  \"allowed_origins\": [\n    \"https://portal.example.com\"\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.token) pm.collectionVariables.set(\"widget_token\", data.token);",
+                  "    if (data.id) pm.collectionVariables.set(\"widget_token_id\", data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /settings/security/widget-tokens/{token_id} (Revoke Widget Token)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/settings/security/widget-tokens/{{widget_token_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "settings",
+                "security",
+                "widget-tokens",
+                "{{widget_token_id}}"
+              ]
+            },
+            "description": "Revokes website chat widget token."
+          }
+        }
+      ]
+    },
+    {
+      "name": "13. Email Ingestion Channel",
+      "description": "Dedicated mailbox routing and authorized sender whitelisting.",
+      "item": [
+        {
+          "name": "GET /email/settings/mailbox (Dedicated Mailbox Address)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/email/settings/mailbox",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "email",
+                "settings",
+                "mailbox"
+              ]
+            },
+            "description": "Retrieves the tenant's dedicated inbound email ingestion address (e.g., tenant-xxx@invoicellm.com)."
+          }
+        },
+        {
+          "name": "GET /email/settings/email-senders (List Authorized Senders)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/email/settings/email-senders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "email",
+                "settings",
+                "email-senders"
+              ]
+            },
+            "description": "Lists whitelisted email addresses authorized to submit invoices via email."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"sender_id\", data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /email/settings/email-senders (Add Authorized Sender)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/email/settings/email-senders",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "email",
+                "settings",
+                "email-senders"
+              ]
+            },
+            "description": "Whitelists a sender email address.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"billing@preferred-vendor.com\",\n  \"email_set\": \"inbound\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id) pm.collectionVariables.set(\"sender_id\", data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /email/settings/email-senders/{sender_id} (Remove Authorized Sender)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/email/settings/email-senders/{{sender_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "email",
+                "settings",
+                "email-senders",
+                "{{sender_id}}"
+              ]
+            },
+            "description": "Removes authorized email sender."
+          }
+        }
+      ]
+    },
+    {
+      "name": "14. Outbound Invoices (AR)",
+      "description": "AR invoice generation, PDF builder, customer email dispatch, and payment marking.",
+      "item": [
+        {
+          "name": "POST /outbound-invoices/upload (Upload Outbound Invoice PDF)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-invoices/upload",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-invoices",
+                "upload"
+              ]
+            },
+            "description": "Ingests customer-facing outbound invoice for AR tracking.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "value": null,
+                  "description": "Outbound invoice PDF"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id || data.invoice_id) pm.collectionVariables.set(\"outbound_invoice_id\", data.id || data.invoice_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /outbound-invoices/{invoice_id}/build-defaults (Get Invoice Builder Defaults)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-invoices/{{outbound_invoice_id}}/build-defaults",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-invoices",
+                "{{outbound_invoice_id}}",
+                "build-defaults"
+              ]
+            },
+            "description": "Retrieves company branding, next sequential invoice number, and default terms."
+          }
+        },
+        {
+          "name": "POST /outbound-invoices/build/preview (Preview Generated Invoice PDF)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-invoices/build/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-invoices",
+                "build",
+                "preview"
+              ]
+            },
+            "description": "Compiles and renders HTML/PDF preview of draft invoice.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_name\": \"Global Retail Corp\",\n  \"customer_email\": \"ap@globalretail.com\",\n  \"due_date\": \"2026-10-30\",\n  \"line_items\": [\n    {\n      \"description\": \"AI Pipeline Infrastructure Management\",\n      \"quantity\": 1,\n      \"unit_price\": 4500.0\n    },\n    {\n      \"description\": \"Enterprise Support SLA\",\n      \"quantity\": 1,\n      \"unit_price\": 500.0\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /outbound-invoices/build (Build & Save Outbound Invoice)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-invoices/build",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-invoices",
+                "build"
+              ]
+            },
+            "description": "Creates draft outbound invoice in AR ledger.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer_name\": \"Global Retail Corp\",\n  \"customer_email\": \"ap@globalretail.com\",\n  \"due_date\": \"2026-10-30\",\n  \"line_items\": [\n    {\n      \"description\": \"AI Pipeline Infrastructure Management\",\n      \"quantity\": 1,\n      \"unit_price\": 4500.0\n    },\n    {\n      \"description\": \"Enterprise Support SLA\",\n      \"quantity\": 1,\n      \"unit_price\": 500.0\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.id || data.invoice_id) pm.collectionVariables.set(\"outbound_invoice_id\", data.id || data.invoice_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /outbound-invoices/{invoice_id}/confirm-send (Confirm & Dispatch Invoice)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-invoices/{{outbound_invoice_id}}/confirm-send",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-invoices",
+                "{{outbound_invoice_id}}",
+                "confirm-send"
+              ]
+            },
+            "description": "Dispatches PDF invoice to customer email via SendGrid/SES.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "PUT /outbound-invoices/{invoice_id}/mark-paid (Mark AR Invoice as Paid)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-invoices/{{outbound_invoice_id}}/mark-paid",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-invoices",
+                "{{outbound_invoice_id}}",
+                "mark-paid"
+              ]
+            },
+            "description": "Records full settlement in AR accounts receivable ledger.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"payment_date\": \"2026-09-23\",\n  \"reference\": \"WIRE-998822\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "15. Outbound Audit & Dashboard (AR)",
+      "description": "AR audit queue, accounts receivable aging metrics, DSO.",
+      "item": [
+        {
+          "name": "GET /outbound-audit (List AR Invoices for Audit)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-audit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-audit"
+              ]
+            },
+            "description": "Reviews generated outbound invoices prior to delivery."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "var list = data.invoices || data;",
+                  "if (Array.isArray(list) && list.length > 0) {",
+                  "    pm.collectionVariables.set(\"outbound_invoice_id\", list[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /outbound-audit/resolve/{invoice_id} (Audit Resolve AR Invoice)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-audit/resolve/{{outbound_invoice_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-audit",
+                "resolve",
+                "{{outbound_invoice_id}}"
+              ]
+            },
+            "description": "Approves or modifies outbound invoice.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\",\n  \"notes\": \"Line items verified\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /outbound-dashboard/invoices (AR Invoices Overview)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-dashboard/invoices",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-dashboard",
+                "invoices"
+              ]
+            },
+            "description": "Overview of sent, overdue, and paid accounts receivable."
+          }
+        },
+        {
+          "name": "GET /outbound-dashboard/metrics (AR Dashboard KPIs)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/outbound-dashboard/metrics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "outbound-dashboard",
+                "metrics"
+              ]
+            },
+            "description": "DSO (Days Sales Outstanding), aging breakdown, and collections metrics."
+          }
+        }
+      ]
+    },
+    {
+      "name": "16. Autopilot Batch Automation",
+      "description": "Scheduled batch execution logs and file tracking.",
+      "item": [
+        {
+          "name": "GET /autopilot/history (Autopilot Processing History)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/autopilot/history",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "autopilot",
+                "history"
+              ]
+            },
+            "description": "Summary of recurring autopilot batch executions."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "var list = data.batches || data.history || data;",
+                  "if (Array.isArray(list) && list.length > 0) {",
+                  "    pm.collectionVariables.set(\"batch_id\", list[0].batch_id || list[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /autopilot/history/{batch_id}/files (Autopilot Batch Files)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/autopilot/history/{{batch_id}}/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "autopilot",
+                "history",
+                "{{batch_id}}",
+                "files"
+              ]
+            },
+            "description": "File-level breakdown for a specific autopilot execution run."
+          }
+        },
+        {
+          "name": "GET /autopilot/history/legacy/files (Legacy Autopilot Files)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/autopilot/history/legacy/files",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "autopilot",
+                "history",
+                "legacy",
+                "files"
+              ]
+            },
+            "description": "Backward-compatible file history log."
+          }
+        },
+        {
+          "name": "DELETE /autopilot/history/{batch_id} (Hide Autopilot Batch)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/autopilot/history/{{batch_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "autopilot",
+                "history",
+                "{{batch_id}}"
+              ]
+            },
+            "description": "Hides specific batch from autopilot history view."
+          }
+        },
+        {
+          "name": "DELETE /autopilot/history (Hide All Autopilot History)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/autopilot/history",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "autopilot",
+                "history"
+              ]
+            },
+            "description": "Clears entire autopilot batch view."
+          }
+        }
+      ]
+    },
+    {
+      "name": "17. Billing & Subscriptions",
+      "description": "Plan quotas, PayU checkout creation, cancellation, and reactivations.",
+      "item": [
+        {
+          "name": "GET /billing/usage (Tenant Plan & Usage Quota)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/billing/usage",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "billing",
+                "usage"
+              ]
+            },
+            "description": "Returns current billing tier, quota consumption, and free invoices remaining."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Billing 200', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /billing/create-checkout-session (Create PayU Checkout Session)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/billing/create-checkout-session",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "billing",
+                "create-checkout-session"
+              ]
+            },
+            "description": "Initiates PayU payment session to upgrade plan.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"pro\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /billing/cancel (Cancel Subscription)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/billing/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "billing",
+                "cancel"
+              ]
+            },
+            "description": "Schedules subscription cancellation at the end of billing period.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "POST /billing/reactivate (Reactivate Subscription)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/billing/reactivate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "billing",
+                "reactivate"
+              ]
+            },
+            "description": "Re-enables auto-renewal on a cancelled subscription.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          }
+        },
+        {
+          "name": "POST /billing/payu/success (PayU Success Callback Handler)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/billing/payu/success",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "billing",
+                "payu",
+                "success"
+              ]
+            },
+            "description": "Handles return redirect after successful PayU checkout.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"txnid\": \"DEMO_TXN_123\",\n  \"status\": \"success\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /billing/payu/failure (PayU Failure Callback Handler)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/billing/payu/failure",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "billing",
+                "payu",
+                "failure"
+              ]
+            },
+            "description": "Handles return redirect after cancelled or failed PayU checkout.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"txnid\": \"DEMO_TXN_123\",\n  \"status\": \"failure\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "18. Admin (Superadmin Only)",
+      "description": "Team member permission management and rejected email review.",
+      "item": [
+        {
+          "name": "GET /admin/users (List Organization Users)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/admin/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "admin",
+                "users"
+              ]
+            },
+            "description": "Lists all users and their assigned roles in this tenant (Admin only)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var data = pm.response.json();",
+                  "if (Array.isArray(data) && data.length > 0) {",
+                  "    pm.collectionVariables.set(\"user_ref\", data[0].clerk_user_id || data[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /admin/users/{user_ref}/permissions (Update User Permissions/Role)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/admin/users/{{user_ref}}/permissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "admin",
+                "users",
+                "{{user_ref}}",
+                "permissions"
+              ]
+            },
+            "description": "Updates granular permissions for a team member.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"Accountant\",\n  \"can_train\": false,\n  \"can_audit\": true,\n  \"can_load\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "DELETE /admin/users/{user_ref} (Remove User from Tenant)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/admin/users/{{user_ref}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "admin",
+                "users",
+                "{{user_ref}}"
+              ]
+            },
+            "description": "Revokes user access from tenant workspace."
+          }
+        },
+        {
+          "name": "GET /admin/dropped-emails (List Dropped Inbound Emails)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/admin/dropped-emails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "admin",
+                "dropped-emails"
+              ]
+            },
+            "description": "Superadmin review of emails rejected due to sender not being whitelisted."
+          }
+        }
+      ]
+    },
+    {
+      "name": "19. Support & SAGE AI",
+      "description": "In-app troubleshooting AI (SAGE), contact forms, and support ticket system.",
+      "item": [
+        {
+          "name": "POST /support/chat (Ask SAGE AI Support Assistant)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/support/chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "support",
+                "chat"
+              ]
+            },
+            "description": "In-app AI troubleshooting assistant (SAGE) for product support.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"How do I invite team members and assign audit roles?\",\n  \"history\": [],\n  \"last_topic_id\": null\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('SAGE answered', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /support/contact (Website Contact Form - Public)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/support/contact",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "support",
+                "contact"
+              ]
+            },
+            "description": "Public contact inquiry form submission (rate-limited per IP).",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Jane Developer\",\n  \"email\": \"jane@techcorp.com\",\n  \"company\": \"TechCorp\",\n  \"subject\": \"Enterprise API Trial\",\n  \"message\": \"Interested in high-volume on-premise deployment.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /support/ticket (Submit Support Ticket)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/support/ticket",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "support",
+                "ticket"
+              ]
+            },
+            "description": "Opens customer support ticket with email dispatch.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject\": \"OCR extraction failure on German VAT layout\",\n  \"description\": \"Invoice INV-2026-DE missing line item tax breakdowns.\",\n  \"category\": \"technical\",\n  \"priority\": \"normal\",\n  \"source\": \"in_app\"\n}"
+            }
+          }
+        },
+        {
+          "name": "GET /support/tickets (List Tenant Support Tickets)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/support/tickets",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "support",
+                "tickets"
+              ]
+            },
+            "description": "Lists support tickets raised by this workspace."
+          }
+        }
+      ]
+    },
+    {
+      "name": "20. Sandbox Workspaces",
+      "description": "Temporary anonymous sandbox keys (inv_test_...) and workspace promotion.",
+      "item": [
+        {
+          "name": "POST /sandbox/keys (Issue Sandbox Key - Public)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sandbox/keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "sandbox",
+                "keys"
+              ]
+            },
+            "description": "Issues temporary sandbox API key (inv_test_...) with disposable workspace for evaluation.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var data = pm.response.json();",
+                  "    if (data.api_key) {",
+                  "        pm.collectionVariables.set(\"sandbox_key\", data.api_key);",
+                  "        console.log(\"Sandbox key issued:\", data.api_key);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /sandbox/keys/me (Check Sandbox Key Allowance)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sandbox/keys/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "sandbox",
+                "keys",
+                "me"
+              ]
+            },
+            "description": "Checks remaining quota and TTL countdown on active sandbox key.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{sandbox_key}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "POST /sandbox/claim (Promote Sandbox to Real Org - Clerk JWT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/sandbox/claim",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "sandbox",
+                "claim"
+              ]
+            },
+            "description": "Converts temporary sandbox workspace into permanent signed-up organization.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{clerk_jwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sandbox_key\": \"{{sandbox_key}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "21. Embedded Chat Widget",
+      "description": "Public embedded chat widget endpoint authenticated via inv_widget_ token.",
+      "item": [
+        {
+          "name": "POST /widget/chat/message (Embedded Website Widget Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/widget/chat/message",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "widget",
+                "chat",
+                "message"
+              ]
+            },
+            "description": "Chat endpoint for embedded third-party website widget (authenticated strictly via inv_widget_ token).",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{widget_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What is the status of my invoice from last Friday?\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "22. Local Backend Probes (Localhost Only)",
+      "description": "Direct ASGI container health probes on port 8000.",
+      "item": [
+        {
+          "name": "GET /health (Local Backend Probe - Localhost Only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Direct backend health probe (use with base_url = http://localhost:8000).",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "GET /health/liveness (Liveness Probe - Localhost Only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/liveness",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "liveness"
+              ]
+            },
+            "description": "Direct backend container liveness probe (use with base_url = http://localhost:8000).",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "GET /health/readiness (Readiness Probe - Localhost Only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/readiness",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "readiness"
+              ]
+            },
+            "description": "Direct backend database/redis readiness probe (use with base_url = http://localhost:8000).",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "GET /config/features (Feature Flags Matrix)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{api_key}}",
+                "description": "Alternative API Key header for clients that do not send Authorization Bearer"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}{{api_prefix}}/config/features",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "{{api_prefix}}",
+                "config",
+                "features"
+              ]
+            },
+            "description": "Tenant feature flags and capability matrix."
+          }
+        }
+      ]
+    }
+  ]
+}
